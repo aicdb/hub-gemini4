@@ -542,6 +542,84 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, i
     return n, size
 
 
+def expand_manifest(ex: Export, source_id: str, rep: Report) -> list[tuple[Export, str | None]]:
+    """A source may export several components: docs/hub/component.json is then a manifest
+    {"schema", "id": <source id>, "group": "<nav group label>", "components": ["hub/<x>/component.json", ...]}.
+    Each listed component is a full component whose id starts with "<source id>-"."""
+    m = ex.comp
+    if "components" not in m:
+        return [(ex, None)]
+    if m.get("schema") != SCHEMA:
+        rep.err(f'manifest "schema" must be "{SCHEMA}"')
+    if m.get("id") != source_id:
+        rep.err(f'manifest id {m.get("id")!r} != sources.json id {source_id!r}')
+    out, seen = [], set()
+    for rel in m.get("components") or []:
+        p = ex.path(rel)
+        try:
+            sub = json.loads(p.read_text())
+        except Exception as e:  # noqa: BLE001
+            rep.err(f"manifest entry {rel}: cannot read ({e})")
+            continue
+        sid = sub.get("id", "")
+        if not str(sid).startswith(f"{source_id}-"):
+            rep.err(f"manifest entry {rel}: component id {sid!r} must start with '{source_id}-'")
+            continue
+        if sid in seen:
+            rep.err(f"manifest: duplicate component id {sid!r}")
+            continue
+        seen.add(sid)
+        out.append((Export(sid, ex.docs, ex.hubdir, sub, ex.origin), m.get("group")))
+    if not out:
+        rep.err("manifest lists no components")
+    return out
+
+
+def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha) -> tuple[bool, int]:
+    cid = ex.cid
+    rep = Report(cid)
+    exclude = cfg.get("exclude", [])
+    if group is None and ex.comp.get("id") != src["id"]:
+        rep.err(f'component.json id {ex.comp.get("id")!r} != sources.json id {src["id"]!r}')
+    refs = validate(ex, rep, exclude)
+    if rep.errors:
+        rep.print()
+        print(f"✗ {cid}: skipped ({len(rep.errors)} errors)")
+        if gha:
+            print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
+        return False, 0
+    comp = normalize(ex, src, commit)
+    dst = out / "c" / cid
+    nfiles, size = publish_files(ex, refs, dst, link)
+    comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
+    size += sum((dst / t["src"]).stat().st_size for t in comp["thumbs"].values())
+    mb = size / 1e6
+    comp["size_mb"] = round(mb, 1)
+    comp["group"] = group
+    comp["source"] = src["id"]
+    if mb > cfg.get("component_budget_mb", 1e9):
+        rep.warn(f"hosted size {mb:.0f} MB exceeds the per-component budget of {cfg.get('component_budget_mb')} MB")
+        if gha:
+            print(f"::warning title=hub component '{cid}' over size budget::{mb:.0f} MB")
+    (out / "data" / "components" / f"{cid}.json").write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
+    catalog["components"].append({
+        "id": cid, "name": comp["name"], "title": comp["title"], "summary": comp.get("summary", ""),
+        "group": group, "source": src["id"],
+        "repo": comp.get("repo"), "commit": commit, "origin": ex.origin,
+        "generated": comp.get("generated"), "size_mb": comp["size_mb"],
+        "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
+        "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages", []) or []],
+        "rows": compact_rows(comp),
+    })
+    build_info["sources"][cid] = {"repo": src.get("repo"), "source": src["id"], "commit": commit, "origin": ex.origin,
+                                  "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
+                                  "hosted_files": nfiles, "thumbnails": len(comp["thumbs"]), "size_mb": comp["size_mb"]}
+    rep.print()
+    print(f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
+          f"{nfiles} hosted files + {len(comp['thumbs'])} thumbnails, {mb:.1f} MB, origin={ex.origin}")
+    return True, size
+
+
 def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
           cache_dir: Path, jobs: int) -> int:
     exclude = cfg.get("exclude", [])
@@ -573,43 +651,16 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
                 print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
             continue
         try:
-            if ex.comp.get("id") != cid:
-                rep.err(f'component.json id {ex.comp.get("id")!r} != sources.json id {cid!r}')
-            refs = validate(ex, rep, exclude)
+            subs = expand_manifest(ex, cid, rep)
             if rep.errors:
                 rep.print(); failures += 1
-                print(f"✗ {cid}: skipped ({len(rep.errors)} errors)")
-                if gha:
-                    print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
+                print(f"✗ {cid}: manifest invalid")
                 continue
             commit = src.get("commit") or git_head(docs)
-            comp = normalize(ex, src, commit)
-            dst = out / "c" / cid
-            nfiles, size = publish_files(ex, refs, dst, link)
-            comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
-            size += sum((dst / t["src"]).stat().st_size for t in comp["thumbs"].values())
-            mb = size / 1e6
-            total += size
-            comp["size_mb"] = round(mb, 1)
-            if mb > cfg.get("component_budget_mb", 1e9):
-                rep.warn(f"hosted size {mb:.0f} MB exceeds the per-component budget of {cfg.get('component_budget_mb')} MB")
-                if gha:
-                    print(f"::warning title=hub component '{cid}' over size budget::{mb:.0f} MB")
-            (out / "data" / "components" / f"{cid}.json").write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
-            catalog["components"].append({
-                "id": cid, "name": comp["name"], "title": comp["title"], "summary": comp.get("summary", ""),
-                "repo": comp.get("repo"), "commit": commit, "origin": ex.origin,
-                "generated": comp.get("generated"), "size_mb": comp["size_mb"],
-                "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
-                "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages", []) or []],
-                "rows": compact_rows(comp),
-            })
-            build_info["sources"][cid] = {"repo": src.get("repo"), "commit": commit, "origin": ex.origin,
-                                          "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
-                                          "hosted_files": nfiles, "thumbnails": len(comp["thumbs"]), "size_mb": comp["size_mb"]}
-            rep.print()
-            print(f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
-                  f"{nfiles} hosted files + {len(comp['thumbs'])} thumbnails, {mb:.1f} MB, origin={ex.origin}")
+            for sub, group in subs:
+                ok, size = build_one(cfg, src, sub, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha)
+                total += size
+                failures += 0 if ok else 1
         finally:
             ex.close()
 
@@ -686,23 +737,36 @@ def main(argv=None):
     if a.cmd == "validate":
         rep = Report(cid)
         ex = load_export(cid, docs, rep)
-        hosted, refs = 0, None
-        if ex is not None:
-            try:
-                refs = validate(ex, rep, cfg.get("exclude", []))
-                hosted = sum(ex.path(r).stat().st_size for r in refs.hosted if ex.path(r).is_file())
-            finally:
-                ex.close()
-        rep.print(limit=300)
-        if rep.errors or ex is None:
-            print(f"✗ {cid}: {len(rep.errors)} errors, {len(rep.warnings)} warnings")
+        if ex is None:
+            rep.print(limit=300)
+            print(f"✗ {cid}: export could not be loaded")
             return 1
-        npages = len(ex.comp.get("pages") or [])
-        ndetail = sum(1 for d in ex.comp["designs"] if d.get("detail"))
-        print(f"✓ {cid}: {len(ex.comp['designs'])} designs ({ndetail} with detail docs), {npages} pages, "
-              f"{len(refs.hosted)} hosted files ({hosted / 1e6:.1f} MB) + {len(refs.gds)} layout thumbnails, "
-              f"{len(refs.repo)} repo-linked files, origin={ex.origin}, {len(rep.warnings)} warnings")
-        return 0
+        rc = 0
+        try:
+            subs = expand_manifest(ex, cid, rep)
+            if rep.errors:
+                rep.print(limit=300)
+                print(f"✗ {cid}: manifest invalid")
+                return 1
+            for sub, group in subs:
+                r2 = Report(sub.cid)
+                if group is None and sub.comp.get("id") != cid:
+                    r2.err(f'component.json id {sub.comp.get("id")!r} != {cid!r}')
+                refs = validate(sub, r2, cfg.get("exclude", []))
+                hosted = sum(sub.path(r).stat().st_size for r in refs.hosted if sub.path(r).is_file())
+                r2.print(limit=300)
+                if r2.errors:
+                    print(f"✗ {sub.cid}: {len(r2.errors)} errors, {len(r2.warnings)} warnings")
+                    rc = 1
+                    continue
+                npages = len(sub.comp.get("pages") or [])
+                ndetail = sum(1 for d in sub.comp["designs"] if d.get("detail"))
+                print(f"✓ {sub.cid}{f' [{group}]' if group else ''}: {len(sub.comp['designs'])} designs ({ndetail} with detail docs), {npages} pages, "
+                      f"{len(refs.hosted)} hosted files ({hosted / 1e6:.1f} MB) + {len(refs.gds)} layout thumbnails, "
+                      f"{len(refs.repo)} repo-linked files, origin={sub.origin}, {len(r2.warnings)} warnings")
+        finally:
+            ex.close()
+        return rc
 
     out = a.out or Path(tempfile.mkdtemp(prefix="hub-preview-"))
     src = dict(src, commit=git_head(docs))

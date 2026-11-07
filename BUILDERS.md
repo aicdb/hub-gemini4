@@ -178,11 +178,28 @@ comparison table with CSV export of all metrics. Use pages for everything else: 
 explorers, Pareto plots, comparisons, databases with extra columns, methodology, reuse,
 cross-checks, appendices.
 
-### 4.3 Families
+### 4.3 Several components from one repository (collections)
 
-For repos with several unrelated block types (`aux`): `families: [{id, label, summary,
-matrix?, card_metrics?}]` plus `design.family`. Each family becomes a sub-tab of the
-Designs view with its own matrix and card metrics.
+A repository that is really a collection of small, unrelated generators (e.g. `aux`) exports
+**one component per generator**. Each becomes its own top-level tab, grouped under a shared
+label in the navigation. `docs/hub/component.json` is then a manifest:
+
+```jsonc
+{ "schema": "aicdb-hub/2", "id": "aux", "group": "Aux blocks",
+  "components": [ "hub/ro/component.json", "hub/tcap/component.json", … ] }
+```
+
+Every listed file is a complete component (§4) with its own designs, matrix, pages and
+detail docs. Its `id` must start with `<source id>-` (e.g. `aux-ro`, `aux-tcap`), and its
+`name` is the tab label. The components may share hosted files (e.g. a common methodology
+page).
+
+### 4.4 Families
+
+For variants of one generator that need different matrices or metrics: `families: [{id,
+label, summary, matrix?, card_metrics?, cards_group_by?}]` plus `design.family`. Each family
+becomes a sub-tab of the Designs view. Unrelated generators should be separate components
+(§4.3) instead.
 
 ## 5. Content blocks
 

@@ -234,8 +234,17 @@ function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTi
 
 function renderTabs() {
   const counts = Object.fromEntries(CAT.components.map((c) => [c.id, c.rows.filter(passGlobalRow).length]));
+  let prevGroup = null;
   $('#tabs').innerHTML = `<a href="${tabHref('')}" class="${S.tab ? '' : 'on'}">Overview</a>` +
-    CAT.components.map((c) => `<a href="${tabHref(c.id)}" class="${S.tab === c.id ? 'on' : ''}">${esc(c.name)}<span class="n">${counts[c.id]}</span></a>`).join('');
+    CAT.components.map((c) => {
+      let pre = '';
+      if ((c.group || null) !== prevGroup) {
+        if (prevGroup) pre += '<span class="tsep"></span>';
+        if (c.group) pre += `<span class="tgroup" title="${esc(c.group)}: a collection of small generators from one repository">${esc(c.group)}</span>`;
+        prevGroup = c.group || null;
+      }
+      return `${pre}<a href="${tabHref(c.id)}" class="${S.tab === c.id ? 'on' : ''}${c.group ? ' grouped' : ''}">${esc(c.name)}<span class="n">${counts[c.id]}</span></a>`;
+    }).join('') + (prevGroup ? '<span class="tsep"></span>' : '');
   $('#tabs a.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
@@ -243,7 +252,10 @@ function renderTabs() {
 async function renderOverview(main) {
   if (S.q) return renderSearch(main);
   let total = 0, shown = 0, exact = 0, clean = 0;
+  let prevG = null;
   const cards = CAT.components.map((c) => {
+    let gh = '';
+    if ((c.group || null) !== prevG) { prevG = c.group || null; if (c.group) gh = `<h2 class="ovgroup">${esc(c.group)} <span class="subtle">— ${CAT.components.filter((x) => x.group === c.group).length} small generators from one repository</span></h2>`; else if (CAT.components.some((x) => x.group)) gh = '<h2 class="ovgroup"></h2>'; }
     const rows = c.rows.filter((r) => (!S.tech || r[0] === S.tech) && (!S.vdd || String(r[1]) === S.vdd));
     const pass = rows.filter(passGlobalRow);
     const withStage = pass.filter((r) => resolveMask(r[3], r[5]));
@@ -252,7 +264,7 @@ async function renderOverview(main) {
     exact += rows.filter((r) => r[3] & (1 << STAGES.indexOf(S.stage))).length;
     const bars = STAGES.map((s, i) => `<div class="sb ${s === S.stage ? 'cur' : ''}"><span>${STAGE_LABEL[s]}</span>
       <div class="track"><div class="fill" style="width:${rows.length ? (100 * per[i]) / rows.length : 0}%"></div></div><span class="num">${per[i]}</span></div>`).join('');
-    return `<a class="ovcard" href="${tabHref(c.id)}">
+    return `${gh}<a class="ovcard" href="${tabHref(c.id)}">
       <h3>${esc(c.name)}<small>${esc(c.title)}</small></h3>
       <p>${esc(c.summary)}</p>
       <div class="ovnums"><div><b>${withStage.length}</b>shown</div><div><b>${rows.length}</b>designs</div>
@@ -352,7 +364,7 @@ async function renderComponent(main) {
   main.innerHTML = `
     <section class="intro">
       <div>
-        <div class="eyebrow">${esc(techLabel(c.technology))}${short ? ` · ${esc(c.repo || '')}@${esc(short)}` : ''}${c.generated ? ` · exported ${esc(String(c.generated).slice(0, 10))}` : ''}</div>
+        <div class="eyebrow">${c.group ? `${esc(c.group)} · ` : ''}${esc(techLabel(c.technology))}${short ? ` · ${esc(c.repo || '')}@${esc(short)}` : ''}${c.generated ? ` · exported ${esc(String(c.generated).slice(0, 10))}` : ''}</div>
         <h1>${esc(c.title)}</h1>
         <p>${esc(fam?.summary || c.summary || '')}</p>
         <div class="links">
@@ -662,7 +674,8 @@ async function render() {
   const prevTab = S.tab, prevDesign = S.design;
   S = parseHash();
   if (S.tab !== prevTab || S.design !== prevDesign) limit = PAGE;
-  document.title = S.tab ? `${CAT.components.find((c) => c.id === S.tab)?.name || S.tab} · AICDB Analog Hub` : 'AICDB Analog Hub';
+  const cur = CAT.components.find((c) => c.id === S.tab);
+  document.title = S.tab ? `${cur ? `${cur.group ? `${cur.group} · ` : ''}${cur.name}` : S.tab} · AICDB Analog Hub` : 'AICDB Analog Hub';
   renderGlobals();
   renderTabs();
   const main = $('#main');
