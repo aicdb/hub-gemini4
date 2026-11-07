@@ -1,11 +1,11 @@
-/* AICDB Analog Hub — single-page catalog over aicdb-hub/1 component exports. */
+/* AICDB Analog Hub — single-page catalog over aicdb-hub/2 component exports. Content blocks: blocks.js */
 'use strict';
 
 const STAGES = ['pre', 'partial', 'full'];
 const STAGE_LABEL = { pre: 'Pre-PEX', partial: 'Partial post-PEX', full: 'Full post-PEX' };
 const STAGE_SHORT = { pre: 'pre', partial: 'part', full: 'full' };
 const GLOBAL_KEYS = ['tech', 'stage', 'fb', 'vdd', 'ver', 'q'];
-const DEFAULTS = { tech: '', stage: 'full', fb: '1', vdd: '', ver: '', q: '', view: 'matrix', fam: '', sort: '', fig: '' };
+const DEFAULTS = { tech: '', stage: 'full', fb: '1', vdd: '', ver: '', q: '', view: 'matrix', fam: '', sort: '', fig: '', page: '' };
 const PAGE = 60;
 
 let CAT = null;                 // data/catalog.json
@@ -56,7 +56,7 @@ function parseHash() {
 }
 function hashFor(st) {
   const qp = new URLSearchParams();
-  for (const k of [...GLOBAL_KEYS, 'view', 'fam', 'sort', 'fig']) if (st[k] !== undefined && st[k] !== DEFAULTS[k]) qp.set(k, st[k]);
+  for (const k of [...GLOBAL_KEYS, 'view', 'fam', 'sort', 'fig', 'page']) if (st[k] !== undefined && st[k] !== DEFAULTS[k]) qp.set(k, st[k]);
   for (const [k, v] of Object.entries(st.f || {})) if (v) qp.set(`f.${k}`, v);
   const path = [st.tab, st.design].filter(Boolean).map(encodeURIComponent).join('/');
   const q = qp.toString();
@@ -68,8 +68,8 @@ function go(patch, { keepLocal = true } = {}) {
   const h = hashFor(next);
   if (h !== location.hash) location.hash = h; else render();
 }
-const tabHref = (tab, design = '') => {
-  const st = { ...S, tab, design };
+const tabHref = (tab, design = '', page = '') => {
+  const st = { ...S, tab, design, page };
   if (tab !== S.tab) { st.fam = ''; st.sort = ''; st.f = {}; }
   st.fig = '';
   return hashFor(st);
@@ -96,6 +96,34 @@ async function loadComp(id) {
   return COMPS.get(id);
 }
 const asset = (c, p) => (p ? c.base + p.split('/').map(encodeURIComponent).join('/') : '');
+const JSON_CACHE = new Map();
+let plotlyP = null;
+function loadPlotly() {
+  if (window.Plotly) return Promise.resolve(window.Plotly);
+  if (!plotlyP) plotlyP = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js';
+    sc.onload = () => res(window.Plotly);
+    sc.onerror = () => { plotlyP = null; rej(new Error('could not load the plotting library')); };
+    document.head.appendChild(sc);
+  });
+  return plotlyP;
+}
+const repoUrl = (c, f) => (c.repo_raw && f ? c.repo_raw + f.split('/').map(encodeURIComponent).join('/') : '#');
+const thumbFor = (c, g, cell) => (g ? c.thumbs?.[`${g}|${cell || ''}`] || null : null);
+/** context handed to Blocks.render: global options + URL resolvers for this component */
+function ctxFor(c) {
+  if (!c._ids) c._ids = new Set(c.designs.map((d) => d.id));
+  return {
+    stage: S.stage, fb: S.fb === '1', vdd: S.vdd, tech: S.tech,
+    src: (p) => asset(c, p),
+    repo: (f) => repoUrl(c, f),
+    thumb: (g, cell) => thumbFor(c, g, cell),
+    json: (p) => { const u = asset(c, p); if (!JSON_CACHE.has(u)) JSON_CACHE.set(u, getJSON(u).catch((e) => { JSON_CACHE.delete(u); throw e; })); return JSON_CACHE.get(u); },
+    designHref: (id) => (c._ids.has(id) ? tabHref(c.id, id) : null),
+    plotly: loadPlotly,
+  };
+}
 
 /* stage resolution: exact stage, or nearest earlier one when "fill" is on */
 function resolve(d, stage = S.stage, fb = S.fb === '1') {
@@ -266,6 +294,7 @@ async function renderComponent(main) {
   main.innerHTML = `<div class="empty-state">Loading ${esc(meta.name)}…</div>`;
   const c = await loadComp(S.tab);
   if (S.design) return renderDetail(main, c);
+  const page = (c.pages || []).find((p) => p.id === S.page);
   if (c.families?.length && !c._fam[S.fam]) S.fam = c.families[0].id;
 
   const famDesigns = c.designs.filter((d) => !c.families?.length || d.family === S.fam);
@@ -302,8 +331,7 @@ async function renderComponent(main) {
         <h1>${esc(c.title)}</h1>
         <p>${esc(fam?.summary || c.summary || '')}</p>
         <div class="links">
-          ${c.classic ? `<a href="${asset(c, c.classic)}" target="_blank" rel="noopener">Full generator report ↗</a>` : ''}
-          ${c.repo ? `<a href="https://github.com/${esc(c.repo)}" target="_blank" rel="noopener">Source repo ↗</a>` : ''}
+          ${c.repo ? `<a href="https://github.com/${esc(c.repo)}" target="_blank" rel="noopener" title="Private repository; request access from the maintainers">Source repo ↗</a>` : ''}
           <a href="data/components/${esc(c.id)}.json" download>component.json ↓</a>
           ${c.origin === 'adapter' ? '<span class="badge warn" title="Converted by the hub\'s bootstrap adapter; the generator repo has not published its own export yet">bootstrap adapter</span>' : ''}
         </div>
@@ -316,6 +344,8 @@ async function renderComponent(main) {
         ${extraStats}
       </div>
     </section>
+    <nav class="pagenav">${[{ id: '', title: 'Designs' }, ...(c.pages || [])].map((p) => `<a href="${tabHref(c.id, '', p.id)}" class="${(page ? page.id : '') === p.id ? 'on' : ''}">${esc(p.title)}</a>`).join('')}</nav>
+    <div id="pagebody">
     ${famTabs}
     <div class="panel">
       ${filters ? `<div class="filters">${filters}</div>` : ''}
@@ -325,7 +355,16 @@ async function renderComponent(main) {
         ${S.view !== 'matrix' ? `<label class="subtle">Sort <select id="sortsel">${sortOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === S.sort ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : '<span></span>'}
       </div>
       <div id="view"></div>
-    </div>`;
+    </div></div>`;
+
+  if (page) {
+    const body = $('#pagebody');
+    body.innerHTML = '<div class="empty-state">Loading…</div>';
+    const doc = page.src ? await ctxFor(c).json(page.src) : page;
+    body.innerHTML = doc.intro ? `<div class="panel md">${Blocks.md(doc.intro)}</div>` : '';
+    await Blocks.render(body, doc.blocks || [], ctxFor(c));
+    return;
+  }
 
   main.querySelectorAll('[data-fam]').forEach((b) => b.onclick = () => go({ fam: b.dataset.fam, f: {}, sort: '' }));
   main.querySelectorAll('[data-ax]').forEach((b) => b.onclick = () => go({ f: { ...S.f, [b.dataset.ax]: b.dataset.v } }));
@@ -407,7 +446,10 @@ function renderMatrix(view, c, list) {
 
 function thumbOf(c, d) {
   const f = d.files || {};
-  const p = f.thumbnail || f.schematic || f.layout || d.images?.[0]?.path;
+  if (f.thumbnail) return asset(c, f.thumbnail);
+  const t = thumbFor(c, f.gds);
+  if (t) return asset(c, t.src);
+  const p = f.schematic || d.images?.find((x) => x.src)?.src;
   return p ? asset(c, p) : '';
 }
 function badgesOf(d, r) {
@@ -473,17 +515,18 @@ function renderTable(view, c, list) {
 }
 
 /* ------------------------------------------------------------------ detail */
-const FILE_LABEL = { schematic: 'Schematic', layout: 'Layout image', gds: 'GDSII', netlist: 'Netlist (pre-PEX)', pex_netlist: 'Extracted netlist (PEX)', lvs_netlist: 'LVS reference netlist', data: 'Full evidence JSON' };
-function renderDetail(main, c) {
+// repo-linked standard files (private source repo, raw file at the exported commit)
+const FILE_LABEL = { gds: 'GDSII layout', netlist: 'Netlist (pre-PEX)', pex_netlist: 'Extracted netlist (PEX)', lvs_netlist: 'LVS reference netlist', data: 'Full evidence JSON' };
+async function renderDetail(main, c) {
   const d = c.designs.find((x) => x.id === S.design);
   if (!d) { main.innerHTML = `<div class="empty-state">Design “${esc(S.design)}” not found in ${esc(c.name)}. <a href="${tabHref(c.id)}">Back</a></div>`; return; }
+  const ctx = ctxFor(c);
   const r = resolve(d);
   const f = d.files || {};
-  const imgs = [];
-  if (f.schematic) imgs.push({ label: 'Schematic', path: f.schematic });
-  if (f.gds) imgs.push({ label: 'Layout', gds: f.gds });
-  else if (f.layout) imgs.push({ label: 'Layout', path: f.layout });
-  for (const im of d.images || []) imgs.push(im);
+  const figs = [];
+  if (f.schematic) figs.push({ label: 'Schematic', src: f.schematic });
+  if (f.gds) figs.push({ label: 'Layout', gds: f.gds });
+  for (const im of d.images || []) figs.push({ label: im.label, src: im.src, gds: im.gds, cell: im.cell, caption: im.caption, bg: im.bg });
   const fam = c._fam[d.family];
 
   const metricsWith = c.metrics.filter((m) => STAGES.some((s) => d.results?.[s]?.metrics?.[m.key] != null));
@@ -504,31 +547,29 @@ function renderDetail(main, c) {
   const ver = (anyOf('pvt') ? extraRow('PVT corners passing', (x) => (x.pvt ? `${x.pvt.pass}/${x.pvt.total}` : '—')) : '') +
     (anyOf('mc') ? extraRow('Monte Carlo passing', (x) => (x.mc ? `${x.mc.pass}/${x.mc.total}` : '—')) : '') +
     (anyOf('robust') ? extraRow('Robust (generator criterion)', (x) => (x.robust === true ? '✓' : x.robust === false ? '✗' : '—')) : '');
-  const notes = STAGES.filter((s) => d.results?.[s]?.note).map((s) => `<div><b>${STAGE_LABEL[s]}:</b> ${esc(d.results[s].note)}</div>`).join('');
+  const notes = STAGES.filter((s) => d.results?.[s]?.note).map((s) => `<div><b>${STAGE_LABEL[s]}:</b> ${Blocks.inline(d.results[s].note)}</div>`).join('');
   const p = d.physical || {};
   const phys = [['DRC', p.drc], ['LVS', p.lvs], ['PEX', p.pex]].map(([n, v]) => `<span class="badge ${v === true ? 'good' : v === false ? 'bad' : ''}">${n} ${v === true ? '✓' : v === false ? '✗' : 'n/a'}</span>`).join('');
   const dims = [p.area_um2 != null ? `area ${num(p.area_um2, 4)} µm²` : '', p.width_um != null ? `${num(p.width_um, 4)} × ${num(p.height_um, 4)} µm` : ''].filter(Boolean).join(' · ');
   const params = Object.entries(d.params || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
-  const dls = [...Object.entries(FILE_LABEL).filter(([k]) => f[k]).map(([k, l]) => ({ label: l, path: f[k] })), ...(d.downloads || [])];
+  const dls = [...Object.entries(FILE_LABEL).filter(([k]) => f[k]).map(([k, l]) => ({ label: l, file: f[k] })), ...(d.downloads || [])];
   const axesChips = Object.entries(d.axes || {}).map(([k, v]) => `<span class="badge acc" title="${esc(c.axes[k]?.label || k)}">${esc(axisLabel(c, k, v))}</span>`).join('');
+  const idx = c.designs.indexOf(d);
+  const prev = c.designs[idx - 1], next = c.designs[idx + 1];
 
   main.innerHTML = `
-    <div class="crumbs"><a href="${tabHref('')}">Hub</a> / <a href="${tabHref(c.id)}">${esc(c.name)}</a>${fam ? ` / <a href="${hashFor({ ...S, design: '', fam: fam.id })}">${esc(fam.label)}</a>` : ''} / <span class="mono">${esc(d.id)}</span></div>
+    <div class="crumbs"><a href="${tabHref('')}">Hub</a> / <a href="${tabHref(c.id)}">${esc(c.name)}</a>${fam ? ` / <a href="${hashFor({ ...S, design: '', fam: fam.id, page: '' })}">${esc(fam.label)}</a>` : ''} / <span class="mono">${esc(d.id)}</span>
+      <span style="float:right">${prev ? `<a href="${tabHref(c.id, prev.id)}" title="${esc(prev.title)}">← prev</a>` : ''}${prev && next ? ' · ' : ''}${next ? `<a href="${tabHref(c.id, next.id)}" title="${esc(next.title)}">next →</a>` : ''}</span></div>
     <section class="intro" style="grid-template-columns:1fr">
       <div>
         <div class="eyebrow">${esc(techLabel(d.technology))} · V<sub>DD</sub> ${fmtV(d.vdd)}${r ? ` · showing ${STAGE_LABEL[r.st]}${r.fallback ? ' (fallback)' : ''}` : ''}</div>
         <h1>${esc(d.title)}</h1>
         <div class="tags">${axesChips}${(d.tags || []).filter(Boolean).map((t) => `<span class="badge">${esc(t)}</span>`).join('')}</div>
-        <div class="links">${d.links?.classic ? `<a href="${asset(c, d.links.classic.split('#')[0])}${d.links.classic.includes('#') ? `#${d.links.classic.split('#').slice(1).join('#')}` : ''}" target="_blank" rel="noopener">Open in generator report ↗</a>` : ''}
-          ${f.data ? `<a href="${asset(c, f.data)}" target="_blank" rel="noopener">Evidence JSON ↗</a>` : ''}</div>
+        ${d.summary ? `<div class="md">${Blocks.md(d.summary)}</div>` : ''}
       </div>
     </section>
     <div class="dgrid">
-      <div class="panel">
-        <div class="section-head"><h2>Figures</h2><div class="subtabs" id="imgtabs" style="margin:0">${imgs.map((im, i) => `<button class="chip ${i ? '' : 'on'}" data-i="${i}">${esc(im.label)}</button>`).join('')}</div></div>
-        <div class="viewer" id="viewer">${imgs.length ? '' : '<span class="ph">No figures published</span>'}</div>
-        <div class="subtle" id="viewhint" style="margin-top:6px"></div>
-      </div>
+      <div class="panel" id="figs">${figs.length ? '' : '<div class="empty-state">No figures published</div>'}</div>
       <div>
         <div class="panel">
           <div class="section-head"><h2>Performance by simulation stage</h2><span class="subtle">Δ vs pre-PEX, green = better</span></div>
@@ -539,30 +580,27 @@ function renderDetail(main, c) {
           <div class="section-head"><h2>Physical</h2><span class="subtle">${esc(dims)}</span></div>
           <div class="badges">${phys}</div>
         </div>
-        ${params.length ? `<div class="panel"><div class="section-head"><h2>Parameters</h2></div><table class="mt"><tbody>${params.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'number' ? num(v, 4) : typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</tbody></table></div>` : ''}
-        ${dls.length ? `<div class="panel"><div class="section-head"><h2>Downloads</h2></div><div class="dl">${dls.map((x) => `<a href="${asset(c, x.path)}" download>${esc(x.label)} <span class="subtle mono">${esc(x.path.split('/').pop())}</span></a>`).join('')}</div></div>` : ''}
+        ${params.length ? `<div class="panel"><div class="section-head"><h2>Parameters</h2></div><table class="mt"><tbody>${params.map(([k, v]) => `<tr><td>${Blocks.inline(k)}</td><td>${esc(typeof v === 'number' ? num(v, 4) : typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <div class="panel" id="dls"></div>
       </div>
-    </div>`;
-  const viewer = $('#viewer');
-  let gv = null;
-  const show = (i) => {
-    const im = imgs[i]; if (!im) return;
-    if (gv) { gv.destroy(); gv = null; }
-    if (im.gds && window.GDSView) {
-      viewer.innerHTML = '';
-      gv = window.GDSView.mount(viewer, asset(c, im.gds), { tech: d.technology });
-      $('#viewhint').textContent = 'Rendered live from the GDS: drag to pan, scroll/pinch to zoom, double-click to fit; pick sub-cells and layers in the toolbar.';
-    } else {
-      viewer.innerHTML = `<a href="${asset(c, im.path)}" target="_blank" rel="noopener"><img src="${asset(c, im.path)}" alt="${esc(im.label)}"></a>`;
-      $('#viewhint').textContent = 'Click the figure to open it full size.';
-    }
-    $('#imgtabs').querySelectorAll('.chip').forEach((b) => b.classList.toggle('on', +b.dataset.i === i));
-    S.fig = i ? String(i) : '';
-    history.replaceState(null, '', hashFor(S));
-  };
-  $('#imgtabs').onclick = (e) => { const b = e.target.closest('[data-i]'); if (b) show(+b.dataset.i); };
-  show(Math.min(+S.fig || 0, Math.max(imgs.length - 1, 0)));
+    </div>
+    <div id="detail-sections"></div>`;
   window.scrollTo(0, 0);
+  if (figs.length) await Blocks.render($('#figs'), [{ type: 'gallery', title: 'Figures', items: figs, max_height: 620, default: +S.fig || 0 }], ctx);
+  if (dls.length) await Blocks.render($('#dls'), [{ type: 'downloads', title: 'Files', items: dls, caption: 'Files marked **repo** are in the private source repository at the exported commit; access must be requested.' }], ctx);
+  else $('#dls').remove();
+  if (d.detail) {
+    const box = $('#detail-sections');
+    box.innerHTML = '<div class="empty-state">Loading design details…</div>';
+    try {
+      const doc = await ctx.json(d.detail);
+      if (S.design !== d.id) return; // navigated away meanwhile
+      box.innerHTML = '';
+      await Blocks.render(box, doc.blocks || [], ctx);
+    } catch (e) {
+      box.innerHTML = `<div class="note bad">Could not load design details: ${esc(e.message)}</div>`;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ main */

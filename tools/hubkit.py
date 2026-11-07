@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""hubkit — build, validate and preview the AICDB analog IP hub.
+"""hubkit — build, validate and preview the AICDB analog hub (schema aicdb-hub/2).
 
-Stdlib only (Python >= 3.9). Three entry points:
+  validate DOCS_DIR [--id ID]    check a component export (DOCS_DIR/hub/component.json, or the
+                                 hub's bootstrap adapter for ID) incl. pages, detail docs, blocks
+  preview  DOCS_DIR [--id ID]    build a one-component hub and serve it on http://127.0.0.1:8000
+  build    --root DIR            assemble the full site from every source in sources.json
 
-  validate DOCS_DIR            Check a component export (DOCS_DIR/hub/component.json)
-                               against the aicdb-hub/1 contract (see BUILDERS.md).
-  preview  DOCS_DIR            Build a one-component hub from DOCS_DIR and serve it on
-                               http://127.0.0.1:8000 so a repo builder can see their tab.
-  build                        Assemble the full site from every source in sources.json.
+What gets published: ONLY files referenced as hosted (`src` of blocks, pages, design detail docs,
+`files.schematic`, `files.thumbnail`), plus WebP thumbnails rendered from every referenced GDS.
+GDS files, netlists and other `file` references are NOT published; the site links to the raw
+file in the (private) source repository at the exported commit.
 
-The hub never writes into a source directory: normalized component JSON goes to
-OUT/data/components/<id>.json and the source's docs/ tree is copied (or symlinked
-with --link) to OUT/c/<id>/.
+Paths: "hub/..." resolves inside the export directory (docs/hub/ for a native export, the
+adapter's output dir otherwise); any other relative path resolves inside docs/.
+Python >= 3.9 stdlib; thumbnails additionally need `pip install gdstk pillow`.
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import fnmatch
 import functools
 import http.server
@@ -29,15 +32,18 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA = "aicdb-hub/1"
+SCHEMA = "aicdb-hub/2"
 STAGES = ("pre", "partial", "full")
 HUB_ROOT = Path(__file__).resolve().parent.parent
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-STD_FILES = ("schematic", "layout", "thumbnail", "gds", "netlist", "pex_netlist", "lvs_netlist", "data")
-IMAGE_EXT = (".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif")
+HOSTED_FILE_KEYS = ("schematic", "thumbnail")
+REPO_FILE_KEYS = ("gds", "netlist", "pex_netlist", "lvs_netlist", "data")
+BLOCK_TYPES = {"section", "markdown", "note", "code", "stats", "kv", "image", "layout", "gallery",
+               "downloads", "tabs", "table", "chart", "explorer"}
+DEFAULT_THUMB_CACHE = Path(os.environ.get("HUB_THUMB_CACHE", Path.home() / ".cache" / "aicdb-hub" / "thumbs"))
 
 
-# ----------------------------------------------------------------------------- validation
+# ----------------------------------------------------------------------------- reporting
 class Report:
     def __init__(self, label: str):
         self.label, self.errors, self.warnings = label, [], []
@@ -60,24 +66,171 @@ def _is_num(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
-def validate_component(comp: dict, docs: Path | None, rep: Report, exclude=()) -> None:
-    """Validate a component dict in place-free fashion; file checks only if docs given."""
+def _excluded(rel: str, exclude) -> bool:
+    for pat in exclude:
+        if fnmatch.fnmatch(rel, pat) or (pat.startswith("**/") and fnmatch.fnmatch(rel, pat[3:])):
+            return True
+    return False
+
+
+# ----------------------------------------------------------------------------- export access
+class Export:
+    """A loaded component export: component dict + where its files live."""
+
+    def __init__(self, cid: str, docs: Path, hubdir: Path, comp: dict, origin: str, tmp=None):
+        self.cid, self.docs, self.hubdir, self.comp, self.origin, self._tmp = cid, docs, hubdir, comp, origin, tmp
+
+    def path(self, rel: str) -> Path:
+        if rel.startswith("hub/"):
+            return self.hubdir / rel[4:]
+        return self.docs / rel
+
+    def close(self):
+        if self._tmp:
+            self._tmp.cleanup()
+
+
+def load_export(cid: str | None, docs: Path, rep: Report) -> Export | None:
+    native = docs / "hub" / "component.json"
+    if native.is_file():
+        try:
+            comp = json.loads(native.read_text())
+        except json.JSONDecodeError as e:
+            rep.err(f"{native}: invalid JSON: {e}")
+            return None
+        return Export(cid or comp.get("id"), docs, docs / "hub", comp, "native")
+    if not cid:
+        rep.err("no docs/hub/component.json and no --id given for an adapter")
+        return None
+    adapter = HUB_ROOT / "adapters" / f"{cid}.py"
+    if not adapter.is_file():
+        rep.err(f"no docs/hub/component.json and no adapters/{cid}.py")
+        return None
+    tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
+    out = Path(tmp.name)
+    r = subprocess.run([sys.executable, str(adapter), str(docs), str(out)], capture_output=True, text=True,
+                       cwd=str(HUB_ROOT / "adapters"))
+    if r.returncode != 0 or not (out / "component.json").is_file():
+        rep.err(f"adapter {adapter.name} failed (exit {r.returncode}):\n{(r.stderr or r.stdout)[-3000:]}")
+        tmp.cleanup()
+        return None
+    try:
+        comp = json.loads((out / "component.json").read_text())
+    except json.JSONDecodeError as e:
+        rep.err(f"adapter output is not valid JSON: {e}")
+        tmp.cleanup()
+        return None
+    return Export(cid, docs, out, comp, "adapter", tmp)
+
+
+# ----------------------------------------------------------------------------- reference collection
+class Refs:
+    def __init__(self):
+        self.hosted: dict[str, str] = {}     # rel path -> where it was referenced
+        self.containers: list[tuple[str, str]] = []  # (rel path, where) — JSON docs holding blocks
+        self.gds: dict[tuple[str, str], str] = {}    # (gds rel, cell) -> where
+        self.repo: dict[str, str] = {}       # rel path -> where
+
+
+def walk_blocks(blocks, where: str, refs: Refs, rep: Report, depth=0):
+    if blocks is None:
+        return
+    if not isinstance(blocks, list):
+        rep.err(f"{where}: blocks must be a list")
+        return
+    for i, b in enumerate(blocks):
+        w = f"{where}[{i}]"
+        if not isinstance(b, dict):
+            rep.err(f"{w}: block must be an object")
+            continue
+        t = b.get("type")
+        if t not in BLOCK_TYPES:
+            rep.err(f"{w}: unknown block type {t!r} (known: {', '.join(sorted(BLOCK_TYPES))})")
+            continue
+        w = f"{w}<{t}{(':' + str(b.get('title'))[:40]) if b.get('title') else ''}>"
+        if b.get("stage") is not None and b["stage"] not in STAGES:
+            rep.err(f"{w}: stage must be one of {STAGES}")
+        if "src" in b and t in ("image", "chart", "table", "explorer"):
+            if not isinstance(b["src"], str):
+                rep.err(f"{w}: src must be a string path")
+            else:
+                refs.hosted.setdefault(b["src"], w)
+        if t == "image" and not (b.get("src") or b.get("gds")):
+            rep.err(f"{w}: image needs src (hosted image) or gds")
+        if t in ("image", "layout") and b.get("gds"):
+            refs.gds.setdefault((b["gds"], b.get("cell") or ""), w)
+            refs.repo.setdefault(b["gds"], w)
+        if t == "layout" and not b.get("gds"):
+            rep.err(f"{w}: layout needs gds")
+        if t == "chart" and not (b.get("src") or isinstance(b.get("data"), list)):
+            rep.err(f"{w}: chart needs data[] (Plotly traces) or src")
+        if t == "table" and not (b.get("src") or isinstance(b.get("rows"), list)):
+            rep.err(f"{w}: table needs rows[] or src")
+        if t == "explorer" and not b.get("src"):
+            rep.err(f"{w}: explorer needs src (columnar JSON)")
+        if t == "gallery":
+            for j, it in enumerate(b.get("items") or []):
+                if it.get("src"):
+                    refs.hosted.setdefault(it["src"], f"{w}.items[{j}]")
+                elif it.get("gds"):
+                    refs.gds.setdefault((it["gds"], it.get("cell") or ""), f"{w}.items[{j}]")
+                    refs.repo.setdefault(it["gds"], f"{w}.items[{j}]")
+                else:
+                    rep.err(f"{w}.items[{j}]: needs src or gds")
+        if t == "downloads":
+            for j, it in enumerate(b.get("items") or []):
+                if it.get("file"):
+                    refs.repo.setdefault(it["file"], f"{w}.items[{j}]")
+                elif it.get("src"):
+                    refs.hosted.setdefault(it["src"], f"{w}.items[{j}]")
+                elif not it.get("url"):
+                    rep.err(f"{w}.items[{j}]: needs file (repo), src (hosted) or url")
+        if t == "section":
+            walk_blocks(b.get("blocks"), w, refs, rep, depth + 1)
+        if t == "tabs":
+            for j, tab in enumerate(b.get("tabs") or []):
+                walk_blocks(tab.get("blocks"), f"{w}.tabs[{j}]", refs, rep, depth + 1)
+
+
+def check_data_file(ex: Export, rel: str, where: str, rep: Report):
+    """Light structural check of chart/table/explorer JSON referenced by src."""
+    if not rel.endswith(".json"):
+        return
+    p = ex.path(rel)
+    try:
+        d = json.loads(p.read_text())
+    except Exception as e:  # noqa: BLE001
+        rep.err(f"{where}: {rel} is not valid JSON ({e})")
+        return
+    if "<chart" in where and not isinstance(d.get("data"), list):
+        rep.err(f"{where}: {rel} must be a Plotly figure {{data: [...], layout: {{...}}}}")
+    if "<table" in where and not isinstance(d.get("rows"), list):
+        rep.err(f"{where}: {rel} must contain rows[] (and optionally columns[])")
+    if "<explorer" in where:
+        cols = d.get("columns")
+        if not (isinstance(cols, dict) or isinstance(d.get("rows"), list)):
+            rep.err(f"{where}: {rel} must contain columns{{key: [...]}} (columnar) or rows[]")
+        elif isinstance(cols, dict):
+            lens = {len(v) for v in cols.values() if isinstance(v, list)}
+            if len(lens) > 1:
+                rep.err(f"{where}: {rel} columns have different lengths {sorted(lens)}")
+
+
+# ----------------------------------------------------------------------------- validation
+def validate(ex: Export, rep: Report, exclude=()) -> Refs:
+    comp = ex.comp
+    refs = Refs()
     if comp.get("schema") != SCHEMA:
         rep.err(f'"schema" must be "{SCHEMA}" (got {comp.get("schema")!r})')
     for k in ("id", "name", "title", "technology", "metrics", "designs"):
         if k not in comp:
             rep.err(f'missing top-level key "{k}"')
     if rep.errors:
-        return
+        return refs
     if not ID_RE.match(str(comp["id"])):
         rep.err(f'bad component id {comp["id"]!r}')
-
-    metrics = comp["metrics"]
     mkeys = set()
-    if not isinstance(metrics, list) or not metrics:
-        rep.err('"metrics" must be a non-empty list')
-        metrics = []
-    for m in metrics:
+    for m in comp["metrics"] if isinstance(comp["metrics"], list) else []:
         if not isinstance(m, dict) or "key" not in m or "label" not in m:
             rep.err(f"metric needs key+label: {m!r}")
             continue
@@ -86,6 +239,8 @@ def validate_component(comp: dict, docs: Path | None, rep: Report, exclude=()) -
         mkeys.add(m["key"])
         if m.get("better") not in (None, "high", "low"):
             rep.err(f'metric {m["key"]}: better must be "high", "low" or absent')
+    if not mkeys:
+        rep.err('"metrics" must be a non-empty list')
 
     axes = comp.get("axes", {})
     axis_vals = {}
@@ -122,12 +277,28 @@ def validate_component(comp: dict, docs: Path | None, rep: Report, exclude=()) -
         fam_ids.add(f["id"])
         check_view(f, f'families[{f["id"]}]')
 
+    page_ids = set()
+    for i, pg in enumerate(comp.get("pages", []) or []):
+        w = f"pages[{i}]"
+        if not isinstance(pg, dict) or not pg.get("id") or not pg.get("title"):
+            rep.err(f"{w}: page needs id + title")
+            continue
+        if pg["id"] in page_ids:
+            rep.err(f"{w}: duplicate page id {pg['id']!r}")
+        page_ids.add(pg["id"])
+        if pg.get("src"):
+            refs.hosted.setdefault(pg["src"], w)
+            refs.containers.append((pg["src"], f"page {pg['id']}"))
+        elif isinstance(pg.get("blocks"), list):
+            walk_blocks(pg["blocks"], f"page {pg['id']}", refs, rep)
+        else:
+            rep.err(f"{w}: page needs src (JSON with blocks) or inline blocks")
+
     designs = comp["designs"]
     if not isinstance(designs, list) or not designs:
         rep.err('"designs" must be a non-empty list')
-        return
+        return refs
     seen = set()
-    missing_files = 0
     for d in designs:
         did = d.get("id")
         tag = f"design {did!r}"
@@ -168,66 +339,147 @@ def validate_component(comp: dict, docs: Path | None, rep: Report, exclude=()) -
         for k in ("drc", "lvs", "pex"):
             if k in phys and phys[k] not in (True, False, None):
                 rep.err(f"{tag}: physical.{k} must be true/false/null")
-        if docs is not None:
-            paths = [p for k, p in (d.get("files") or {}).items() if k in STD_FILES and p]
-            paths += [x.get("path") for x in (d.get("images") or []) + (d.get("downloads") or []) if isinstance(x, dict)]
-            for p in paths:
-                if not p:
-                    continue
-                if p.startswith(("/", "http:", "https:")) or ".." in p.split("/"):
-                    rep.err(f"{tag}: file path must be relative inside docs/: {p!r}")
-                    continue
-                if not (docs / p).is_file():
-                    missing_files += 1
-                    if missing_files <= 10:
-                        rep.err(f"{tag}: referenced file not found: {p}")
-                elif any(fnmatch.fnmatch(p, pat.removeprefix("**/")) or fnmatch.fnmatch("x/" + p, pat) for pat in exclude):
-                    rep.warn(f"{tag}: {p} is excluded from publishing by the hub's exclude patterns")
-    if missing_files > 10:
-        rep.err(f"... {missing_files} referenced files missing in total")
+        files = d.get("files") or {}
+        if "layout" in files:
+            rep.err(f"{tag}: files.layout is not supported in aicdb-hub/2 — give files.gds (thumbnail is rendered)")
+        for k in HOSTED_FILE_KEYS:
+            if files.get(k):
+                refs.hosted.setdefault(files[k], f"{tag}.files.{k}")
+        for k in REPO_FILE_KEYS:
+            if files.get(k):
+                refs.repo.setdefault(files[k], f"{tag}.files.{k}")
+        if files.get("gds"):
+            refs.gds.setdefault((files["gds"], ""), f"{tag}.files.gds")
+        for j, im in enumerate(d.get("images") or []):
+            if im.get("src"):
+                refs.hosted.setdefault(im["src"], f"{tag}.images[{j}]")
+            elif im.get("gds"):
+                refs.gds.setdefault((im["gds"], im.get("cell") or ""), f"{tag}.images[{j}]")
+                refs.repo.setdefault(im["gds"], f"{tag}.images[{j}]")
+            else:
+                rep.err(f"{tag}.images[{j}]: needs src or gds")
+        for j, it in enumerate(d.get("downloads") or []):
+            if it.get("file"):
+                refs.repo.setdefault(it["file"], f"{tag}.downloads[{j}]")
+            elif it.get("src"):
+                refs.hosted.setdefault(it["src"], f"{tag}.downloads[{j}]")
+            elif not it.get("url"):
+                rep.err(f"{tag}.downloads[{j}]: needs file, src or url")
+        if d.get("detail"):
+            refs.hosted.setdefault(d["detail"], f"{tag}.detail")
+            refs.containers.append((d["detail"], f"{tag}.detail"))
+
+    # container docs (pages, design details): parse and walk their blocks
+    for rel, where in refs.containers:
+        p = ex.path(rel)
+        if not p.is_file():
+            continue  # reported below as a missing hosted file
+        try:
+            doc = json.loads(p.read_text())
+        except json.JSONDecodeError as e:
+            rep.err(f"{where}: {rel} invalid JSON: {e}")
+            continue
+        if not isinstance(doc.get("blocks"), list):
+            rep.err(f"{where}: {rel} must be an object with blocks[]")
+            continue
+        walk_blocks(doc["blocks"], f"{where}:{rel}", refs, rep)
+
+    # existence checks
+    missing = 0
+    for rel, where in refs.hosted.items():
+        if rel.startswith(("/", "http:", "https:")) or ".." in rel.split("/"):
+            rep.err(f"{where}: hosted path must be relative inside the export/docs: {rel!r}")
+            continue
+        if not ex.path(rel).is_file():
+            missing += 1
+            if missing <= 15:
+                rep.err(f"{where}: hosted file not found: {rel}")
+        elif _excluded(rel, exclude):
+            rep.err(f"{where}: {rel} matches the hub's exclude patterns and cannot be hosted")
+    if missing > 15:
+        rep.err(f"... {missing} hosted files missing in total")
+    for rel, where in list(refs.hosted.items()):
+        if "<" in where and ex.path(rel).is_file():
+            check_data_file(ex, rel, where, rep)
+    rmissing = 0
+    for rel, where in refs.repo.items():
+        if rel.startswith("hub/"):
+            rep.err(f"{where}: repo file references must be docs-relative, not hub/: {rel}")
+        elif not (ex.docs / rel).is_file():
+            rmissing += 1
+            if rmissing <= 10:
+                rep.warn(f"{where}: repo file not found in docs/ (link would be dead): {rel}")
+    for (g, _cell), where in refs.gds.items():
+        if not g.endswith((".gds", ".gds.gz", ".gdsii")):
+            rep.err(f"{where}: gds must point to a .gds or .gds.gz file: {g}")
+    return refs
 
 
-def size_report(docs: Path, exclude, budget_mb: float, rep: Report, top: int = 5):
-    total, big, by_ext = 0, [], {}
-    for p in iter_files(docs, exclude):
-        s = p.stat().st_size
-        total += s
-        ext = "".join(p.suffixes[-2:]) if p.suffix == ".gz" else p.suffix or "(none)"
-        by_ext[ext] = by_ext.get(ext, 0) + s
-        big.append((s, p))
-    mb = total / 1e6
-    if mb > budget_mb:
-        rep.warn(f"published size {mb:.0f} MB exceeds the per-component budget of {budget_mb:.0f} MB")
-        big.sort(reverse=True)
-        rep.warn("largest files: " + ", ".join(f"{q.relative_to(docs)} ({s/1e6:.1f} MB)" for s, q in big[:top]))
-        rep.warn("bytes by type: " + ", ".join(f"{k} {v/1e6:.0f} MB" for k, v in sorted(by_ext.items(), key=lambda x: -x[1])[:6]))
-    return mb
+# ----------------------------------------------------------------------------- thumbnails
+def _thumb_job(args):
+    gds, cell, tech, cache_dir = args
+    sys.path.insert(0, str(HUB_ROOT / "tools"))
+    import gdsthumb  # noqa: E402
+    key = gdsthumb.cache_key(Path(gds), cell or None, 960, tech)
+    img, meta = Path(cache_dir) / f"{key}.webp", Path(cache_dir) / f"{key}.json"
+    if img.is_file() and meta.is_file():
+        return key, json.loads(meta.read_text()), None
+    try:
+        info = gdsthumb.render(Path(gds), img, cell or None, 960, tech)
+        tmp = meta.with_name(f".{meta.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(info))
+        os.replace(tmp, meta)
+        return key, info, None
+    except Exception as e:  # noqa: BLE001
+        return key, None, f"{type(e).__name__}: {e}"
 
 
-def prune_excluded(comp: dict, exclude) -> int:
-    """Drop references to files the hub will not publish (e.g. pre-rendered layout SVGs)."""
-    n = 0
-    for d in comp.get("designs", []):
-        f = d.get("files") or {}
-        for k in [k for k, p in f.items() if isinstance(p, str) and _excluded(p, exclude)]:
-            del f[k]; n += 1
-        for key in ("images", "downloads"):
-            lst = d.get(key) or []
-            keep = [x for x in lst if not (isinstance(x, dict) and _excluded(str(x.get("path", "")), exclude))]
-            n += len(lst) - len(keep)
-            if key in d:
-                d[key] = keep
-    return n
+def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: Report, jobs: int) -> dict:
+    if not refs.gds:
+        return {}
+    try:
+        import gdstk  # noqa: F401
+        import PIL  # noqa: F401
+    except ImportError:
+        rep.warn("gdstk/Pillow not installed — layout thumbnails skipped (pip install gdstk pillow)")
+        return {}
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tech = ex.comp.get("technology", "gf180mcuD")
+    tasks, keys = [], []
+    for (g, cell), where in refs.gds.items():
+        p = ex.docs / g
+        if not p.is_file():
+            rep.warn(f"{where}: GDS not found for thumbnail: {g}")
+            continue
+        tasks.append((str(p), cell, tech, str(cache_dir)))
+        keys.append((g, cell))
+    thumbs = {}
+    with cf.ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
+        for (g, cell), (key, info, err) in zip(keys, pool.map(_thumb_job, tasks, chunksize=4)):
+            if err:
+                rep.warn(f"thumbnail failed for {g}{' cell ' + cell if cell else ''}: {err}")
+                continue
+            dst = out_dir / "thumbs" / f"{key}.webp"
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if not dst.exists():
+                try:
+                    os.link(cache_dir / f"{key}.webp", dst)
+                except OSError:
+                    shutil.copy2(cache_dir / f"{key}.webp", dst)
+            thumbs[f"{g}|{cell}"] = {"src": f"thumbs/{key}.webp", "cell": info.get("cell"),
+                                     "width_um": info.get("width_um"), "height_um": info.get("height_um")}
+    return thumbs
 
 
 # ----------------------------------------------------------------------------- normalization
-def normalize(comp: dict, src: dict, cfg: dict, commit: str | None, origin: str) -> dict:
-    """Fill defaults so the web app can stay simple."""
-    comp = dict(comp)
+def normalize(ex: Export, src: dict, commit: str | None) -> dict:
+    comp = dict(ex.comp)
     comp.setdefault("repo", src.get("repo"))
     comp["commit"] = commit or comp.get("commit")
-    comp["origin"] = origin  # "native" (exported by the repo) or "adapter" (bootstrap in hub)
+    comp["origin"] = ex.origin
     comp["base"] = f"c/{comp['id']}/"
+    if comp.get("repo") and comp["commit"]:
+        comp["repo_raw"] = f"https://github.com/{comp['repo']}/raw/{comp['commit']}/{src.get('dir', 'docs')}/"
     tech_default = comp.get("technology")
     for d in comp["designs"]:
         d.setdefault("technology", tech_default)
@@ -243,90 +495,54 @@ def normalize(comp: dict, src: dict, cfg: dict, commit: str | None, origin: str)
 
 
 def compact_rows(comp: dict) -> list:
-    """Per-design summary used by the overview tab: [tech, vdd, family, stageMask, physOk, robustMask]."""
+    """Per-design summary for the overview: [tech, vdd, family, stageMask, physOk, robustMask]."""
     rows = []
     for d in comp["designs"]:
         mask = robust = 0
         for i, st in enumerate(STAGES):
             r = d["results"].get(st)
-            if r and (r.get("metrics") or r.get("pvt") or r.get("robust") is not None):
+            if r is not None:
                 mask |= 1 << i
                 if r.get("robust"):
                     robust |= 1 << i
         ph = d.get("physical", {})
-        phys_ok = 1 if (ph.get("drc") and ph.get("lvs")) else 0
-        rows.append([d["technology"], d.get("vdd"), d.get("family"), mask, phys_ok, robust])
+        rows.append([d["technology"], d.get("vdd"), d.get("family"), mask, 1 if (ph.get("drc") and ph.get("lvs")) else 0, robust])
     return rows
-
-
-# ----------------------------------------------------------------------------- file helpers
-def _excluded(rel: str, exclude) -> bool:
-    for pat in exclude:
-        if fnmatch.fnmatch(rel, pat) or (pat.startswith("**/") and fnmatch.fnmatch(rel, pat[3:])):
-            return True
-    return False
-
-
-def iter_files(root: Path, exclude=()):
-    for dp, dns, fns in os.walk(root, followlinks=True):
-        dns[:] = [x for x in dns if x != ".git"]
-        for f in fns:
-            p = Path(dp) / f
-            if not _excluded(p.relative_to(root).as_posix(), exclude):
-                yield p
-
-
-def copy_tree(src: Path, dst: Path, exclude):
-    n = 0
-    for p in iter_files(src, exclude):
-        q = dst / p.relative_to(src)
-        q.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.link(p, q)  # cheap when on the same filesystem
-        except OSError:
-            shutil.copy2(p, q)
-        n += 1
-    return n
 
 
 def git_head(path: Path) -> str | None:
     try:
         return subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip() or None
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def load_config(path: Path) -> dict:
-    return json.loads(path.read_text())
-
-
-# ----------------------------------------------------------------------------- component loading
-def load_component(cid: str, docs: Path, rep: Report) -> tuple[dict | None, str]:
-    """Return (component dict, origin). Prefer the repo's own export; fall back to a hub adapter."""
-    native = docs / "hub" / "component.json"
-    if native.is_file():
-        try:
-            return json.loads(native.read_text()), "native"
-        except json.JSONDecodeError as e:
-            rep.err(f"{native}: invalid JSON: {e}")
-            return None, "native"
-    adapter = HUB_ROOT / "adapters" / f"{cid}.py"
-    if adapter.is_file():
-        with tempfile.TemporaryDirectory() as td:
-            out = Path(td) / "component.json"
-            r = subprocess.run([sys.executable, "-I", str(adapter), str(docs), str(out)],
-                               capture_output=True, text=True)
-            if r.returncode != 0 or not out.is_file():
-                rep.err(f"adapter {adapter.name} failed:\n{r.stderr[-2000:]}")
-                return None, "adapter"
-            return json.loads(out.read_text()), "adapter"
-    rep.err(f"no {native.relative_to(docs.parent) if docs.parent != docs else native} and no adapters/{cid}.py")
-    return None, "missing"
-
-
 # ----------------------------------------------------------------------------- build
-def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool) -> int:
+def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, int]:
+    n = size = 0
+    for rel in sorted(refs.hosted):
+        sp = ex.path(rel)
+        if not sp.is_file():
+            continue
+        q = dst / rel
+        q.parent.mkdir(parents=True, exist_ok=True)
+        if q.exists() or q.is_symlink():
+            q.unlink()
+        if link and ex.origin == "native":
+            q.symlink_to(sp.resolve())
+        else:
+            try:
+                os.link(sp, q)
+            except OSError:
+                shutil.copy2(sp, q)
+        n += 1
+        size += sp.stat().st_size
+    return n, size
+
+
+def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
+          cache_dir: Path, jobs: int) -> int:
     exclude = cfg.get("exclude", [])
     if out.exists():
         shutil.rmtree(out)
@@ -334,15 +550,12 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
     (out / "c").mkdir()
     shutil.copytree(HUB_ROOT / "web", out, dirs_exist_ok=True)
     (out / ".nojekyll").write_text("")
-
     catalog = {"schema": SCHEMA, "site": cfg.get("site", {}), "technologies": cfg.get("technologies", {}),
-               "stages": [{"id": "pre", "label": "Pre-PEX"}, {"id": "partial", "label": "Partial post-PEX"},
-                          {"id": "full", "label": "Full post-PEX"}],
                "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "components": []}
     build_info = {"generated": catalog["generated"], "hub_commit": git_head(HUB_ROOT),
                   "fingerprint": os.environ.get("HUB_FINGERPRINT"), "sources": {}}
     gha = os.environ.get("GITHUB_ACTIONS") == "true"
-    failures, total_mb = 0, 0.0
+    failures, total = 0, 0
 
     for src, docs in sources:
         cid = src["id"]
@@ -351,54 +564,64 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
             rep.err(f"source directory not found: {docs}")
             rep.print(); failures += 1
             continue
-        comp, origin = load_component(cid, docs, rep)
-        if comp is not None:
-            dropped = prune_excluded(comp, exclude)
-            if dropped:
-                print(f"  {cid}: dropped {dropped} references to unpublished files (exclude patterns)")
-            if comp.get("id") != cid:
-                rep.err(f'component.json id {comp.get("id")!r} != sources.json id {cid!r}')
-            validate_component(comp, docs, rep, exclude)
-        if rep.errors:
+        ex = load_export(cid, docs, rep)
+        if ex is None:
             rep.print(); failures += 1
-            print(f"✗ {cid}: skipped ({len(rep.errors)} errors)")
+            print(f"✗ {cid}: skipped")
             if gha:
                 print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
             continue
-        commit = src.get("commit") or git_head(docs)
-        comp = normalize(comp, src, cfg, commit, origin)
-        dst = out / "c" / cid
-        if link:
-            dst.symlink_to(docs.resolve(), target_is_directory=True)
-            nfiles = -1
-        else:
-            nfiles = copy_tree(docs, dst, exclude)
-        mb = size_report(docs, exclude, cfg.get("component_budget_mb", 1e9), rep)
-        total_mb += mb
-        comp["size_mb"] = round(mb, 1)
-        (out / "data" / "components" / f"{cid}.json").write_text(json.dumps(comp, separators=(",", ":")))
-        catalog["components"].append({
-            "id": cid, "name": comp["name"], "title": comp["title"], "summary": comp.get("summary", ""),
-            "repo": comp.get("repo"), "commit": commit, "origin": origin, "classic": comp.get("classic"),
-            "generated": comp.get("generated"), "size_mb": comp["size_mb"],
-            "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
-            "rows": compact_rows(comp),
-        })
-        build_info["sources"][cid] = {"repo": src.get("repo"), "commit": commit, "origin": origin,
-                                      "designs": len(comp["designs"]), "size_mb": comp["size_mb"]}
-        rep.print()
-        if gha and mb > cfg.get("component_budget_mb", 1e9):
-            print(f"::warning title=hub component '{cid}' over size budget::{mb:.0f} MB > {cfg.get('component_budget_mb')} MB (see BUILDERS.md §5)")
-        print(f"✓ {cid}: {len(comp['designs'])} designs, {mb:.0f} MB, origin={origin}"
-              + (f", {nfiles} files" if nfiles >= 0 else ", linked"))
+        try:
+            if ex.comp.get("id") != cid:
+                rep.err(f'component.json id {ex.comp.get("id")!r} != sources.json id {cid!r}')
+            refs = validate(ex, rep, exclude)
+            if rep.errors:
+                rep.print(); failures += 1
+                print(f"✗ {cid}: skipped ({len(rep.errors)} errors)")
+                if gha:
+                    print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
+                continue
+            commit = src.get("commit") or git_head(docs)
+            comp = normalize(ex, src, commit)
+            dst = out / "c" / cid
+            nfiles, size = publish_files(ex, refs, dst, link)
+            comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
+            size += sum((dst / t["src"]).stat().st_size for t in comp["thumbs"].values())
+            mb = size / 1e6
+            total += size
+            comp["size_mb"] = round(mb, 1)
+            if mb > cfg.get("component_budget_mb", 1e9):
+                rep.warn(f"hosted size {mb:.0f} MB exceeds the per-component budget of {cfg.get('component_budget_mb')} MB")
+                if gha:
+                    print(f"::warning title=hub component '{cid}' over size budget::{mb:.0f} MB")
+            (out / "data" / "components" / f"{cid}.json").write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
+            catalog["components"].append({
+                "id": cid, "name": comp["name"], "title": comp["title"], "summary": comp.get("summary", ""),
+                "repo": comp.get("repo"), "commit": commit, "origin": ex.origin,
+                "generated": comp.get("generated"), "size_mb": comp["size_mb"],
+                "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
+                "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages", []) or []],
+                "rows": compact_rows(comp),
+            })
+            build_info["sources"][cid] = {"repo": src.get("repo"), "commit": commit, "origin": ex.origin,
+                                          "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
+                                          "hosted_files": nfiles, "thumbnails": len(comp["thumbs"]), "size_mb": comp["size_mb"]}
+            rep.print()
+            print(f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
+                  f"{nfiles} hosted files + {len(comp['thumbs'])} thumbnails, {mb:.1f} MB, origin={ex.origin}")
+        finally:
+            ex.close()
 
-    (out / "data" / "catalog.json").write_text(json.dumps(catalog, separators=(",", ":")))
+    (out / "data" / "catalog.json").write_text(json.dumps(catalog, separators=(",", ":"), ensure_ascii=False))
     (out / "data" / "build.json").write_text(json.dumps(build_info, indent=1))
     budget = cfg.get("budget_mb", 1000)
-    print(f"\nsite: {len(catalog['components'])} components, {total_mb:.0f} MB of component files (budget {budget} MB)")
-    if total_mb > budget:
-        print(f"✗ total exceeds the {budget} MB GitHub Pages budget — slim down the largest components (see BUILDERS.md §5)")
+    print(f"\nsite: {len(catalog['components'])} components, {total / 1e6:.0f} MB hosted (budget {budget} MB)")
+    if total / 1e6 > budget:
+        print(f"✗ total exceeds the {budget} MB budget")
         return 2
+    if not catalog["components"]:
+        print("✗ no component could be built — refusing to produce an empty site")
+        return 3
     if failures and strict:
         return 1
     return 0
@@ -418,39 +641,34 @@ def serve(directory: Path, port: int):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-
-    v = sub.add_parser("validate", help="validate DOCS_DIR/hub/component.json")
+    v = sub.add_parser("validate", help="validate a component export")
     v.add_argument("docs", type=Path)
-    v.add_argument("--id", help="component id (default: read from component.json / adapter name)")
-
-    p = sub.add_parser("preview", help="build a one-component hub from DOCS_DIR and serve it")
+    v.add_argument("--id")
+    p = sub.add_parser("preview", help="build a one-component hub and serve it")
     p.add_argument("docs", type=Path)
-    p.add_argument("--id", help="component id (default: read from component.json)")
+    p.add_argument("--id")
     p.add_argument("--port", type=int, default=8000)
-    p.add_argument("--out", type=Path, help="output dir (default: a temp dir)")
+    p.add_argument("--out", type=Path)
     p.add_argument("--no-serve", action="store_true")
-
     b = sub.add_parser("build", help="assemble the full site")
     b.add_argument("--config", type=Path, default=HUB_ROOT / "sources.json")
-    b.add_argument("--root", type=Path, required=True,
-                   help="directory holding one checkout per source, named after the repo (e.g. ROOT/opa-gen-gemini4)")
+    b.add_argument("--root", type=Path, required=True, help="dir with one checkout per source repo, named like the repo")
     b.add_argument("--out", type=Path, default=HUB_ROOT / "_site")
     b.add_argument("--only", help="comma-separated component ids")
-    b.add_argument("--link", action="store_true", help="symlink sources instead of copying (local preview only)")
-    b.add_argument("--strict", action="store_true", help="exit non-zero if any component fails validation")
-    b.add_argument("--serve", type=int, metavar="PORT", help="serve the result after building")
-
+    b.add_argument("--link", action="store_true", help="symlink hosted files of native exports (local preview)")
+    b.add_argument("--strict", action="store_true")
+    b.add_argument("--serve", type=int, metavar="PORT")
+    for x in (p, b):
+        x.add_argument("--thumb-cache", type=Path, default=DEFAULT_THUMB_CACHE)
+        x.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     a = ap.parse_args(argv)
-    cfg = load_config(HUB_ROOT / "sources.json") if a.cmd != "build" else load_config(a.config)
+    cfg = json.loads((a.config if a.cmd == "build" else HUB_ROOT / "sources.json").read_text())
 
     if a.cmd == "build":
         only = set(a.only.split(",")) if a.only else None
-        sources = []
-        for s in cfg["components"]:
-            if only and s["id"] not in only:
-                continue
-            sources.append((s, a.root / s["repo"].split("/")[-1] / s.get("dir", "docs")))
-        rc = build(cfg, sources, a.out, a.link, a.strict)
+        sources = [(s, a.root / s["repo"].split("/")[-1] / s.get("dir", "docs"))
+                   for s in cfg["components"] if not only or s["id"] in only]
+        rc = build(cfg, sources, a.out, a.link, a.strict, a.thumb_cache, a.jobs)
         if a.serve and rc in (0, 1):
             serve(a.out, a.serve)
         return rc
@@ -462,29 +680,35 @@ def main(argv=None):
         cid = json.loads(native.read_text()).get("id")
     if not cid:
         ap.error("pass --id (no hub/component.json to read it from)")
-    src = next((s for s in cfg["components"] if s["id"] == cid), {"id": cid, "repo": None})
+    src = next((s for s in cfg["components"] if s["id"] == cid), {"id": cid, "repo": None, "dir": "docs"})
 
     if a.cmd == "validate":
         rep = Report(cid)
-        comp, origin = load_component(cid, docs, rep)
-        if comp is not None:
-            validate_component(comp, docs, rep, cfg.get("exclude", []))
-            mb = size_report(docs, cfg.get("exclude", []), cfg.get("component_budget_mb", 1e9), rep)
-        rep.print(limit=200)
-        if rep.errors:
+        ex = load_export(cid, docs, rep)
+        hosted, refs = 0, None
+        if ex is not None:
+            try:
+                refs = validate(ex, rep, cfg.get("exclude", []))
+                hosted = sum(ex.path(r).stat().st_size for r in refs.hosted if ex.path(r).is_file())
+            finally:
+                ex.close()
+        rep.print(limit=300)
+        if rep.errors or ex is None:
             print(f"✗ {cid}: {len(rep.errors)} errors, {len(rep.warnings)} warnings")
             return 1
-        print(f"✓ {cid}: {len(comp['designs'])} designs valid (origin={origin}), "
-              f"{mb:.0f} MB published, {len(rep.warnings)} warnings")
+        npages = len(ex.comp.get("pages") or [])
+        ndetail = sum(1 for d in ex.comp["designs"] if d.get("detail"))
+        print(f"✓ {cid}: {len(ex.comp['designs'])} designs ({ndetail} with detail docs), {npages} pages, "
+              f"{len(refs.hosted)} hosted files ({hosted / 1e6:.1f} MB) + {len(refs.gds)} layout thumbnails, "
+              f"{len(refs.repo)} repo-linked files, origin={ex.origin}, {len(rep.warnings)} warnings")
         return 0
 
-    if a.cmd == "preview":
-        out = a.out or Path(tempfile.mkdtemp(prefix="hub-preview-"))
-        src = dict(src, commit=git_head(docs))
-        rc = build(cfg, [(src, docs)], out, link=True, strict=True)
-        if rc == 0 and not a.no_serve:
-            serve(out, a.port)
-        return rc
+    out = a.out or Path(tempfile.mkdtemp(prefix="hub-preview-"))
+    src = dict(src, commit=git_head(docs))
+    rc = build(cfg, [(src, docs)], out, link=True, strict=True, cache_dir=a.thumb_cache, jobs=a.jobs)
+    if rc == 0 and not a.no_serve:
+        serve(out, a.port)
+    return rc
 
 
 if __name__ == "__main__":

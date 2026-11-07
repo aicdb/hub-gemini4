@@ -225,3 +225,86 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px
   .viewer { height: 340px; }
   .frow { flex-direction: column; gap: 4px; }
 }
+
+/* ---------- content blocks (blocks.js) ---------- */
+.blk { margin-bottom: 16px; min-width: 0; }
+.blk:last-child { margin-bottom: 0; }
+.blk-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.blk-head h3 { font-size: 14.5px; }
+.blk-cap { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.blk-cap p { margin: 0 0 4px; }
+.sec { margin-bottom: 18px; }
+.sec > summary { cursor: pointer; list-style: none; }
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary h2 { font-size: 17px; display: inline; }
+.sec > summary::before { content: '▸ '; color: var(--muted); }
+.sec[open] > summary::before { content: '▾ '; }
+.sec[open] > summary { margin-bottom: 12px; }
+.sec-intro { color: var(--muted); margin-bottom: 12px; }
+.sec-body.grid-2, .sec-body.grid-3, .sec-body.grid-4 { display: grid; gap: 16px; align-items: start; }
+.sec-body.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sec-body.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sec-body.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.sec-body.grid-2 > .blk, .sec-body.grid-3 > .blk, .sec-body.grid-4 > .blk { margin-bottom: 0; }
+.md { line-height: 1.6; }
+.md p { margin: 0 0 10px; }
+.md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md blockquote { margin: 0 0 10px; padding: 4px 12px; border-left: 3px solid var(--line); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.md code, .blist code { background: var(--soft); padding: 1px 4px; border-radius: 4px; }
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; margin: 0 0 10px; }
+table.mt.md { font-size: 12.5px; margin-bottom: 10px; }
+.note.info { background: var(--accent-soft); color: var(--ink); }
+.note.good { background: var(--goodbg); color: var(--good); }
+.note.bad { background: var(--badbg); color: var(--bad); }
+.note.muted { background: var(--soft); color: var(--muted); }
+.note p:last-child { margin-bottom: 0; }
+.kvgrid { display: grid; grid-template-columns: repeat(var(--kvcols, 2), minmax(0, 1fr)); gap: 6px 18px; margin: 0; }
+.kvgrid > div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); padding: 3px 0; font-size: 13px; }
+.kvgrid dt { color: var(--muted); }
+.kvgrid dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.kvgrid .s-good dd { color: var(--good); } .kvgrid .s-bad dd { color: var(--bad); } .kvgrid .s-warn dd { color: var(--warn); }
+.stat small { display: block; color: var(--muted); font-size: 11px; }
+a.fig { display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 6px; overflow: hidden; }
+a.fig.dark { background: #0b1020; border-color: #1e293b; }
+a.fig.nobg { background: transparent; }
+a.fig img { width: 100%; height: auto; object-fit: contain; display: block; cursor: zoom-in; }
+a.fig img.raster { width: auto; max-width: 100%; }
+.fig.ph { height: 160px; display: flex; align-items: center; justify-content: center; color: var(--muted); background: var(--soft); border-radius: 10px; }
+.layout-thumb .lt-meta { font-size: 12px; color: var(--muted); margin-top: 5px; }
+.gal-grid { display: grid; grid-template-columns: repeat(var(--galcols, 3), minmax(0, 1fr)); gap: 12px; }
+.gal-grid figure { margin: 0; }
+.gal-grid figcaption { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.gal-tabs, .tabs-bar { margin-bottom: 10px; }
+.tabsel { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.tabsel select, .ex-controls select, .tbl-tools input, .ex-filters input { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; background: var(--paper); max-width: 100%; }
+.ex-filters input { width: 90px; }
+.tbl-tools input { width: 240px; }
+.ex-controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 10px; font-size: 13px; }
+.ex-controls label { display: inline-flex; gap: 6px; align-items: center; }
+.ex-filters { display: grid; gap: 6px; margin-bottom: 8px; }
+.ex-presets { margin-bottom: 8px; }
+.ex-plots.facets { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 8px; }
+.chart { width: 100%; min-height: 120px; }
+table.blist th .u { font-weight: 400; opacity: 0.8; }
+table.blist tr.grp th { position: static; text-align: center; cursor: default; border-bottom: 0; }
+table.blist tr.grp th.g { background: var(--soft); color: var(--ink); border-radius: 6px 6px 0 0; }
+table.blist td.s-good { color: var(--good); font-weight: 600; } table.blist td.s-bad { color: var(--bad); font-weight: 600; }
+table.blist td.s-warn { color: var(--warn); font-weight: 600; } table.blist td.s-muted { color: var(--muted); }
+table.blist tr[data-s="good"] { background: color-mix(in srgb, var(--goodbg) 55%, transparent); }
+table.blist tr[data-s="bad"] { background: color-mix(in srgb, var(--badbg) 55%, transparent); }
+table.blist tr[data-s="warn"] { background: color-mix(in srgb, var(--warnbg) 55%, transparent); }
+table.blist tbody tr:not(.click) { cursor: default; }
+.pagenav { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.pagenav a { padding: 7px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; }
+.pagenav a:hover { color: var(--ink); text-decoration: none; }
+.pagenav a.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+@media (max-width: 900px) {
+  .sec-body.grid-2, .sec-body.grid-3, .sec-body.grid-4 { grid-template-columns: 1fr; }
+  .kvgrid { grid-template-columns: 1fr; }
+  .gal-grid { grid-template-columns: 1fr 1fr; }
+  .tbl-tools input { width: 100%; }
+  .ex-plots.facets { grid-template-columns: 1fr; }
+}

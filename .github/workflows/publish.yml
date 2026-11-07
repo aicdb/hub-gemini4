@@ -105,12 +105,30 @@ jobs:
             echo "${id}: $(git -C "src/${name}" rev-parse --short HEAD), $(du -sh "src/${name}/${dir}" | cut -f1)"
           done < sources.lock
 
+      - uses: actions/setup-python@v5
+        if: steps.plan.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install layout-thumbnail renderer
+        if: steps.plan.outputs.skip != 'true'
+        run: python -m pip install --quiet "gdstk>=0.9.50,<2" "pillow>=10.1,<13"
+
+      - name: Restore thumbnail cache
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/aicdb-hub/thumbs
+          key: thumbs-${{ github.run_id }}
+          restore-keys: thumbs-
+
       - name: Build site
         if: steps.plan.outputs.skip != 'true'
         env:
           HUB_FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
         run: |
-          python3 tools/hubkit.py build --root src --out _site
+          python tools/hubkit.py build --root src --out _site
+          rc=$?; [ $rc -eq 0 ] || [ $rc -eq 1 ] || exit $rc
           du -sh _site
           {
             echo "### Hub build"
