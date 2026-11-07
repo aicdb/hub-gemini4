@@ -387,11 +387,11 @@
     const t = themeColors();
     const ax = { gridcolor: t.line, zerolinecolor: t.line, linecolor: t.line, tickcolor: t.line, automargin: true, title: { font: { size: 12 } } };
     return {
-      height, autosize: true, margin: { l: 60, r: 20, t: 30, b: 50 },
+      height, autosize: true, margin: { l: 60, r: 20, t: 40, b: 50 },
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', colorway: COLORWAY,
       font: { family: 'Inter, system-ui, sans-serif', size: 12, color: t.ink },
       xaxis: ax, yaxis: ax, xaxis2: ax, yaxis2: ax, xaxis3: ax, yaxis3: ax, xaxis4: ax, yaxis4: ax,
-      legend: { orientation: 'h', y: -0.2, font: { size: 11 } }, hoverlabel: { font: { size: 11 } },
+      legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom', font: { size: 11 } }, hoverlabel: { font: { size: 11 } },
     };
   }
   function filterTraces(traces, ctx) {

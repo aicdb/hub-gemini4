@@ -528,7 +528,8 @@ def detail_doc(c, d):
 
     def rowp(label, kp, unit="", d_=4, scale=1.0, siu=None, rec=None):
         f = (lambda v: si(mul(v, scale), siu, d_)) if siu else (lambda v: fx(v, unit, d_))
-        r = [label, f(fpre.get(kp)), {"v": f(fp.get(kp)) + fail if kp not in ("fs_msps", "power_uw") else f(fp.get(kp)), "s": "good" if ok else "warn"}, f(ffull.get(kp))]
+        sfx = fail if kp not in ("fs_msps", "power_uw") else ""
+        r = [label, f(fpre.get(kp)) + sfx, {"v": f(fp.get(kp)) + sfx, "s": "good" if ok else "warn"}, f(ffull.get(kp)) + sfx]
         if sleep:
             r.append(rec if rec is not None else "—")
         return r
