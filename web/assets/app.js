@@ -154,20 +154,49 @@ function resolve(d, stage = S.stage, fb = S.fb === '1') {
   }
   return null;
 }
-function resolveMask(mask, robustMask) {
+function resolveMask(mask, robustMask, verMask = mask) {
   const idx = STAGES.indexOf(S.stage);
-  for (let i = idx; i >= (S.fb === '1' ? 0 : idx); i--) if (mask & (1 << i)) return { i, robust: !!(robustMask & (1 << i)) };
+  for (let i = idx; i >= (S.fb === '1' ? 0 : idx); i--) {
+    if (!(mask & (1 << i))) continue;
+    for (let j = i; j >= (S.fb === '1' ? 0 : i); j--) if (verMask & (1 << j)) return { i, robust: !!(robustMask & (1 << j)) };
+    return { i, robust: false };
+  }
   return null;
 }
 const physOk = (d) => !!(d.physical?.drc && d.physical?.lvs);
+/** metric value with per-metric fallback (a metric missing at the resolved stage comes from an earlier stage) */
+function mval(d, k, r = resolve(d)) {
+  if (r && r.r.metrics?.[k] != null) return { v: r.r.metrics[k], st: r.st, fb: r.fallback };
+  if (S.fb !== '1') return null;
+  for (let i = (r ? STAGES.indexOf(r.st) : STAGES.indexOf(S.stage) + 1) - 1; i >= 0; i--) {
+    const x = d.results?.[STAGES[i]]?.metrics?.[k];
+    if (x != null) return { v: x, st: STAGES[i], fb: true };
+  }
+  return null;
+}
+/** verification fields (robust / pvt / mc) with the same per-field fallback */
+function vinfo(d, r = resolve(d)) {
+  const out = {};
+  for (const f of ['robust', 'pvt', 'mc']) {
+    if (r && r.r[f] != null) { out[f] = r.r[f]; out[`${f}St`] = r.st; continue; }
+    if (S.fb !== '1') continue;
+    for (let i = (r ? STAGES.indexOf(r.st) : STAGES.indexOf(S.stage) + 1) - 1; i >= 0; i--) {
+      const x = d.results?.[STAGES[i]]?.[f];
+      if (x != null) { out[f] = x; out[`${f}St`] = STAGES[i]; break; }
+    }
+  }
+  return out;
+}
+const stTag = (st) => (st && st !== S.stage ? ` <span class="vfb" title="from ${STAGE_LABEL[st]}">${STAGE_SHORT[st]}</span>` : '');
+const fmtM = (d, m, r) => { const x = mval(d, m.key, r); return x ? `${fmt(x.v, m)}${x.st !== (r?.st || S.stage) ? stTag(x.st) : ''}` : '—'; };
 
 /* global filters shared by every tab */
 function passGlobalRow(row) {
-  const [tech, vdd, , mask, phys, robust] = row;
+  const [tech, vdd, , mask, phys, robust, verMask = mask] = row;
   if (S.tech && tech !== S.tech) return false;
   if (S.vdd && String(vdd) !== S.vdd) return false;
   if (S.ver === 'clean' && !phys) return false;
-  if (S.ver === 'robust') { const r = resolveMask(mask, robust); if (!r || !r.robust) return false; }
+  if (S.ver === 'robust') { const r = resolveMask(mask, robust, verMask); if (!r || !r.robust) return false; }
   return true;
 }
 function designText(c, d) {
@@ -181,7 +210,7 @@ function passGlobal(c, d) {
   if (S.tech && d.technology !== S.tech) return false;
   if (S.vdd && String(d.vdd) !== S.vdd) return false;
   if (S.ver === 'clean' && !physOk(d)) return false;
-  if (S.ver === 'robust' && !resolve(d)?.r.robust) return false;
+  if (S.ver === 'robust' && !vinfo(d).robust) return false;
   if (S.q) {
     const t = designText(c, d);
     if (!S.q.toLowerCase().split(/\s+/).filter(Boolean).every((w) => t.includes(w))) return false;
@@ -374,7 +403,7 @@ async function renderSearch(main) {
     const r = resolve(d);
     const m = c._metric[(c._fam[d.family]?.card_metrics || c.card_metrics)[0]];
     return `<tr data-href="${esc(tabHref(c.id, d.id))}"><td class="l">${esc(c.name)}</td><td class="l">${esc(d.title)}</td>
-      <td>${fmtV(d.vdd)}</td><td>${m ? `${esc(m.label)}: ${r ? fmt(r.r.metrics[m.key], m) : '—'}` : ''}</td>
+      <td>${fmtV(d.vdd)}</td><td>${m ? `${esc(m.label)}: ${r ? fmtM(d, m, r) : '—'}` : ''}</td>
       <td class="l">${r ? STAGE_LABEL[r.st] : '—'}</td></tr>`;
   }).join('');
   main.innerHTML = `<div class="panel"><div class="section-head"><h2>Search results for “${esc(S.q)}”</h2>
@@ -413,7 +442,7 @@ async function renderComponent(main) {
   const list = base.filter((d) => axesUsed.every((ak) => !S.f[ak] || d.axes[ak] === S.f[ak]));
   const withStage = list.filter((d) => resolve(d));
   const exact = list.filter((d) => d.results?.[S.stage]).length;
-  const robust = list.filter((d) => resolve(d)?.r.robust).length;
+  const robust = list.filter((d) => vinfo(d).robust).length;
 
   const fam = c._fam[S.fam];
   const famTabs = c.families?.length ? `<div class="subtabs">${c.families.map((f) => {
@@ -499,7 +528,7 @@ async function renderComponent(main) {
 function sorted(c, list) {
   if (!S.sort) return list;
   const [k, dir] = S.sort.split(':');
-  const val = (d) => resolve(d)?.r.metrics?.[k];
+  const val = (d) => mval(d, k)?.v;
   return [...list].sort((a, b) => {
     const x = val(a), y = val(b);
     if (x == null && y == null) return a._i - b._i;
@@ -513,13 +542,15 @@ function cellClass(d, r, status, c) {
   if (d.physical?.drc === false || d.physical?.lvs === false) return 'bad';
   if (!r) return 'nodata';
   if (status && c._metric[status.metric]) {          // colour by metric thresholds
-    const v = r.r.metrics?.[status.metric];
+    const v = mval(d, status.metric, r)?.v;
     if (v == null) return 'nodata';
     const hi = (c._metric[status.metric].better || 'high') === 'high';
     const ok = (t) => (t == null ? true : hi ? v >= t : v <= t);
     return ok(status.good) ? '' : ok(status.warn) ? 'warn' : 'bad';
   }
-  if (r.r.robust === false) return 'warn';
+  const vi = vinfo(d, r);
+  if (vi.robust === false) return 'warn';
+  if (vi.robust === undefined && !vi.pvt) return 'noeval';
   return '';
 }
 
@@ -554,21 +585,21 @@ function renderMatrix(view, c, list) {
     if (!ds) return '<td class="cell empty"></td>';
     const d = ds.find((x) => resolve(x)) || ds.find((x) => !x.na) || ds[0];
     const r = resolve(d);
-    const met = r?.r.metrics || {};
+    const vi = vinfo(d, r);
     const tip = `${d.title}${d.na ? ` — not applicable: ${d.na}` : r ? ` — ${STAGE_LABEL[r.st]}` : ` — no ${STAGE_LABEL[S.stage]} result`}${ds.length > 1 ? `\n+${ds.length - 1} more: ${ds.slice(1, 6).map((x) => x.id).join(', ')}` : ''}`;
     return `<td class="cell ${cellClass(d, r, mx.status, c)}" data-id="${esc(d.id)}" title="${esc(tip)}">
       ${r?.fallback ? `<span class="fb">${STAGE_SHORT[r.st]}</span>` : ''}
-      <div class="v1">${d.na ? 'n/a' : r ? fmt(met[m1?.key], m1) : 'no data'}</div>
-      ${mRest.slice(0, 4).map((mm) => `<div class="v2">${r ? `${esc(mm.label)} ${fmt(met[mm.key], mm)}` : '&nbsp;'}</div>`).join('')}
-      <div class="v2">${r?.r.pvt ? `PVT ${r.r.pvt.pass}/${r.r.pvt.total}` : ''}${physOk(d) ? `${r?.r.pvt ? ' · ' : ''}DRC/LVS ✓` : ''}${ds.length > 1 ? ` <span class="more">+${ds.length - 1}</span>` : ''}</div>
+      <div class="v1">${d.na ? 'n/a' : r ? (m1 ? fmtM(d, m1, r) : '') : 'no data'}</div>
+      ${mRest.slice(0, 4).map((mm) => `<div class="v2">${r ? `${esc(mm.label)} ${fmtM(d, mm, r)}` : '&nbsp;'}</div>`).join('')}
+      <div class="v2">${r && vi.pvt ? `PVT ${vi.pvt.pass}/${vi.pvt.total}${stTag(vi.pvtSt)}` : ''}${physOk(d) ? `${r && vi.pvt ? ' · ' : ''}DRC/LVS ✓` : ''}${ds.length > 1 ? ` <span class="more">+${ds.length - 1}</span>` : ''}</div>
     </td>`;
   }).join('')).join('')}</tr>`).join('');
   view.innerHTML = `<div class="table-scroll"><table class="matrix"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table></div>
     <div class="legend"><span>Cell: <b>${esc(m1?.label || '')}</b>${mRest.slice(0, 4).map((mm) => ` / ${esc(mm.label)}`).join('')} at <b>${STAGE_LABEL[S.stage]}</b></span>
-      <span><i style="background:var(--goodbg)"></i>meets generator criteria</span><span><i style="background:var(--warnbg)"></i>not robust over PVT/MC</span>
+      <span><i style="background:var(--goodbg)"></i>meets generator criteria</span><span><i style="background:var(--warnbg)"></i>not robust over PVT/MC</span><span><i style="background:var(--noevalbg);border:1px dashed var(--line)"></i>PVT/MC not evaluated</span>
       <span><i style="background:var(--badbg)"></i>DRC/LVS failed</span><span><i style="background:var(--nonebg)"></i>no result at this stage</span>
       ${mx.status && c._metric[mx.status.metric] ? `<span>colour: ${esc(c._metric[mx.status.metric].label)} thresholds (green ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.good, c._metric[mx.status.metric])}${mx.status.warn != null ? `, amber ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.warn, c._metric[mx.status.metric])}` : ''})</span>` : ''}
-      <span><b>PRE/PART</b> corner tag = value filled from an earlier stage · <b>n/a</b> = not applicable (hover for the reason)</span></div>`;
+      <span><b>PRE/PART</b> tag = value filled from an earlier stage (per cell or per value) · <b>n/a</b> = not applicable (hover for the reason)</span></div>`;
   view.querySelector('tbody').onclick = (e) => { const td = e.target.closest('td[data-id]'); if (td) location.hash = tabHref(c.id, td.dataset.id); };
 }
 
@@ -584,8 +615,10 @@ function badgesOf(d, r) {
   const p = d.physical || {};
   const b = (ok, name) => (ok === undefined || ok === null ? '' : `<span class="badge ${ok ? 'good' : 'bad'}">${name} ${ok ? '✓' : '✗'}</span>`);
   const st = d.na ? `<span class="badge" title="${esc(d.na)}">not applicable</span>` : r ? `<span class="badge ${r.fallback ? 'warn' : 'acc'}">${STAGE_LABEL[r.st]}</span>` : `<span class="badge">no ${STAGE_LABEL[S.stage]}</span>`;
-  const rb = r?.r.robust === true ? '<span class="badge good">robust</span>' : r?.r.robust === false ? '<span class="badge warn">not robust</span>' : '';
-  const pvt = r?.r.pvt ? `<span class="badge">PVT ${r.r.pvt.pass}/${r.r.pvt.total}</span>` : '';
+  const vi = r ? vinfo(d, r) : {};
+  const tg = (st) => (st && st !== r?.st ? ` (${STAGE_SHORT[st]})` : '');
+  const rb = vi.robust === true ? `<span class="badge good">robust${tg(vi.robustSt)}</span>` : vi.robust === false ? `<span class="badge warn">not robust${tg(vi.robustSt)}</span>` : '';
+  const pvt = vi.pvt ? `<span class="badge">PVT ${vi.pvt.pass}/${vi.pvt.total}${tg(vi.pvtSt)}</span>` : '';
   return st + rb + pvt + b(p.drc, 'DRC') + b(p.lvs, 'LVS') + b(p.pex, 'PEX');
 }
 function renderCards(view, c, list) {
@@ -607,7 +640,7 @@ function renderCards(view, c, list) {
     }
     const r = resolve(d);
     const t = thumbOf(c, d);
-    const kv = card.slice(0, 12).map((k) => { const m = c._metric[k]; return m ? `<div><span>${esc(m.label)}</span><b>${r ? fmt(r.r.metrics[k], m) : '—'}</b></div>` : ''; }).join('');
+    const kv = card.slice(0, 12).map((k) => { const m = c._metric[k]; return m ? `<div><span>${esc(m.label)}</span><b>${r ? fmtM(d, m, r) : '—'}</b></div>` : ''; }).join('');
     return `${head}<a class="card" href="${tabHref(c.id, d.id)}">
       <div class="thumb">${t ? `<img loading="lazy" decoding="async" src="${t}" alt="">` : '<span class="ph">no preview</span>'}</div>
       <div class="body"><h3>${esc(d.title)}</h3><div class="id">${esc(d.id)}</div>
@@ -620,7 +653,7 @@ function renderCards(view, c, list) {
 
 function renderTable(view, c, list) {
   const axes = Object.keys(c.axes).filter((ak) => list.some((d) => d.axes[ak] !== undefined));
-  const used = c.metrics.filter((m) => list.some((d) => { const r = resolve(d); return r && r.r.metrics[m.key] != null; }));
+  const used = c.metrics.filter((m) => list.some((d) => mval(d, m.key) != null));
   const [sk, sd] = (S.sort || ':').split(':');
   const head = `<tr><th class="l">Design</th><th>V<sub>DD</sub></th>${axes.map((a) => `<th class="l">${esc(c.axes[a].label)}</th>`).join('')}<th class="l">Stage</th>
     ${used.map((m) => `<th data-k="${esc(m.key)}" class="${sk === m.key ? 'sorted' : ''}" title="${esc(m.desc ? `${m.desc} — click to sort` : 'click to sort')}">${esc(m.label)}${m.unit && !m.si ? ` (${esc(m.unit)})` : m.si ? ` (${esc(m.unit)})` : ''}${sk === m.key ? (sd === 'asc' ? ' ↑' : ' ↓') : ''}</th>`).join('')}
@@ -630,8 +663,8 @@ function renderTable(view, c, list) {
     return `<tr data-id="${esc(d.id)}"><td class="l">${esc(d.title)}</td><td>${fmtV(d.vdd)}</td>
       ${axes.map((a) => `<td class="l">${esc(axisLabel(c, a, d.axes[a]))}</td>`).join('')}
       <td class="l ${r?.fallback ? 'fbv' : ''}">${r ? STAGE_LABEL[r.st] : '—'}</td>
-      ${used.map((m) => `<td class="${r?.fallback ? 'fbv' : ''}">${r ? fmt(r.r.metrics[m.key], m) : '—'}</td>`).join('')}
-      <td>${r?.r.pvt ? `${r.r.pvt.pass}/${r.r.pvt.total}` : '—'}</td><td class="l">${physOk(d) ? '✓' : d.physical?.drc === false || d.physical?.lvs === false ? '✗' : '—'}</td></tr>`;
+      ${used.map((m) => { const x = mval(d, m.key, r); return `<td class="${x?.fb ? 'fbv' : ''}"${x?.fb ? ` title="from ${STAGE_LABEL[x.st]}"` : ''}>${x ? fmt(x.v, m) : '—'}</td>`; }).join('')}
+      <td${vinfo(d, r).pvtSt && vinfo(d, r).pvtSt !== S.stage ? ' class="fbv"' : ''}>${vinfo(d, r).pvt ? `${vinfo(d, r).pvt.pass}/${vinfo(d, r).pvt.total}` : '—'}</td><td class="l">${physOk(d) ? '✓' : d.physical?.drc === false || d.physical?.lvs === false ? '✗' : '—'}</td></tr>`;
   }).join('');
   view.innerHTML = `<div class="toolbar"><span class="subtle">Click a column to sort · fallback values in <i>italics</i></span><button class="plain" id="csv">Download CSV ↓</button></div>
     <div class="table-scroll" style="max-height:70vh"><table class="list"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
@@ -647,8 +680,9 @@ function renderTable(view, c, list) {
     const lines = [['id', 'title', 'technology', 'vdd_V', ...axes, 'stage', ...used.map((m) => `${m.key} [${m.unit || ''}]`), 'pvt_pass', 'pvt_total', 'drc', 'lvs'].map(q).join(',')];
     for (const d of list) {
       const r = resolve(d);
-      lines.push([d.id, d.title, d.technology, d.vdd, ...axes.map((a) => d.axes[a]), r?.st, ...used.map((m) => r?.r.metrics[m.key]),
-        r?.r.pvt?.pass, r?.r.pvt?.total, d.physical?.drc, d.physical?.lvs].map(q).join(','));
+      const vi = vinfo(d, r);
+      lines.push([d.id, d.title, d.technology, d.vdd, ...axes.map((a) => d.axes[a]), r?.st, ...used.map((m) => mval(d, m.key, r)?.v),
+        vi.pvt?.pass, vi.pvt?.total, d.physical?.drc, d.physical?.lvs].map(q).join(','));
     }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
@@ -696,13 +730,14 @@ async function renderDetail(main, c) {
   const params = Object.entries(d.params || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
   const dls = [...Object.entries(FILE_LABEL).filter(([k]) => f[k]).map(([k, l]) => ({ label: l, file: f[k] })), ...(d.downloads || [])];
   const axesChips = Object.entries(d.axes || {}).map(([k, v]) => `<span class="badge acc" title="${esc(c.axes[k]?.label || k)}">${esc(axisLabel(c, k, v))}</span>`).join('');
-  const idx = c.designs.indexOf(d);
-  const prev = c.designs[idx - 1], next = c.designs[idx + 1];
+  const navList = c.designs.filter((x) => (!d.family || x.family === d.family) && (x === d || passGlobal(c, x)));
+  const idx = navList.indexOf(d);
+  const prev = navList[idx - 1], next = navList[idx + 1];
 
   main.innerHTML = `
     <div class="crumbs"><a href="${tabHref('')}">Hub</a> / <a href="${tabHref(c.id)}">${esc(c.name)}</a>${fam ? ` / <a href="${hashFor({ ...S, design: '', fam: fam.id, page: '' })}">${esc(fam.label)}</a>` : ''} / <span class="mono">${esc(d.id)}</span>
       <span class="dnav">${prev ? `<a href="${tabHref(c.id, prev.id)}" title="${esc(prev.title)}">← prev</a>` : ''}
-        <select id="djump" title="Jump to another design">${c.designs.filter((x) => !d.family || x.family === d.family).map((x) => `<option value="${esc(x.id)}" ${x.id === d.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+        <select id="djump" title="Jump to another design (follows the global options)">${navList.map((x) => `<option value="${esc(x.id)}" ${x.id === d.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
         ${next ? `<a href="${tabHref(c.id, next.id)}" title="${esc(next.title)}">next →</a>` : ''}</span></div>
     <section class="intro" style="grid-template-columns:1fr">
       <div>

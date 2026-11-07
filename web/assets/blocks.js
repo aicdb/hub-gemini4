@@ -360,6 +360,7 @@
     const draw = () => {
       drawHead();
       const r = current();
+      if (!rows.length && b.stage_column) { tbody.innerHTML = `<tr><td colspan="${cols.length}" class="l s-muted">No rows at ${STAGE_LABEL[ctx.stage]}${ctx.fb ? ' or earlier' : ''} — switch the Simulation option.</td></tr>`; return; }
       tbody.innerHTML = r.slice(0, limit).map((x) => {
         const href = x._design ? ctx.designHref(String(x._design)) : x._href ? esc(x._href) : null;
         return `<tr${href ? ` class="click" data-href="${href}"` : ''}${x._s ? ` data-s="${esc(x._s)}"` : ''}>${cols.map((c) => cellHtml(c, x[c.key])).join('')}</tr>`;
@@ -397,7 +398,7 @@
   }
   function baseLayout(height) {
     const t = themeColors();
-    const ax = { gridcolor: t.line, zerolinecolor: t.line, linecolor: t.line, tickcolor: t.line, automargin: true, title: { font: { size: 12 } } };
+    const ax = { gridcolor: t.line, zerolinecolor: t.line, linecolor: t.line, tickcolor: t.line, automargin: true, exponentformat: 'SI', title: { font: { size: 12 } } };
     return {
       height, autosize: true, margin: { l: 60, r: 20, t: 40, b: 50 },
       paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', colorway: COLORWAY,

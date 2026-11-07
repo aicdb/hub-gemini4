@@ -502,18 +502,21 @@ def normalize(ex: Export, src: dict, commit: str | None) -> dict:
 
 
 def compact_rows(comp: dict) -> list:
-    """Per-design summary for the overview: [tech, vdd, family, stageMask, physOk, robustMask]."""
+    """Per-design summary for the overview: [tech, vdd, family, stageMask, physOk, robustMask, verMask]
+    (verMask: stages that carry a robust verdict, for per-field fallback)."""
     rows = []
     for d in comp["designs"]:
-        mask = robust = 0
+        mask = robust = ver = 0
         for i, st in enumerate(STAGES):
             r = d["results"].get(st)
             if r is not None:
                 mask |= 1 << i
+                if r.get("robust") is not None:
+                    ver |= 1 << i
                 if r.get("robust"):
                     robust |= 1 << i
         ph = d.get("physical", {})
-        rows.append([d["technology"], d.get("vdd"), d.get("family"), mask, 1 if (ph.get("drc") and ph.get("lvs")) else 0, robust])
+        rows.append([d["technology"], d.get("vdd"), d.get("family"), mask, 1 if (ph.get("drc") and ph.get("lvs")) else 0, robust, ver])
     return rows
 
 
