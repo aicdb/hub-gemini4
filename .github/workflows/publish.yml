@@ -38,6 +38,9 @@ jobs:
       skip: ${{ steps.plan.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # otherwise checkout's GITHUB_TOKEN auth header (hub repo only) overrides HUB_SOURCES_TOKEN for git calls
+          persist-credentials: false
 
       - name: Resolve source commits
         id: plan
