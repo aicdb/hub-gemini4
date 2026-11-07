@@ -127,8 +127,9 @@ jobs:
         env:
           HUB_FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
         run: |
-          python tools/hubkit.py build --root src --out _site
-          rc=$?; [ $rc -eq 0 ] || [ $rc -eq 1 ] || exit $rc
+          rc=0; python tools/hubkit.py build --root src --out _site || rc=$?
+          # 1 = some component failed validation (others still published); anything else is fatal
+          [ $rc -eq 0 ] || [ $rc -eq 1 ] || exit $rc
           du -sh _site
           {
             echo "### Hub build"
