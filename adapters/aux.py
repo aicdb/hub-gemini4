@@ -27,6 +27,7 @@ Honesty rules applied (see the inventory / report):
     left out; clip-limit values (cm_idac R_out = 5000 MOhm, cm_idac BW <= 0, bm_iref TC at 8/450 ppm/C)
     are omitted from results and flagged in the detail tables.
 """
+import ast
 import json
 import sys
 from datetime import datetime, timezone
@@ -117,12 +118,12 @@ FAM = {
            ["f_osc", "power", "energy"], [("f_osc / energy per cycle", ["f_osc", "energy"]), ("Frequency error / f_osc", ["f_err", "f_osc"]),
                                 ("Duty cycle / swing", ["duty", "swing"]), ("Supply / temperature sensitivity", ["vdd_sens", "tc_f"])],
            ["f_osc", "power", "energy", "f_err", "duty", "swing", "t_start", "vdd_sens", "tc_f", "mc_cv", "area"]),
-    "tcap": ([("c_max", "c_max_pf", 1e-12), ("c_min", "c_min_pf", 1e-12), ("c_lsb", "c_lsb_ff", 1e-15), ("c_err", "c_err_pct", 1),
+    "tcap": ([("c_max", "c_max_pf", 1e-12), ("c_min", "c_min_pf", 1e-12), ("c_err", "c_err_pct", 1),
               ("tuning_ratio", "tuning_ratio", 1), ("q_100m", "q_factor_100m", 1), ("q_min_100m", "q_min_100m", 1), ("esr", "esr_ohm", 1),
               ("tcap_fom", "fom", 1), ("inl", "inl_lsb", 1), ("dnl", "dnl_lsb", 1)],
              ["c_max", "tuning_ratio", "q_100m"], [("C_max / Q @ 100 MHz", ["c_max", "q_100m"]), ("C_min / tuning ratio", ["c_min", "tuning_ratio"]),
                                          ("ESR / INL", ["esr", "inl"])],
-             ["c_max", "c_min", "tuning_ratio", "q_100m", "esr", "inl", "dnl", "c_lsb", "c_err", "tcap_fom", "mc_cv", "area"]),
+             ["c_max", "c_min", "tuning_ratio", "q_100m", "esr", "inl", "dnl", "q_min_100m", "c_err", "tcap_fom", "mc_cv", "area"]),
     "tres": ([("r_nom", "r_nom_kohm", 1e3), ("r_min", "r_min_kohm", 1e3), ("r_max", "r_max_kohm", 1e3), ("r_err", "r_err_pct", 1),
               ("tuning_ratio", "tuning_ratio", 1), ("lin_err", "linearity_err_pct", 1), ("bw", "bw_3db_mhz", 1e6),
               ("tc_r", "temp_coeff_ppm_c", 1), ("inl", "inl_lsb", 1), ("dnl", "dnl_lsb", 1)],
@@ -134,11 +135,11 @@ FAM = {
                 ["i_fs", "rout", "v_comp"], [("I_FS / compliance", ["i_fs", "v_comp"]), ("Copy error / INL", ["copy_err", "inl"]), ("Bandwidth / settling", ["bw", "t_settle"])],
                 ["i_fs", "rout", "v_comp", "copy_err", "inl", "bw", "t_settle", "dnl", "i_lsb", "power", "mc_cv", "area"]),
     "dco_vco": ([("f_center", "f_center_mhz", 1e6), ("f_min", "f_min_mhz", 1e6), ("f_max", "f_max_mhz", 1e6), ("f_err", "abs_freq_err_pct", 1),
-                 ("tuning_range", "tuning_range_pct", 1), ("tuning_ratio", "tuning_ratio", 1), ("energy", "energy_fj", 1e-15),
+                 ("tuning_range", "tuning_range_pct", 1), ("energy", "energy_fj", 1e-15),
                  ("power", "power_uw", 1e-6), ("swing", "swing_v", 1), ("duty", "duty_pct", 1), ("tc_f", "temp_coeff_ppm_c", 1)],
                 ["f_center", "tuning_range", "power"], [("f_center / power", ["f_center", "power"]), ("Tuning span f_min / f_max", ["f_min", "f_max"]),
                                                ("Frequency error / f_center", ["f_err", "f_center"])],
-                ["f_center", "f_min", "f_max", "tuning_range", "kdco", "kvco", "power", "energy", "f_err", "tuning_ratio", "mc_cv", "area"]),
+                ["f_center", "f_min", "f_max", "tuning_range", "kdco", "kvco", "power", "energy", "f_err", "duty", "mc_cv", "area"]),
     "cml_ro": ([("f_osc", "f_osc_mhz", 1e6), ("f_err", "abs_freq_err_pct", 1), ("vpp_diff", "vpp_diff_v", 1), ("tuning_range", "tuning_range_pct", 1),
                 ("kvco", "kvco_mhz_per_v", 1e6), ("energy", "energy_fj", 1e-15), ("power", "power_uw", 1e-6), ("duty", "duty_pct", 1),
                 ("t_start", "t_start_ns", 1e-9), ("vdd_sens", "vdd_sens_pct_per_v", 1), ("tc_f", "temp_coeff_ppm_c", 1)],
@@ -157,7 +158,7 @@ FAM = {
                                       ("Min supply / FoM", ["min_vdd", "vref_fom"])],
                 ["tc_ref", "vref", "line_sens", "psrr_100", "power", "min_vdd", "rout", "vref_fom", "mc_cv", "area"]),
     "cml_dco_vco": ([("f_center", "f_center_mhz", 1e6), ("f_min", "f_min_mhz", 1e6), ("f_max", "f_max_mhz", 1e6), ("f_err", "abs_freq_err_pct", 1),
-                     ("tuning_range", "tuning_range_pct", 1), ("tuning_ratio", "tuning_ratio", 1), ("vpp_diff", "vpp_diff_v", 1),
+                     ("tuning_range", "tuning_range_pct", 1), ("vpp_diff", "vpp_diff_v", 1),
                      ("energy", "energy_fj", 1e-15), ("power", "power_uw", 1e-6), ("duty", "duty_pct", 1), ("vdd_sens", "vdd_sens_pct_per_v", 1),
                      ("tc_f", "temp_coeff_ppm_c", 1), ("inl", "inl_lsb", 1), ("dnl", "dnl_lsb", 1)],
                     ["f_center", "tuning_range", "power"], [("f_center / power", ["f_center", "power"]), ("Tuning linearity INL / DNL", ["inl", "dnl"]),
@@ -173,17 +174,33 @@ FAM = {
 for f in ("dco_vco", "cml_dco_vco"):   # K_DCO (per LSB) / K_VCO (per V) share one source field; split by kvco_unit
     FAM[f][0].extend([("kvco", "kvco_mhz_per_unit", 1e6), ("kdco", "kvco_mhz_per_unit", 1e6)])
 
-# values that sit on a generator clip limit are bounds, not measurements -> omitted from results
+# values that sit on a generator clip limit / floor, or are site-normaliser placeholders, are not measurements
+# -> omitted from results with a per-design note (keep=True: value kept, but annotated as a bound)
+PH = "site-normaliser placeholder (the generator's measured value was 0 or missing; `x or default` replaced it)"
 CLIPS = {
     ("cm_idac", "rout"): (lambda v: v >= 5000.0, "R_out reached the 5000 MΩ clip limit of the |Z_out| extraction"),
-    ("cm_idac", "bw"): (lambda v: v <= 0.0, "no −3 dB point found in the AC sweep (BW reported as 0)"),
+    ("cm_idac", "bw"): (lambda v: v <= 0.0, "BW referred to an R_out at the 5000 MΩ clip limit (rounded to 0 in the docs); not meaningful"),
+    ("cm_idac", "inl"): (lambda v: v == 0.05, f"INL 0.05 LSB is a {PH}"),
+    ("cm_idac", "dnl"): (lambda v: v == 0.03, f"DNL 0.03 LSB is a {PH}"),
+    ("tres", "inl"): (lambda v: v == 0.05, f"INL 0.05 LSB is a {PH}"),
+    ("tres", "dnl"): (lambda v: v == 0.03, f"DNL 0.03 LSB is a {PH}"),
+    ("clk_div", "ratio_err"): (lambda v: v == 0.15, f"division-ratio error 0.15 % is a {PH}"),
     ("bm_iref", "tc_ref"): (lambda v: v in (8.0, 450.0), "TC sits on the generator's 8 / 450 ppm/°C clip limit"),
+    ("bm_iref", "line_sens"): (lambda v: v in (0.03, 3.5), "line sensitivity sits on the generator's 0.03 / 3.5 %/V clip limit"),
+    ("bm_iref", "startup"): (lambda v: v == 1450.0, "start-up did not settle in the transient window; the value is the generator's RC estimate clipped at 1450 ns"),
+    ("vref_2t", "tc_ref"): (lambda v: v == 1.0, "TC at the site normaliser's 1.0 ppm/°C floor (simulated value is ≤ 1 ppm/°C)"),
+    ("vref_2t", "min_vdd"): (lambda v: v == 0.65, "minimum supply sits on the generator's 0.65 V floor (true value ≤ 0.65 V)"),
+    ("ro", "t_start"): (lambda v: v <= 0.0, "oscillation start-up reported as 0 (not measured)"),
+    ("cml_ro", "t_start"): (lambda v: v <= 0.0, "oscillation start-up reported as 0 (not measured)"),
 }
+KEEP_NOTES = {("clk_div", "f_max_in"): (lambda v: v >= 3.5, "f_max,in reached the 3.5 GHz top of the input sweep (lower bound)")}
+NO_PVT_CRITERION = ("tcap", "tres", "cm_idac")   # PVT corners carry no pass flag in the generator (site.py defaults them to pass)
+NO_MC = ("clk_div",)                              # docs MC for clk_div is synthesised by site.py (no f_max samples in the runs)
 PEX_NOTE = "Magic extraction of the full cell (devices + parasitic C, cthresh 0.01 fF; no wire R)"
 SAME_NOTE = "; all post-PEX metrics equal the pre-PEX values (DC quantities insensitive to the C-only extraction)"
 
 
-def stage(c, st, ft):
+def stage(c, st, ft, d=None):
     m = c.get(f"metrics_{st}")
     if not m:
         return None
@@ -191,23 +208,33 @@ def stage(c, st, ft):
     for key, field, scale in FAM[ft][0]:
         v = m.get(field)
         v = v if isnum(v) else None
-        if key in ("kvco", "kdco"):
+        if key in ("kvco", "kdco") and field == "kvco_mhz_per_unit":
             unit = m.get("kvco_unit") or ""
             if (key == "kvco") != unit.endswith("/V"):
                 v = None
         if v is not None and (ft, key) in CLIPS and CLIPS[(ft, key)][0](v):
             notes.append(f"{MLABEL[key]} omitted: {CLIPS[(ft, key)][1]}")
             v = None
+        if v is not None and (ft, key) in KEEP_NOTES and KEEP_NOTES[(ft, key)][0](v):
+            notes.append(KEEP_NOTES[(ft, key)][1])
         vals[key] = None if v is None else float(f"{v * scale:.6g}")
-    vals["mc_cv"] = c.get(f"mc_cv_{st}") if isnum(c.get(f"mc_cv_{st}")) else None
+    mc = (d or {}).get(f"mc_{st}") or {}
+    if ft in NO_MC:
+        vals["mc_cv"] = None
+        notes.append("MC spread omitted: the generator's Monte Carlo runs carry no f_max samples; the docs values are synthesised by the site generator")
+    else:
+        vals["mc_cv"] = c.get(f"mc_cv_{st}") if isnum(c.get(f"mc_cv_{st}")) else None
+        n = mc.get("n_runs")
+        if isnum(n) and n < 30 and vals["mc_cv"] is not None:
+            notes.append(f"MC spread from {n} valid runs (of 30)")
     vals["area"] = c.get("area_um2")
     r = {"metrics": vals}
     p, t = c.get(f"pvt_pass_{st}"), c.get(f"pvt_total_{st}")
-    if isnum(t) and t:
+    if ft in NO_PVT_CRITERION:
+        notes.append("no PVT pass criterion in the generator (corner values on the design page)")
+    elif isnum(t) and t:
         r["pvt"] = {"pass": p, "total": t}
         r["robust"] = p == t
-    else:
-        r["robust"] = False
     return r, notes
 
 
@@ -225,16 +252,32 @@ cards.sort(key=lambda c: (fam_order.get(c["family"], 99), topo_order.get(c["topo
                           tgt_order.get((c["family"], c["target_tag"]), 99), c["card_id"]))
 
 
+def summary_of(d):
+    """topology summary + the generator's design notes (notes are not otherwise searchable/visible at a glance)."""
+    if not d:
+        return ""
+    txt = d.get("topo_summary") or ""
+    notes = (d.get("design") or {}).get("notes")
+    if isinstance(notes, str) and notes.startswith("[") and notes.endswith("]"):
+        try:
+            notes = ast.literal_eval(notes)
+        except (ValueError, SyntaxError):
+            pass
+    if isinstance(notes, list):
+        notes = " ".join(str(x) for x in notes)
+    return f"{txt}\n\n*Generator notes:* {notes}" if notes else txt
+
+
 def design_record(c, d):
     cid, ft = c["card_id"], c["family"]
     results = {}
-    s = stage(c, "pre", ft)
+    s = stage(c, "pre", ft, d)
     if s:
         results["pre"] = s[0]
         if s[1]:
             s[0]["note"] = "; ".join(s[1])
     if c.get("has_post_pex"):
-        s = stage(c, "post", ft)
+        s = stage(c, "post", ft, d)
         if s:
             note = PEX_NOTE + ("; MOM lateral comb C added from calibrated model" if "_mom_" in c["topo"] else "")
             if c.get("metrics_pre") == c.get("metrics_post"):
@@ -254,17 +297,15 @@ def design_record(c, d):
     if ft == "clk_div" and (c.get("metrics_pre") or {}).get("div_ratio_nom") is not None:
         params["Nominal division ratio"] = f"÷{c['metrics_pre']['div_ratio_nom']}"
     params.update({"Ports": ", ".join(c.get("ports") or []), "MOSFETs": c.get("n_mos"), "Capacitors": c.get("n_caps"),
-                   "Resistors": c.get("n_res"), "Parasitic C (PEX)": c.get("parasitic_c_count"),
-                   "Generator spec status": c.get("status"), "Artifact SHA-256": c.get("sha256")})
+                   "Resistors": c.get("n_res"), "Parasitic C (PEX)": c.get("parasitic_c_count"), "Artifact SHA-256": c.get("sha256")})
     fl = topo_by.get(c["topo"], (None, {}))[1].get("device_flavor") or c.get("device_flavor") or ""
     rec = {
         "id": cid,
         "title": f"{c['topo_name']} · {c['vdd']} V · {c['target_label']}",
-        "summary": (d or {}).get("topo_summary") or "",
+        "summary": summary_of(d),
         "vdd": c["vdd"],
         "axes": {"topology": c["topo"], "target": c["target_tag"], "flavor": slug(fl)},
-        "tags": [t for t in (c.get("family_name"), c.get("device_flavor"), c.get("circuit_style"),
-                             "Spec ✓ (generator status pass)" if c.get("status") == "pass" else f"status: {c.get('status')}") if t],
+        "tags": [t for t in (c.get("family_name"), c.get("circuit_style")) if t],
         "physical": {"drc": None if c.get("drc_ok") is None else bool(c["drc_ok"]),
                      "lvs": None if c.get("lvs_ok") is None else bool(c["lvs_ok"]),
                      "pex": None if c.get("pex_ok") is None else bool(c["pex_ok"]),
@@ -286,10 +327,21 @@ for c in cards:
     if dpath.is_file():
         details[c["card_id"]] = json.loads(dpath.read_text())
 
+FLABEL = {("clk_div", "energy"): "Energy per input cycle", ("clk_div", "f_max_in"): "Max input frequency (≤ 3.5 GHz sweep)"}
+FDIGITS = {("cm_idac", "bw"): 2}
+FDESC = {
+    ("cml_ro", "kvco"): "Δf over the tuning sweep divided by the simulated control-node voltage swing; for the I_bias-tuned topologies "
+                        "this is the bias-node (vctrl) voltage, not an external control input.",
+    ("cm_idac", "bw"): "Source data are rounded to 0.01 MHz (10 kHz resolution).",
+    ("clk_div", "f_max_in"): "Highest swept input frequency with correct division; 3.5 GHz is the top of the sweep (lower bound there).",
+    ("clk_div", "lock_range"): "f_max,in − f_min with f_min = 0.25 GHz, the bottom of the sweep.",
+    ("bm_iref", "startup"): "95 % settling of I_REF after a 10 ns supply ramp; cards that did not settle are omitted (generator RC estimate).",
+}
 shared_pages = aux_pages.build_shared(docs, out, meta, cards, gmid)
 generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 manifest = []
-for f in fams:
+OLD_ORDER = ["ro", "tcap", "tres", "cm_idac", "dco_vco", "cml_ro", "cml_dco_vco", "clk_div", "vref_2t", "bm_iref"]
+for f in sorted(fams, key=lambda x: OLD_ORDER.index(x["tag"]) if x["tag"] in OLD_ORDER else 99):
     ft = f["tag"]
     fcards = [c for c in cards if c["family"] == ft]
     if not fcards:
@@ -298,7 +350,8 @@ for f in fams:
     used = {k for k, _, _ in fields} | {"mc_cv", "area"}
     summ = f"{f.get('summary', '').replace('`', '')} Primary metric on the retired site: {f['primary_metric_label']} ({f['primary_metric_unit']})."
     if ft == "clk_div":
-        summ += " Note: f_min is the lowest swept input (0.25 GHz) for every card, so the locking range is bounded by the sweep."
+        summ += (" Note: the input sweep spans 0.25–3.5 GHz, so f_min (0.25 GHz for every card) and an f_max,in of 3.5 GHz are sweep bounds; "
+                 "the generator ran no Monte Carlo on f_max (docs MC is synthetic and omitted).")
     if ft in EST_FAMS:
         summ += " Phase noise / jitter / FoM are analytic estimates and are shown on the design pages only."
     flavors = []
@@ -318,8 +371,10 @@ for f in fams:
         "generated": generated,
         "stats": [{"label": "topologies", "value": str(len(f["topologies"]))},
                   {"label": "DSE candidates", "value": f"{len(fd.get('points') or []):,}"},
-                  {"label": "PVT corners / card", "value": "15"}, {"label": "MC runs / card", "value": "30"}],
-        "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=si or None, better=b, digits=dg).items() if v is not None}
+                  {"label": "PVT corners / card", "value": "15"},
+                  {"label": "MC runs / card", "value": "n/a (synthetic in docs)" if ft in NO_MC else "up to 30"}],
+        "metrics": [{k: v for k, v in dict(key=k, label=FLABEL.get((ft, k), l), unit=u or None, si=si or None, better=b,
+                                           digits=FDIGITS.get((ft, k), dg), desc=FDESC.get((ft, k))).items() if v is not None}
                     for k, l, u, si, b, dg in METRICS if k in used],
         "axes": {
             "topology": {"label": "Topology", "values": [{"id": t["tag"], "label": t["short_name"]} for t in f["topologies"]]},

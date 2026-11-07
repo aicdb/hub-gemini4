@@ -21,7 +21,9 @@ const PREFIX = [[1e12, 'T'], [1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3,
 function num(v, digits = 3) {
   if (!isFinite(v)) return String(v);
   const a = Math.abs(v);
-  if (a >= 1e4) return Math.round(v).toLocaleString('en-US');
+  if (Number.isInteger(v) && a < 1e15) return v.toLocaleString('en-US');
+  if (a >= 10 ** Math.max(digits, 1)) return Math.round(v).toLocaleString('en-US');
+  if (a >= 1e4) return (+v.toPrecision(digits)).toLocaleString('en-US', { maximumFractionDigits: 20 });
   if (a === 0) return '0';
   return String(+v.toPrecision(digits));
 }

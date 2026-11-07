@@ -48,7 +48,7 @@ TGT_BAND = {"sub": "0.1–1 µA", "wi": "1–10 µA", "mi": "10–100 µA"}
 # old style.css light-theme palette (--c1..--c9, --s1, --s2, --good, --bad, --muted)
 C = {"c1": "#2a78d6", "c2": "#eb6834", "c3": "#1baf7a", "c4": "#eda100", "c5": "#e87ba4", "c6": "#008300",
      "c7": "#7d5bd6", "c8": "#a0522d", "c9": "#0891b2", "s1": "#2a78d6", "s2": "#eb6834", "good": "#1a7f37",
-     "bad": "#cf222e", "muted": "#74726c", "ink": "#3b3a37"}
+     "bad": "#cf222e", "muted": "theme:muted", "ink": "theme:ink"}
 ARCH_COL = {"san": C["c1"], "sap": C["c2"], "dt": C["c3"], "db": C["c4"], "fia": C["c5"], "dtx": C["c6"],
             "dbx": C["c7"], "miy": C["c8"], "scsa": C["c9"]}
 MIX_SYM = {"lv": "circle", "hvl": "square", "nat": "diamond"}
@@ -183,11 +183,31 @@ def gmid_text(card, g):
 
 
 def gmid_val(g):
-    """single simulated gm/Id value: N or P pair; FIA = mean of both pairs"""
+    """simulated gm/Id of the single input pair (None for two-pair FIA designs, reported per pair instead)"""
     g = g or {}
     if g.get("n") is not None and g.get("p") is not None:
-        return (g["n"] + g["p"]) / 2
+        return None
     return g.get("n") if g.get("n") is not None else g.get("p")
+
+
+TRIP_EDGE = 7.9e-3   # find_trip_after_overdrive bisects 9x over +-8 mV -> 31.25 uV bins; |trip| >= ~8 mV = window edge
+
+
+def in_dev_text(D):
+    """input-device description; FIA has an NMOS and a PMOS input pair (in_model names only the P pair)"""
+    P = D["params"]
+    if D.get("arch") == "fia":
+        pd = next((v for v in D["devices"] if v["name"] == "M1P"), None)
+        n = next((v for v in D["devices"] if v["name"] == "M1"), None)
+        return (f"{n['model'] if n else 'nfet_03v3'} (N pair) W {fx(P['w_in'], 2)} µm / L {fx(P['l_in'], 2)} µm (nf={P['nf_in']}) + "
+                f"{pd['model'] if pd else D['in_model']} (P pair) W {fx(P.get('w_in_p'), 2)} µm / L {fx(pd['l'] if pd else P['l_in'], 2)} µm "
+                f"(nf={P.get('nf_in_p')})")
+    return f"{D['in_model']} W {fx(P['w_in'], 2)} µm / L {fx(P['l_in'], 2)} µm (nf={P['nf_in']})"
+
+
+def trip_censored(m):
+    """True when a deterministic trip search hit the +-8 mV window edge (value is only a lower bound)"""
+    return isnum(m.get("min_detectable_dv_det_v")) and m["min_detectable_dv_det_v"] >= TRIP_EDGE
 
 
 def ax_log(title, r=None, **kw):
@@ -196,6 +216,18 @@ def ax_log(title, r=None, **kw):
         a.update({"range": r, "autorange": False}, **tick(True, r))
     a.update(kw)
     return a
+
+
+def log_ticks(vals):
+    """explicit ticks for log axes: linear steps when the data span < ~1 decade (the hub's default decade ticks would
+    leave such an axis without labels), decades otherwise"""
+    v = [x for x in vals if isnum(x) and x > 0]
+    if not v:
+        return {}
+    lo, hi = min(v), max(v)
+    if hi / lo < 12:
+        return {"dtick": f"L{nice_step((hi - lo) / 5 or lo / 5):.3g}", "tick0": 0}
+    return {"dtick": 1}
 
 
 def legend_dummy(name, **kw):
@@ -223,18 +255,39 @@ METRICS = [
     ("e_total", "Total energy / read", "J", True, "low", 3),
     ("p_comp", "Power (core+clock)", "W", True, "low", 3),
     ("gmid", "Input gm/Id (simulated)", "1/V", False, None, 4),
+    ("gmid_n", "FIA N-pair gm/Id (simulated)", "1/V", False, None, 4),
+    ("gmid_p", "FIA P-pair gm/Id (simulated)", "1/V", False, None, 4),
     ("hyst", "Hysteresis |Δtrip|", "V", True, "low", 3),
     ("vos_sys", "Systematic offset (trip midpoint)", "V", True, None, 3),
-    ("dv_det", "Deterministic ΔV_BL,min", "V", True, "low", 3),
+    ("dv_det", "ΔV_BL,min (deterministic)", "V", True, "low", 3),
     ("kick", "Kickback (diff)", "V", True, "low", 3),
     ("kick_cm", "Kickback (CM)", "V", True, "low", 3),
-    ("fmax", "Max clock (1 mV, t_d < 0.45 T)", "Hz", True, "high", 3),
+    ("fmax", "f_max (1 mV)", "Hz", True, "high", 3),
     ("cm_min", "Input CM min", "V", True, "low", 3),
     ("cm_max", "Input CM max", "V", True, "high", 3),
     ("i_rst", "Static current (reset, 27 °C)", "A", True, "low", 3),
     ("leak", "Leakage @125 °C (max)", "A", True, "low", 3),
     ("area", "Layout area", "µm²", False, "low", 4),
 ]
+DESC = {
+    "delay": "Clock edge to output crossing VDD/2 through the 3-stage buffer into 200 fF; |ΔV_BL| = 1 mV, nominal V_CM, tt 27 °C, 2.5 MHz.",
+    "delay_worst": "Slowest correct 1 mV decision over the 29 PVT points.",
+    "tau": "Slope of delay vs −ln|ΔV_BL| fitted over 30 µV…35 mV of the delay sweep.",
+    "idd": "Cycle-averaged core supply current E_core·f_read/V_DD at 2.5 MHz (excl. clock drivers and output buffers).",
+    "e_comp": "Energy per read of core + clock drivers, excluding output buffers and 200 fF loads.",
+    "gmid": "Charge-weighted input-pair gm/Id during integration (∫gm dt / ∫Id dt); pre-PEX only (post-PEX value was copied in the source flow).",
+    "gmid_n": "FIA only: charge-weighted gm/Id of the NMOS input pair (pre-PEX).",
+    "gmid_p": "FIA only: charge-weighted gm/Id of the PMOS input pair (pre-PEX).",
+    "hyst": "|trip after −overdrive − trip after +overdrive| (±0.2·V_DD preconditioning). 9-step bisection over ±8 mV: 31.25 µV resolution; 0 means < 31 µV. Omitted where the search hit the ±8 mV window.",
+    "vos_sys": "Mean of the two preconditioned trip points (systematic offset); 15.6 µV resolution (bisection over ±8 mV). Omitted where the search hit the window edge.",
+    "dv_det": "Larger |trip point| after opposite-polarity overdrive; 9-step bisection over ±8 mV → 15.6 µV means ≤ 31 µV (search resolution). Omitted where the search hit the ±8 mV window (value would only be a lower bound).",
+    "kick": "Peak differential input disturbance through a 10 kΩ source (+25 fF) during a decision.",
+    "fmax": "Highest clock of the scan 1…250 MHz with a correct 1 mV decision and t_d < 0.45·T.",
+    "cm_min": "Lowest of the 14 V_CM grid points (0.05…0.95·V_DD) where the ±1 mV decision resolves.",
+    "cm_max": "Highest of the 14 V_CM grid points (0.05…0.95·V_DD) where the ±1 mV decision resolves.",
+    "leak": "Largest reset-phase supply current over the 125 °C PVT points.",
+    "area": "Layout bounding-box area (stage-independent).",
+}
 SRC = {"delay": "delay_1mv", "delay10": "delay_10mv", "delay100": "delay_100mv", "delay_ul": "delay_unloaded",
        "delay_worst": "delay_1mv_worst", "tau": "tau_regen", "t_int": "t_int", "idd": "idd_avg",
        "idd_tail": "idd_active_tail", "e_comp": "e_comp", "e_core": "e_core", "e_clk": "e_clk", "e_buf": "e_buf",
@@ -253,6 +306,11 @@ def stage_result(m, area, partial):
         vals.pop("idd_tail")
     else:
         vals["gmid"] = gmid_val(m.get("gmid_sim"))
+        g = m.get("gmid_sim") or {}
+        if g.get("n") is not None and g.get("p") is not None:   # FIA: two input pairs, report both (no average)
+            vals["gmid_n"], vals["gmid_p"] = g["n"], g["p"]
+    if trip_censored(m):   # trip search hit the +-8 mV window: dv_det / hyst / vos_sys are only bounds
+        vals["dv_det"] = vals["hyst"] = vals["vos_sys"] = None
     r = {"metrics": {k: v for k, v in vals.items() if v is not None},
          "robust": bool(m.get("functional") and m.get("pvt_robust"))}
     if m.get("pvt_total"):
@@ -341,6 +399,22 @@ def zrange(vals):
     return [math.floor(min(a) * 4) / 4, math.ceil(max(a) * 4) / 4] if a else [0, 3]
 
 
+def colour_strip(zr):
+    """one shared colour-scale strip per set (replaces the old gradient legend; panels carry no colourbar)"""
+    n = 64
+    zs = [round(zr[0] + (zr[1] - zr[0]) * i / (n - 1), 4) for i in range(n)]
+    lab = {-1: "100 ps", 0: "1 ns", 1: "10 ns", 2: "100 ns", 3: "1 µs"}
+    tv = [t for t in range(-2, 5) if zr[0] - 1e-9 <= t <= zr[1] + 1e-9]
+    return {"type": "chart", "span": 4, "height": 90, "config": {"displayModeBar": False},
+            "title": "Shared colour scale: sensing delay (log, viridis reversed); white = wrong / no decision",
+            "data": [{"type": "heatmap", "x": zs, "y": [0], "z": [zs], "zmin": zr[0], "zmax": zr[1], "colorscale": "Viridis",
+                      "reversescale": True, "showscale": False, "hoverinfo": "skip"}],
+            "layout": {"margin": {"l": 20, "r": 20, "t": 4, "b": 30},
+                       "xaxis": {"tickvals": tv, "ticktext": [lab.get(t, f"1e{t} ns") for t in tv], "range": [zr[0], zr[1]],
+                                 "showgrid": False, "zeroline": False},
+                       "yaxis": {"visible": False}, "showlegend": False}}
+
+
 def cal_wave_fig(CW, vcm, vdd):
     t = [x * 1e9 for x in CW["t"]]
     mv = lambda arr, off=0.0: rd([(v - off) * 1e3 for v in arr], 3)
@@ -401,8 +475,8 @@ def detail_doc(key):
            "text": "Ported from the retired sa-gen-gemini4 site (tabs Overview · Schematic · Simulation · Layout). "
                    "Use the **Simulation stage** option above to switch between the schematic netlist (Pre-PEX) and the "
                    "extracted-layout netlist (*Partial post-PEX*), like the old Schematic / Post-PEX toggle. Tiles and charts "
-                   f"marked *model* are not SPICE results. Old crumb *comparison* → [Comparison page](#/sa?page=compare) "
-                   f"(set {vdd} V · {TGT_LBL[tgt]})."}]
+                   f"marked *model* are not SPICE results. Old crumb *comparison* → [this design's comparison set "
+                   f"({vdd} V · {TGT_LBL[tgt]})](#/sa?page=compare&t.set={vtag(vdd)}-{tgt}&t.band={tgt})."}]
     for st in STG:
         R, D, T, cm, gs, vcm = sv(d, st)
         m, est, P = R["metrics"], D["est"], D["params"]
@@ -410,6 +484,7 @@ def detail_doc(key):
         tail = m.get("idd_active_tail") if m.get("idd_active_tail") is not None else est.get("idd_active_tail")
         tail_txt = f"active tail {si(tail, 'A')}" if st == "pre" else "active tail not re-simulated post-PEX"
         hy = m.get("hysteresis")
+        cens = trip_censored(m)
         items = [
             {"label": "Average I<sub>DD</sub> @ 2.5 MHz", "value": idd_v, "unit": "A", "si": True,
              "sub": f"target band {TGT_BAND[tgt]} · {tail_txt}"},
@@ -419,16 +494,20 @@ def detail_doc(key):
              "sub": f"core {si(m.get('e_core'), 'J')} + clock drivers {si(m.get('e_clk'), 'J')}"},
             {"label": "Buffers + 200 fF loads", "value": m.get("e_buf"), "unit": "J", "si": True,
              "sub": f"total {si(m.get('e_total'), 'J')} per read"},
-            {"label": "Deterministic ΔV<sub>BL,min</sub>", "value": m.get("min_detectable_dv_det_v"), "unit": "V", "si": True,
-             "sub": "trip-point search after opposite-polarity overdrive (simulated)"},
+            {"label": "Deterministic ΔV<sub>BL,min</sub>",
+             "value": "≥ 8 mV" if cens else "≤ 31 µV" if (m.get("min_detectable_dv_det_v") or 0) <= 15.7e-6
+             else m.get("min_detectable_dv_det_v"), "unit": "V", "si": True,
+             "sub": "trip-point bisection (9 steps over ±8 mV, 31 µV resolution) after opposite-polarity overdrive (simulated)"
+                    + (" — **search limit**: the trip hit the ±8 mV window, the true value is larger" if cens else "")},
             {"label": "Hysteresis (decision memory)",
-             "value": "< 0.2 mV" if isnum(hy) and abs(hy) < 0.2e-3 else si(hy, "V"),
-             "sub": "trip point after 0 minus after 1 (±20 mV preceding overdrive)"},
+             "value": "≥ 16 mV" if cens else "< 0.2 mV" if isnum(hy) and abs(hy) < 0.2e-3 else si(hy, "V"),
+             "sub": "trip point after 0 minus after 1 (±0.2·V<sub>DD</sub> preceding overdrive; 31 µV search resolution)"
+                    + (" — **search limit** (±8 mV window), true value larger" if cens else "")},
             {"label": "Regeneration τ<sub>regen</sub>", "value": m.get("tau_regen"), "unit": "s", "si": True,
              "sub": f"integration phase {si(m.get('t_int'), 's')}"},
             {"label": "f<sub>max</sub>", "value": m.get("fmax"), "unit": "Hz", "si": True,
              "sub": "1 mV decisions, t<sub>d</sub> < 0.45 T"},
-            {"label": "CM range (≥100 µV resolves)",
+            {"label": "CM range (±1 mV resolves)",
              "value": f"{fx(m.get('cm_min'), 2)} – {fx(m.get('cm_max'), 2)} V" if m.get("cm_min") is not None else "—",
              "sub": f"nominal V<sub>CM</sub> {fx(P.get('vcm'), 3)} V"},
             {"label": "Kickback (10 kΩ source)", "value": m.get("kick_diff"), "unit": "V", "si": True,
@@ -490,6 +569,8 @@ def detail_doc(key):
         os_v = (f"{si(m.get('vos_sigma'), 'V')} cal. (uncal. {si(m.get('vos_sigma_uncal'), 'V')})"
                 if m.get("self_calibrated") and m.get("vos_sigma_uncal") is not None else si(m.get("vos_sigma"), "V"))
         gm_lbl = "Input gm/Id within 6 % of the target (simulated, charge-weighted)"
+        if arch == "fia":
+            gm_lbl += " — *FIA: mean of the N and P pairs (per-pair values in the design point)*"
         if st == "partial":
             gm_lbl += " — *post-PEX value copied from the schematic closure*"
         specs = [
@@ -512,7 +593,7 @@ def detail_doc(key):
                                                   "s": "muted" if ok is None else "good" if ok else "bad"}}
                 for k, ok, v in specs]
         ov.append({"type": "table", "alt": "spec", "stage": st, "title": "Specification checks", "search": False, "csv": False,
-                   "columns": [{"key": "check", "label": "Check", "type": "text", "md": True},
+                   "columns": [{"key": "check", "label": "Check", "type": "text", "md": True, "wrap": True},
                                {"key": "value", "label": "Value", "type": "text"},
                                {"key": "res", "label": "Result", "type": "text"}], "rows": rows})
         knob = T.get("knob")
@@ -526,7 +607,7 @@ def detail_doc(key):
             gsim_txt += " (copied from the schematic closure, not re-simulated)"
         pct = fx(100 * est["gmid_target"] / est["gmid_peak"], 0) if est.get("gmid_target") else ""
         kv = [
-            ["Input device", f"{D['in_model']} W {fx(P['w_in'], 2)} µm / L {fx(P['l_in'], 2)} µm (nf={P['nf_in']})"],
+            ["Input devices (N pair + P pair)" if arch == "fia" else "Input device", in_dev_text(D)],
             [f"gm/Id target ({pct} % of peak {fx(est.get('gmid_peak'), 1)})", f"{fx(est['gmid_target'], 2)} /V · IC ≈ {fx(est.get('ic'), 2)}"],
             ["LUT V<sub>GS</sub>, I<sub>D</sub>/W, f<sub>T</sub> at target",
              f"{fx(est.get('vgs'), 3)} V · {si(est.get('idw'), 'A/µm')} · {si(est.get('ft'), 'Hz')}"],
@@ -537,7 +618,7 @@ def detail_doc(key):
         ov.append({"type": "kv", "alt": "dp", "stage": st, "title": "gm/Id & I<sub>DD</sub> design point", "cols": 2,
                    "items": [{"label": a, "value": b} for a, b in kv]})
         nl = "netlist.spice" if st == "pre" else "netlist_pex.spice"
-        ov.append({"type": "downloads", "alt": "nl", "stage": st,
+        ov.append({"type": "downloads", "alt": "nl", "stage": st, "title": "Netlist",
                    "items": [{"label": f"Netlist ({'schematic' if st == 'pre' else 'post-PEX'})", "file": f"{base}/{nl}", "note": PIN_NOTE}]})
     T = d["tune"]
     P = d["design"]["params"]
@@ -640,7 +721,8 @@ def detail_doc(key):
                         "caption": cap,
                         "data": [{"type": "scatter", "x": [q["vin"] for q in p], "y": [q["delay"] for q in p], "mode": "lines+markers",
                                   "name": "sensing delay", "line": {"color": C["s1"], "width": 2}, "marker": {"color": C["s1"]}}],
-                        "layout": {"xaxis": ax_log("|ΔV_BL| (V)", dtick=1), "yaxis": ax_log("s"), "showlegend": False}})
+                        "layout": {"xaxis": ax_log("|ΔV_BL| (V)", dtick=1), "yaxis": ax_log("s", **log_ticks([q["delay"] for q in p])),
+                                   "showlegend": False}})
         N = R.get("noise")
         if N and N.get("v"):
             mu, s = m.get("noise_mu") or 0, m.get("sigma_noise")
@@ -662,12 +744,13 @@ def detail_doc(key):
             if m.get("self_calibrated") and m.get("vos_sigma_uncal") is not None:
                 cap += f" (uncal. {si(m.get('vos_sigma_uncal'), 'V')})"
             cap += (f" · μ {si(m.get('vos_mean'), 'V')}. *Hub note:* samples are Python `random.gauss` draws around a "
-                    f"Pelgrom-formula σ (post-PEX σ = pre × 0.97), not SPICE mismatch runs.")
+                    f"Pelgrom-formula σ, not SPICE mismatch runs; post-PEX the formula σ is scaled ×0.97 and the samples are "
+                    f"redrawn, so the shown post/pre σ ratio varies randomly (0.76–1.27 over the 96 designs).")
             sim.append({"type": "chart", "alt": "mc", "stage": st,
                         "title": f"Offset Monte Carlo (mismatch, {len(R['mc_vos'])} runs{' · post-calibration' if m.get('self_calibrated') else ''}) — *model*",
                         "caption": cap,
                         "data": [{"type": "histogram", "x": [round(v * 1e3, 4) for v in R["mc_vos"]], "name": "Vos",
-                                  "marker": {"color": C["s1"], "line": {"color": "#ffffff", "width": 1.5}},
+                                  "marker": {"color": C["s1"], "line": {"color": "theme:paper", "width": 1.5}},
                                   "hovertemplate": "%{x} mV: %{y} runs<extra></extra>"}],
                         "layout": {"xaxis": {"title": {"text": "input offset (mV)"}}, "yaxis": {"title": {"text": "runs"}}, "showlegend": False}})
         G = R.get("mcg")
@@ -692,7 +775,7 @@ def detail_doc(key):
                                   "name": "gm/Id (input)", "mode": "lines+markers", "yaxis": "y2",
                                   "line": {"color": C["s2"], "width": 2}, "marker": {"color": C["s2"]}}],
                         "layout": {"xaxis": {"title": {"text": "V_CM (V)"}, "range": [0, vdd]},
-                                   "yaxis": {"title": {"text": "J"}, "exponentformat": "SI", "type": "log"},
+                                   "yaxis": dict({"title": {"text": "J"}, "exponentformat": "SI", "type": "log"}, **log_ticks([r["e"] for r in R["cmdm"]])),
                                    "yaxis2": {"title": {"text": "gm/Id (1/V)"}, "overlaying": "y", "side": "right", "showgrid": False},
                                    "margin": {"r": 50}}})
         K = (R.get("kick") or {}).get("waves")
@@ -719,7 +802,7 @@ def detail_doc(key):
                                   "name": "unloaded delay", "mode": "lines+markers", "yaxis": "y2", "line": {"color": C["s2"], "width": 2},
                                   "marker": {"color": C["s2"], "size": 8, "symbol": ["circle-open" if b0(r).get("wrong") else "circle" for r in Q]}}],
                         "layout": {"xaxis": {"title": {"text": "V_CM (V)"}, "range": [0, vdd]}, "yaxis": {"title": {"text": "trip point (mV)"}},
-                                   "yaxis2": {"title": {"text": "s"}, "overlaying": "y", "side": "right", "showgrid": False, "type": "log",
+                                   "yaxis2": {"title": {"text": "s"}, "overlaying": "y", "side": "right", "showgrid": False, "type": "log", **log_ticks([b0(r).get("delay_small") for r in Q]),
                                               "exponentformat": "SI"}, "margin": {"r": 50}}})
         F = R.get("fmax_scan")
         if F:
@@ -739,7 +822,7 @@ def detail_doc(key):
                     row = [next((p for p in pv if p["corner"] == cn and p["temp"] == t and p["vdd"] == v), None) for t in temps]
                     if not any(row):
                         continue
-                    r = {"corner": cn, "vdd": f"{fx(v, 2)} V"}
+                    r = {"corner": cn, "supply": f"{fx(v, 2)} V"}
                     for t, p in zip(temps, row):
                         r[f"t{t}"] = "—" if not p else {
                             "v": f"{'✓' if p['ok'] else '✗'} {si(p.get('delay_1mv'), 's', 2)}<br><small>{si(p.get('e'), 'J', 2)} · "
@@ -749,7 +832,7 @@ def detail_doc(key):
                         "search": False, "csv": False,
                         "caption": f"{m.get('pvt_pass')}/{m.get('pvt_total')} correct. Cell: decision ✓/✗ and sensing delay @1 mV; "
                                    f"second line energy per read · reset-phase leakage.",
-                        "columns": [{"key": "corner", "label": "Corner", "type": "text"}, {"key": "vdd", "label": "VDD", "type": "text"}] +
+                        "columns": [{"key": "corner", "label": "Corner", "type": "text"}, {"key": "supply", "label": "VDD", "type": "text"}] +
                                    [{"key": f"t{t}", "label": f"{t} °C<br><small>t<sub>d</sub> · E · I<sub>leak</sub></small>", "type": "text",
                                      "md": True, "align": "r"} for t in temps],
                         "rows": rows})
@@ -769,8 +852,8 @@ def detail_doc(key):
         lay.append({"type": "stats", "items": [
             {"label": "Floorplan", "value": "1 NMOS + 1 PMOS row",
              "sub": f"rails on bottom (VSS) and top (VDD, VDDB on met4) edges; {L.get('channel_rows') or '—'} channel rows"},
-            {"label": "Shared-diffusion centre pairs", "value": ", ".join(L.get("interdigitated") or []) or "—",
-             "sub": "A fingers left, B fingers right of common source column"},
+            {"label": "Shared-diffusion centre pairs", "value": f"{len(L.get('interdigitated') or [])} pair(s)" if L.get("interdigitated") else "—",
+             "sub": ", ".join(L.get("interdigitated") or []) + " · A fingers left, B fingers right of common source column"},
             {"label": "Mirror-symmetric pairs", "value": f"{len(L.get('mirrored_pairs') or [])} pairs",
              "sub": ", ".join(L.get("mirrored_pairs") or [])},
             {"label": "Mirror-routed net pairs", "value": str(len(L.get("symmetric_routes") or [])),
@@ -819,8 +902,9 @@ for key in KEYS:
     if c.get("tune_met") is False:
         tags.append("gm/Id target not reached")
     pct = round(100 * est["gmid_target"] / est["gmid_peak"]) if est.get("gmid_peak") else None
-    p = {"Input device": d["design"]["in_model"],
-         "W_in / L_in (µm), nf": f"{fx(P['w_in'], 2)} / {fx(P['l_in'], 2)}, nf {P['nf_in']}",
+    fia = c["arch"] == "fia"
+    p = {("Input devices" if fia else "Input device"): in_dev_text(d["design"]),
+         ("W_in,N / L_in (µm), nf" if fia else "W_in / L_in (µm), nf"): f"{fx(P['w_in'], 2)} / {fx(P['l_in'], 2)}, nf {P['nf_in']}",
          "gm/Id target → sim (V⁻¹)": f"{gmid_text(c, c.get('gmid_sim'))} (pre-PEX simulation)",
          "gm/Id target": f"{fx(est['gmid_target'], 2)} /V = {pct} % of peak {fx(est.get('gmid_peak'), 2)} · IC ≈ {fx(est.get('ic'), 2)}",
          "Nominal V_CM (V)": c.get("vcm"),
@@ -974,7 +1058,7 @@ def cmp_page():
                 C_ = CMP["cmdm"] if st == "pre" else CMP["cmdm_pex"]
                 sel = [k for k in sel_all if C_.get(k)]
                 zr = zrange([x for k in sel for r in C_[k] for x in r["d"]])
-                tb.append({"type": "stats", "alt": "st", "stage": st, "items": [
+                tb.append({"type": "stats", "alt": "st", "stage": st, "title": "Set statistics", "items": [
                     {"label": "designs in this set", "value": len(sel)},
                     {"label": "shared colour scale", "value": f"{si(10 ** zr[0] * 1e-9, 's', 2)}–{si(10 ** zr[1] * 1e-9, 's', 2)}"}]})
                 charts = []
@@ -983,21 +1067,24 @@ def cmp_page():
                     m = card_m(k, st)
                     vcm = c["vcm"] if st == "pre" else (c.get("vcm_pex") if c.get("vcm_pex") is not None else c["vcm"])
                     tag = "pre" if st == "pre" else "pex"
-                    src = write(f"cmp/{tag}/{k}.json", {"data": [cmdm_trace(C_[k], CMP["dm"], zr, i % 4 == 3, k)],
+                    src = write(f"cmp/{tag}/{k}.json", {"data": [cmdm_trace(C_[k], CMP["dm"], zr, False, k)],
                                                         "layout": cmdm_layout(v, vcm)})
-                    charts.append({"type": "chart", "src": src, "height": 300, "link_designs": True,
+                    charts.append({"type": "chart", "src": src, "height": 300, "link_designs": True, "config": {"displayModeBar": "hover"},
                                    "title": f"[{arch_s[c['arch']]} · {c['mix']}](#/sa/{k})",
                                    "caption": f"V<sub>CM,nom</sub> {fx(vcm, 2)} V · I<sub>DD</sub> {si(m.get('idd_avg'), 'A')} · "
                                               f"t<sub>d</sub>(1 mV) {si(m.get('delay_1mv'), 's')}"})
-                tb.append({"type": "section", "alt": "maps", "stage": st, "cols": 4, "blocks": charts or [
+                if charts:
+                    charts.insert(0, colour_strip(zr))
+                tb.append({"type": "section", "alt": "maps", "stage": st, "cols": 4, "title": "Resolve-time maps (this set)",
+                           "blocks": charts or [
                     {"type": "note", "tone": "muted", "text": "Resolve-time maps are being computed on the farm for this set."}]})
-            tabs.append({"label": f"{v} V · {TGT_LBL[t]}", "vdd": v, "blocks": tb})
+            tabs.append({"label": f"{v} V · {TGT_LBL[t]}", "key": f"{vtag(v)}-{t}", "vdd": v, "blocks": tb})
     default = next((i for i, tb in enumerate(tabs) if tb["label"].startswith("1.8 V · 1–10")), 0)
     blocks.append({"type": "section", "title": "Resolve-time maps",
                    "intro": "One tab per (V<sub>DD</sub>, I<sub>DD</sub>) set (old VDD / IDD-range selectors). Every panel: x = "
                             "|ΔV<sub>BL</sub>| 10 µV…100 mV (log), y = V<sub>CM</sub> 0…V<sub>DD</sub>, colour = sensing delay (log, "
                             "viridis reversed, shared scale per set); white = wrong or no decision; red tick = nominal V<sub>CM</sub>.",
-                   "blocks": [{"type": "tabs", "label": "Set", "default": default, "tabs": tabs}]})
+                   "blocks": [{"type": "tabs", "id": "set", "label": "Set", "default": default, "tabs": tabs}]})
     # --- sensing delay vs |dV|
     dtabs = []
     for t in TGT_ORDER:
@@ -1023,12 +1110,12 @@ def cmp_page():
                 tb.append({"type": "chart", "alt": f"dv{vtag(v)}", "stage": st, "vdd": v, "height": 520, "link_designs": True,
                            "title": f"VDD {v} V · {TGT_LBL[t]}", "data": tr,
                            "layout": {"xaxis": ax_log("|ΔV_BL| (V)", xr), "yaxis": ax_log("sensing delay (s)", yr)}})
-        dtabs.append({"label": TGT_LBL[t], "blocks": [{"type": "section", "cols": 2, "blocks": tb}]})
+        dtabs.append({"label": TGT_LBL[t], "key": t, "blocks": [{"type": "section", "cols": 2, "blocks": tb}]})
     blocks.append({"type": "section", "title": "Sensing delay vs differential bitline input |ΔV<sub>BL</sub>|",
                    "intro": "Nominal common mode, tt 27 °C. The slope at small inputs is the regeneration time constant τ "
                             "(delay = t₀ − τ·ln|ΔV<sub>BL</sub>|). Both supplies are drawn on identical axes. Colour = architecture, "
                             "line style = threshold mix (solid 3.3V LV, dashed 6V HVL, dotted 6V Native).",
-                   "blocks": [{"type": "tabs", "label": "I<sub>DD</sub> range (@ 2.5 MHz)", "default": 1, "tabs": dtabs}]})
+                   "blocks": [{"type": "tabs", "id": "band", "label": "I<sub>DD</sub> range (@ 2.5 MHz)", "default": 1, "tabs": dtabs}]})
     # --- scatter panels
     pairs = [("idd_avg", "delay_1mv", "average I_DD @ 2.5 MHz (A)", "sensing delay @1 mV (s)"),
              ("e_comp", "sigma_noise", "energy / read (J)", "input noise σ (V)")]
@@ -1171,7 +1258,7 @@ def explore_page():
         items = [{"label": "design points (old site: “simulated”; model-scaled)", "value": n},
                  {"label": "functional", "value": fun_n}, {"label": "gm/Id target reached", "value": met_n}]
         items += [{"label": f"4-objective non-dominated @ {v} V", "value": len(nd[(st, v)])} for v in VDDS]
-        blocks.append({"type": "stats", "alt": "exstats", "stage": st, "items": items,
+        blocks.append({"type": "stats", "alt": "exstats", "stage": st, "title": "Design-space statistics", "items": items,
                        "caption": "All functional points reach their gm/Id target, so the old *only points that reach their gm/Id target* "
                                   "checkbox did not change any view."})
     # --- overview fronts (old #ex-overlay), one tab per trade-off preset
@@ -1207,7 +1294,7 @@ def explore_page():
                 dv = [x for x in dl if x["vdd"] == v and x.get("functional")]
                 tr.append({"type": "scatter", "x": [x.get(xk) for x in dv], "y": [x.get(yk) for x in dv], "name": "delivered designs",
                            "mode": "markers", "customdata": [x["key"] for x in dv], "text": [x["key"] for x in dv],
-                           "marker": {"symbol": "diamond", "size": 9, "color": "#111111", "line": {"color": "#ffffff", "width": 1.5}},
+                           "marker": {"symbol": "diamond", "size": 9, "color": "theme:ink", "line": {"color": "theme:paper", "width": 1.5}},
                            "hovertemplate": "%{text}<extra></extra>"})
                 tag = "pre" if st == "pre" else "pex"
                 src = write(f"ex/{pk}_{vtag(v)}_{tag}.json", {"data": tr, "layout": axes})
@@ -1215,14 +1302,14 @@ def explore_page():
                            "title": f"{'Pareto fronts' if front else 'Lower envelopes'} by architecture — {Y[0]} vs {X[0]} (VDD {v} V)",
                            "caption": pcap + " Lines join each architecture's non-dominated points; the dashed line is the front over "
                                              "all architectures. Black diamonds are the 96 delivered design cards (click to open)."})
-        ptabs.append({"label": plabel, "blocks": tb})
+        ptabs.append({"label": plabel, "key": pk, "blocks": tb})
     blocks.append({"type": "section", "title": "Pareto fronts by architecture",
                    "intro": "The old explorer's overview chart for each *Trade-off* button; V<sub>DD</sub> follows the global option "
                             "(both supplies when *All*). Axis ranges are shared by both supplies, as on the old site.",
-                   "blocks": [{"type": "tabs", "label": "Trade-off", "tabs": ptabs}]})
+                   "blocks": [{"type": "tabs", "id": "tradeoff", "label": "Trade-off", "tabs": ptabs}]})
     # --- explorer data (functional points of both spaces + delivered cards)
     E = {k: [] for k in ("id", "stage", "kind", "arch", "mix", "vdd", "frac", "gmid_t", "gmid", "met", "sigma_os_t", "lat", "w_in",
-                         "delay", "e", "tau", "sn", "vos", "fom", "area", "delivered", "design")}
+                         "fclk", "delay", "e", "tau", "sn", "vos", "fom", "area", "delivered", "design")}
     for st in STG:
         cols, dl = spaces[st]
         for i in range(len(cols["arch"])):
@@ -1232,20 +1319,24 @@ def explore_page():
             E["arch"].append(DSE["archs"][cols["arch"][i]]); E["mix"].append(DSE["mixes"][cols["mix"][i]]); E["vdd"].append(cols["vdd"][i])
             E["frac"].append(jround(cols["frac"][i] * 100)); E["gmid_t"].append(cols["gmid_t"][i]); E["gmid"].append(cols["gmid"][i])
             E["met"].append("yes" if cols["met"][i] else "no"); E["sigma_os_t"].append(cols["sigma_os_t"][i]); E["lat"].append(cols["lat"][i])
-            E["w_in"].append(cols["w_in"][i])
+            E["w_in"].append(cols["w_in"][i]); E["fclk"].append(cols["fclk"][i])
             for k in ("delay", "e", "tau", "sn", "vos", "fom", "area"):
                 E[k].append(cols[k][i])
             E["delivered"].append(False); E["design"].append(None)
         for x in dl:
             if not x.get("functional"):
                 continue
+            est = DATA[x["key"]]["design"]["est"] if x["key"] in DATA else {}
+            tg = META["targets"].get(x.get("target")) or {}
             E["id"].append(x["key"]); E["stage"].append(st); E["kind"].append("card")
             E["arch"].append(x["arch"]); E["mix"].append(x["mix"]); E["vdd"].append(x["vdd"])
-            E["frac"].append(None); E["gmid_t"].append(CARD[x["key"]]["gmid_target"] if x["key"] in CARD else None)
+            # a card's inversion level = its gm/Id target as % of the flavour's peak (colours it like the sweep)
+            E["frac"].append(jround(100 * est["gmid_target"] / est["gmid_peak"]) if est.get("gmid_peak") else None)
+            E["gmid_t"].append(CARD[x["key"]]["gmid_target"] if x["key"] in CARD else None)
             E["gmid"].append(x.get("gmid")); E["met"].append("yes" if CARD.get(x["key"], {}).get("tune_met") else "no")
-            E["sigma_os_t"].append(META["targets"][x["target"]]["sigma_os_target"] if x.get("target") in META["targets"] else None)
-            E["lat"].append(META["targets"][x["target"]]["lat_scale"] if x.get("target") in META["targets"] else None)
+            E["sigma_os_t"].append(tg.get("sigma_os_target")); E["lat"].append(tg.get("lat_scale"))
             E["w_in"].append(DATA[x["key"]]["design"]["params"]["w_in"] if x["key"] in DATA else None)
+            E["fclk"].append(CARD[x["key"]]["fclk"] if x["key"] in CARD else None)
             for k in ("delay", "e", "tau", "sn", "vos", "fom", "area"):
                 E[k].append(x.get(k))
             E["delivered"].append(True); E["design"].append(x["key"] if x["key"] in CARD else None)
@@ -1260,40 +1351,56 @@ def explore_page():
         {"key": "tau", "label": "Regeneration τ", "unit": "s", "si": True, "log": True, "better": "low"},
         {"key": "gmid", "label": "Input-pair gm/Id", "unit": "1/V"},
         {"key": "gmid_t", "label": "gm/Id target", "unit": "1/V"},
-        {"key": "frac", "label": "Inversion level", "unit": "% of peak gm/Id"},
+        {"key": "frac", "label": "gm/Id % of peak", "unit": "%"},
         {"key": "sigma_os_t", "label": "σos target", "unit": "V", "si": True},
         {"key": "lat", "label": "Latch scale", "unit": "×"},
         {"key": "w_in", "label": "W_in", "unit": "µm", "log": True},
-        {"key": "arch", "label": "Architecture", "type": "cat", "labels": {a: arch_s[a] for a in archs}, "order": archs},
+        {"key": "fclk", "label": "f_read", "unit": "Hz", "si": True},
+        {"key": "arch", "label": "Architecture", "type": "cat", "labels": {a: arch_s[a] for a in archs}, "order": archs,
+         "colors": {a: ARCH_COL[a] for a in archs}},
         {"key": "mix", "label": "Threshold mix", "type": "cat", "labels": {x: mix_s[x] for x in MIX_ORDER}, "order": MIX_ORDER},
-        {"key": "vdd", "label": "VDD", "type": "cat", "labels": {str(v): f"{v} V" for v in VDDS}, "order": VDDS},
+        {"key": "vdd", "label": "VDD", "unit": "V", "type": "cat", "labels": {str(v): f"{v} V" for v in VDDS}, "order": VDDS},
         {"key": "kind", "label": "Source", "type": "cat", "labels": {"sweep": "DSE sweep (model)", "card": "Delivered card (SPICE)"},
          "order": ["sweep", "card"]},
         {"key": "met", "label": "gm/Id target reached", "type": "cat"},
     ]
-    hov = ["arch", "mix", "vdd", "gmid", "gmid_t", "frac", "sigma_os_t", "lat", "w_in", "delay", "e", "tau", "sn", "vos", "area"]
-    blocks.append({"type": "explorer", "title": "Design-space explorer", "src": ex_src, "dims": dims, "x": "delay", "y": "e",
-                   "color": "arch", "filters": ["vdd", "arch", "mix", "kind", "met"], "highlight": "delivered",
-                   "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id", "hover": hov,
-                   "pareto_default": True, "height": 560,
-                   "presets": [{"label": pl, "x": xk, "y": yk, "color": "arch", "facet": "", "symbol": "", "pareto": fr}
-                               for _, pl, xk, yk, fr, _ in PRESETS],
+    hov = ["kind", "arch", "mix", "vdd", "gmid", "gmid_t", "frac", "sigma_os_t", "lat", "w_in", "fclk", "delay", "e", "tau", "sn", "vos", "area"]
+    env_desc = ("The old page drew each architecture's **lower envelope** (best E·σn² per rounded gm/Id) here; the explorer has no "
+                "envelope mode, so the envelopes are in the *FoM vs gm/Id* tab of **Pareto fronts by architecture** above.")
+
+    def ex_presets(color, symbol, facet, front):
+        return [{"label": pl, "x": xk, "y": yk, "color": color, "symbol": symbol, "facet": facet, "pareto": front if fr else "",
+                 "desc": pcap + ("" if fr else " " + env_desc)} for _, pl, xk, yk, fr, pcap in PRESETS]
+
+    ex1, ex2 = [], []
+    for v in VDDS:
+        ex1.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [
+            {"type": "explorer", "src": ex_src, "dims": dims, "x": "delay", "y": "e", "color": "arch",
+             "filters": ["vdd", "arch", "mix", "kind", "met"], "filters_default": {"vdd": [v]}, "fixed_axes": True,
+             "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
+             "hover": hov, "pareto_default": "color", "height": 560, "preset_default": 0,
+             "presets": ex_presets("arch", "", "", "color")}]})
+        ex2.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [
+            {"type": "explorer", "src": ex_src, "dims": dims, "x": "delay", "y": "e", "color": "frac", "symbol": "mix",
+             "facet_default": "arch", "filters": ["vdd", "mix", "kind"], "filters_default": {"vdd": [v]}, "fixed_axes": True,
+             "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
+             "hover": hov, "pareto_default": "all", "preset_default": 0,
+             "presets": ex_presets("frac", "mix", "arch", "all")}]})
+    blocks.append({"type": "section", "title": "Design-space explorer",
                    "intro": "Every functional point of the sweep, for the stage chosen with the Simulation-stage option (pre-PEX space "
-                            "or the post-PEX scaled space; the 251 non-functional points are not plotted, as on the old site). Pick a "
-                            "trade-off preset or any X/Y/colour/symbol/facet; *Pareto front* draws the non-dominated set of the "
-                            "current axes. Ringed points = delivered design cards (click to open).",
-                   "caption": "All points are at the uniform 2.5 MHz read rate into 200 fF. Gate area is ΣW·L of the devices "
-                              "(not the layout area)."})
-    blocks.append({"type": "explorer", "title": "Per-architecture design clouds", "src": ex_src, "dims": dims, "x": "delay", "y": "e",
-                   "color": "frac", "symbol": "mix", "facet_default": "arch", "filters": ["vdd", "mix", "kind"],
-                   "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
-                   "hover": hov, "pareto_default": True,
-                   "presets": [{"label": pl, "x": xk, "y": yk, "color": "frac", "symbol": "mix", "facet": "arch", "pareto": fr}
-                               for _, pl, xk, yk, fr, _ in PRESETS],
-                   "intro": "One panel per architecture, all on shared axes. Points are coloured by the inversion level (fraction of "
-                            "peak gm/Id, 35…94 %); symbol = threshold mix; the red line is each architecture's front for the current "
-                            "axes; ringed points = delivered cards. Set V<sub>DD</sub> (global option or chips) to compare one supply, "
-                            "as the old page did."})
+                            "or the post-PEX scaled space; the 251 non-functional points are not plotted, as on the old site). One "
+                            "supply at a time as on the old page (tabs; add the other supply with the V<sub>DD</sub> chips). Pick a "
+                            "trade-off preset or any X/Y/colour/symbol/facet; *front per colour group* draws each architecture's "
+                            "non-dominated points (the delivered cards are not front candidates, as on the old site). Ringed points = "
+                            "delivered design cards (click to open). Axes stay fixed when filtering. All points are at the uniform "
+                            "2.5 MHz read rate into 200 fF; gate area is ΣW·L of the devices (not the layout area).",
+                   "blocks": [{"type": "tabs", "id": "exvdd", "label": "V<sub>DD</sub>", "tabs": ex1}]})
+    blocks.append({"type": "section", "title": "Per-architecture design clouds",
+                   "intro": "One panel per architecture, all on shared axes. Points are coloured by the inversion level (gm/Id as % "
+                            "of the flavour's peak, 35…94 %; delivered cards at their target level); symbol = threshold mix; the line "
+                            "is each architecture's front over the sweep points for the current axes; ringed points = delivered cards. "
+                            "One supply per tab, as on the old page.",
+                   "blocks": [{"type": "tabs", "id": "cloudvdd", "label": "V<sub>DD</sub>", "tabs": ex2}]})
     # --- non-dominated table
     nrows = []
     for st in STG:
@@ -1302,21 +1409,21 @@ def explore_page():
             for i in nd[(st, v)]:
                 nrows.append({"stage": st, "vdd": v, "id": cols["id"][i], "arch": arch_s[DSE["archs"][cols["arch"][i]]],
                               "mix": DSE["mixes"][cols["mix"][i]],
-                              "gmid": f"{fx(cols['gmid'][i], 1)}{'' if cols['met'][i] else ' *'}", "sig": cols["sigma_os_t"][i],
-                              "lat": f"×{cols['lat'][i]}", "delay": cols["delay"][i], "e": cols["e"][i], "sn": cols["sn"][i],
+                              "gmid": cols["gmid"][i] if cols["met"][i] else {"v": cols["gmid"][i], "s": "warn", "title": "gm/Id target missed"},
+                              "sig": cols["sigma_os_t"][i], "lat": cols["lat"][i], "delay": cols["delay"][i], "e": cols["e"][i], "sn": cols["sn"][i],
                               "vos": cols["vos"][i], "fom": cols["fom"][i], "area": cols["area"][i], "fclk": cols["fclk"][i]})
     nsrc = write("data/dse_nondominated.json", {"rows": nrows})
     blocks.append({"type": "table", "title": "Non-dominated designs", "src": nsrc, "stage_column": "stage", "sort": {"key": "e", "dir": "asc"},
                    "page_size": 400,
                    "caption": "Designs not beaten on all four of sensing delay, energy per read, input noise and offset at the same supply "
-                              "(4-objective Pareto set; * = gm/Id target missed). Click a header to sort. Counts: " +
+                              "(4-objective Pareto set; amber gm/Id = target missed — none in the data). Click a header to sort. Counts: " +
                               "; ".join(f"{len(nd[(st, v)])} at VDD {v} V ({'pre-PEX' if st == 'pre' else 'post-PEX space'})"
                                         for st in STG for v in VDDS) + ". Noise and offset are model values (see note above).",
                    "columns": [{"key": "stage", "label": "Stage", "type": "text"}, {"key": "vdd", "label": "VDD", "unit": "V"},
                                {"key": "id", "label": "Design point", "type": "text"}, {"key": "arch", "label": "Architecture", "type": "text"},
-                               {"key": "mix", "label": "Mix", "type": "text"}, {"key": "gmid", "label": "gm/Id", "type": "text"},
+                               {"key": "mix", "label": "Mix", "type": "text"}, {"key": "gmid", "label": "gm/Id", "unit": "1/V", "digits": 3},
                                {"key": "sig", "label": "σos tgt", "unit": "V", "si": True, "digits": 2},
-                               {"key": "lat", "label": "latch", "type": "text"},
+                               {"key": "lat", "label": "latch", "unit": "×", "digits": 3},
                                {"key": "delay", "label": "t<sub>d</sub> 1 mV", "unit": "s", "si": True, "better": "low"},
                                {"key": "e", "label": "E", "unit": "J", "si": True, "better": "low"},
                                {"key": "sn", "label": "σn", "unit": "V", "si": True, "better": "low"},
@@ -1379,7 +1486,7 @@ def method_page():
         p = pk(dev, L)
         trows.append([f"{dev} (L {L} µm)", fx(p, 2), fx(p * 0.87, 2), fx(p * 0.72, 2), fx(p * 0.56, 2)])
     gm_tabs = []
-    cols8 = [C["c1"], C["c2"], C["c3"], C["c4"], C["c5"], C["c6"], C["s1"], C["s2"]]
+    cols8 = [C["c1"], C["c2"], C["c3"], C["c4"], C["c5"], C["c6"], C["c7"], C["c8"]]
     for dev in GMID:
         Ls = list(GMID[dev])
         figs = []
@@ -1393,7 +1500,7 @@ def method_page():
                 lay["yaxis"].update({"type": "log", "exponentformat": "SI"})
             src = write(f"gmid/{dev}_{fyk}.json", {"data": tr, "layout": lay})
             figs.append({"type": "chart", "src": src, "height": 340})
-        gm_tabs.append({"label": dev, "blocks": [{"type": "section", "cols": 3, "blocks": figs}]})
+        gm_tabs.append({"label": dev, "key": dev, "blocks": [{"type": "section", "cols": 3, "blocks": figs}]})
     prov = (
         "Checked against the generator source (`flow/char.py`, `flow/dse.py`, `flow/layout/gen.py`) while porting the site to the hub:\n\n"
         "- **Simulation stages.** *Pre-PEX* = schematic netlist. *Partial post-PEX* = `netlist_pex.spice`: the schematic devices plus "
@@ -1403,12 +1510,21 @@ def method_page():
         "(P = Φ(k·0.65) exactly, kT/C estimate clamped at 450 µV); the reported σ<sub>n</sub> = 381.9 µV is the same for every design "
         "→ *model constant*, not a transient-noise result.\n"
         "- **Offset σ<sub>os</sub> “100-run MC”.** Python `random.gauss` samples around a Pelgrom-formula σ (input pair + latch/gain); "
-        "the statistical SPICE deck is run but its output is not used; post-PEX σ = pre × 0.97. Self-calibrated designs use a "
+        "the statistical SPICE deck is run but its output is not used; post-PEX the formula σ is scaled ×0.97 and the samples are "
+        "redrawn, so shown post/pre σ ratios scatter between 0.76 and 1.27. Self-calibrated designs use a "
         "quantisation/noise formula for the post-cal σ. → *model*.\n"
         "- **Global + mismatch MC (40 runs).** Log-normal Python samples around the nominal 10 mV delay and energy → *synthetic*.\n"
         "- **ΔV<sub>BL,min</sub> (incl. 3σ) and E·σ<sub>n</sub>².** Derived from the two model values above → *model*. The "
         "deterministic ΔV<sub>BL,min</sub> (trip-point bisection after ±overdrive), hysteresis and systematic offset are simulated.\n"
         "- **Trip point vs V<sub>CM</sub>.** Linear formula; the unloaded delay vs V<sub>CM</sub> is simulated.\n"
+        "- **Deterministic trip search.** 9-step bisection over ±8 mV (31.25 µV bins) after a ±0.2·V<sub>DD</sub> preconditioning "
+        "overdrive (not the ±20 mV / ±100 mV quoted in the testbench text above). Hysteresis, systematic offset and the deterministic "
+        "ΔV<sub>BL,min</sub> are therefore quantised to 31 µV (173 of 192 records sit at the 15.6 µV floor = ‘≤ 31 µV’); in 5 FIA "
+        "records the search hit the ±8 mV window, so those values are only lower bounds and are left out of the hub results.\n"
+        "- **CM range** (and the hub's Input CM min/max) uses the ±1 mV column of the resolve-time map on the 14-point V<sub>CM</sub> "
+        "grid; the old tile label ‘≥100 µV resolves’ did not match the flow.\n"
+        "- **FIA gm/Id.** The FIA has an NMOS and a PMOS input pair; the hub reports both (FIA N-/P-pair gm/Id) instead of a "
+        "single value; the old spec check used their mean.\n"
         "- **Post-PEX gm/Id** is copied from the schematic closure and the post-PEX active-tail current is 0 in every record → both "
         "omitted from the hub's partial-stage results.\n"
         "- **Delay sweeps.** In some designs the sub-mV points of the delay sweep and the off-grid cells of the resolve-time map equal "
@@ -1433,7 +1549,7 @@ def method_page():
         {"type": "section", "title": "gm/Id design charts",
          "intro": "ngspice LUT sweeps per device flavour (one line per channel length L in µm): gm/Id vs V<sub>GS</sub>, I<sub>D</sub>/W "
                   "vs gm/Id and f<sub>T</sub> vs gm/Id.",
-         "blocks": [{"type": "tabs", "label": "Device", "tabs": gm_tabs}]},
+         "blocks": [{"type": "tabs", "id": "dev", "label": "Device", "tabs": gm_tabs}]},
         {"type": "section", "title": "Data provenance (hub notes)", "blocks": [
             {"type": "markdown", "text": prov},
             {"type": "note", "tone": "info",
@@ -1470,22 +1586,24 @@ comp = {
     "stats": [{"label": "PVT-robust (pre / partial)", "value": f"{n_rob['pre']} / {n_rob['partial']}"},
               {"label": "PVT points per design", "value": "29"},
               {"label": "DSE points (model-scaled)", "value": f"{DSE['n']:,}"}],
-    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u, si=s or None, better=b, digits=dg if not s else None).items()
-                 if v is not None} for k, l, u, s, b, dg in METRICS],
+    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u, si=s or None, better=b, digits=dg if not s else None,
+                                       desc=DESC.get(k)).items() if v is not None} for k, l, u, s, b, dg in METRICS],
     "axes": {
         "topology": {"label": "Architecture",
                      "values": [{"id": a, "label": arch_s[a]} for a in ARCH_ORDER if a in META["archs"]]},
         "mix": {"label": "Threshold mix", "values": [{"id": x, "label": mix_s[x]} for x in MIX_ORDER if x in META["mixes"]]},
         "target": {"label": "I_DD range @2.5 MHz", "values": [{"id": t, "label": TGT_LBL[t]} for t in TGT_ORDER if t in META["targets"]]},
     },
-    "matrix": {"rows": ["topology", "mix"], "cols": ["target"], "metrics": ["delay", "idd"],
-               "presets": [{"label": "Delay @1 mV · I_DD (old matrix)", "metrics": ["delay", "idd"]},
+    "matrix": {"rows": ["topology", "mix"], "cols": ["target"], "metrics": ["delay", "idd", "e_comp"],
+               "presets": [{"label": "Delay @1 mV · I_DD · energy (old matrix)", "metrics": ["delay", "idd", "e_comp"]},
                            {"label": "Energy / read · delay", "metrics": ["e_comp", "delay"]},
                            {"label": "Worst-PVT delay · leakage @125 °C", "metrics": ["delay_worst", "leak"]},
                            {"label": "Max clock · kickback", "metrics": ["fmax", "kick"]},
                            {"label": "τ_regen · hysteresis", "metrics": ["tau", "hyst"]},
                            {"label": "Area · total energy", "metrics": ["area", "e_total"]}]},
-    "card_metrics": ["idd", "delay", "e_comp", "tau", "kick", "area"],
+    "card_metrics": ["idd", "gmid", "delay", "e_comp", "dv_det", "tau", "kick", "fmax", "area"],
+    "cards_group_by": "topology",
+    "table_metrics": ["idd", "gmid", "delay", "tau", "e_comp", "dv_det", "hyst", "fmax", "cm_min", "cm_max", "kick", "leak", "area"],
     "pages": pages,
     "designs": designs,
 }

@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ls_lib import (FJ, NW, PS, UW, Out, band_scale, blue_color, custom_scale, delay_color, fx,  # noqa: E402
+from ls_lib import (FJ, NW, PS, UW, Keep, Out, band_scale, blue_color, custom_scale, delay_color, fx,  # noqa: E402
                     heat_trace, mul, norm, parse_html, to_md, wave_fig)
 
 STAGES = (("pre", "Pre-PEX"), ("full", "Post-PEX"))
@@ -237,8 +237,8 @@ class Ctx:
                 if r:
                     blocks.append({"type": "chart", "stage": st, "alt": f"opr-{tid}-{m}",
                                    "src": r[0], "height": 430, "caption": r[1]})
-            tabs.append({"label": lab, "blocks": blocks})
-        return {"type": "tabs", "style": "select", "label": "Metric", "tabs": tabs}
+            tabs.append({"label": lab, "key": m, "blocks": blocks})
+        return {"type": "tabs", "style": "select", "label": "Metric", "id": "opr_metric", "tabs": tabs}
 
     VSS_X = [0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.5]
     VSS_SPAN = [0.55, 0.65, 0.80, 1.00, 1.20, 1.50, 1.80, 2.50, 3.30]
@@ -379,8 +379,8 @@ class Ctx:
                     blocks.append({"type": "note", "stage": st, "alt": f"v2n-{tid}-{mode}", "tone": "muted", "text": note})
             if with_analysis:
                 blocks.append({"type": "note", "tone": "warn", "text": self.vss2d_analysis(tid)})
-            tabs.append({"label": lab, "blocks": blocks})
-        return {"type": "tabs", "style": "select", "label": "2D Space Mode", "tabs": tabs}
+            tabs.append({"label": lab, "key": mode.replace("vss2d_", ""), "blocks": blocks})
+        return {"type": "tabs", "style": "select", "label": "2D Space Mode", "id": "v2_mode", "tabs": tabs}
 
     def mc(self, st, tid, did):
         """Section-11: tpd histogram with µ / µ+3σ markers and the 6-seed waveform overlay."""
@@ -407,12 +407,12 @@ class Ctx:
             if m.get("tpd_mean_ps") is not None:
                 shapes.append({"type": "line", "x0": m["tpd_mean_ps"], "x1": m["tpd_mean_ps"], "yref": "paper", "y0": 0, "y1": 1,
                                "line": {"color": "#1a7f37", "dash": "dash", "width": 1.8}})
-                ann.append({"x": m["tpd_mean_ps"], "yref": "paper", "y": 1.0, "yanchor": "bottom", "showarrow": False,
+                ann.append({"x": m["tpd_mean_ps"], "yref": "paper", "y": 0.99, "yanchor": "top", "xanchor": "left", "showarrow": False,
                             "text": f"µ={fx(m['tpd_mean_ps'], 0)}ps", "font": {"color": "#1a7f37", "size": 11}})
             if m.get("tpd_3sigma_ps") is not None:
                 shapes.append({"type": "line", "x0": m["tpd_3sigma_ps"], "x1": m["tpd_3sigma_ps"], "yref": "paper", "y0": 0,
                                "y1": 1, "line": {"color": "#9a6700", "dash": "dash", "width": 1.8}})
-                ann.append({"x": m["tpd_3sigma_ps"], "yref": "paper", "y": 0.92, "xanchor": "right", "showarrow": False,
+                ann.append({"x": m["tpd_3sigma_ps"], "yref": "paper", "y": 0.9, "xanchor": "right", "showarrow": False,
                             "text": f"µ+3σ = {fx(m['tpd_3sigma_ps'])} ps", "font": {"color": "#9a6700", "size": 11}})
             hist = {"data": [{"type": "bar", "x": xs, "y": bins, "width": w * 0.85, "text": [str(b) if b else "" for b in bins],
                               "textposition": "outside", "marker": {"color": "#e3eefb", "line": {"color": "#2a78d6", "width": 1}},
@@ -424,7 +424,7 @@ class Ctx:
                                                            f"µ+3σ={fx(m.get('tpd_3sigma_ps'))}ps "
                                                            f"({'3σ PASS' if m.get('pass_3sigma') else '3σ FAIL'})"},
                                          "range": [lo - w * 0.5, hi + w * 0.5]},
-                               "yaxis": {"title": {"text": "MC runs"}}, "shapes": shapes, "annotations": ann,
+                               "yaxis": {"title": {"text": "MC runs"}, "range": [0, max(bins) * 1.22 + 0.5]}, "shapes": shapes, "annotations": ann,
                                "showlegend": False, "margin": {"t": 44}}}
             hist = self.o.put(f"data/mc/{st}/{tid}__{did}_hist.json", hist, 5)
         wobj = {f"seed_{sw['seed']}": sw["wave"] for sw in m.get("sample_waves") or []}
@@ -441,12 +441,12 @@ class Ctx:
             if not r:
                 continue
             hb = {"type": "chart", "stage": st, "alt": f"mch-{tid}-{did}", "title": "Propagation delay distribution & 3σ acceptance bound",
-                  "src": r["hist"], "height": 330} if r["hist"] else \
+                  "src": r["hist"], "height": 360} if r["hist"] else \
                 {"type": "note", "stage": st, "alt": f"mch-{tid}-{did}", "tone": "muted", "text": "Insufficient passing samples for histogram."}
             blocks.append(hb)
             if r["seeds"]:
                 blocks.append({"type": "chart", "stage": st, "alt": f"mcw-{tid}-{did}", "title": "Monte Carlo transient waveform dispersion (seeds 1..6)",
-                               "src": r["seeds"], "height": 330})
+                               "src": r["seeds"], "height": 400})
         return blocks
 
     HVT_TOPOS = [
@@ -582,18 +582,20 @@ class Ctx:
         for bw in self.PRE.get("hvt_waves") or []:
             if tid and bw["topology"] != tid:
                 continue
-            blocks = []
+            blocks, labels = [], {}
+            base = f"{bw['topology']} — {fx(bw['vddl'], 1)}V → {fx(bw['vddh'], 1)}V @ {bw['freq_mhz']}MHz"
             for st, _ in STAGES:
                 w = next((x for x in self.S[st].get("hvt_waves") or [] if x["topology"] == bw["topology"] and
                           abs(x["vddl"] - bw["vddl"]) < 0.01 and abs(x["vddh"] - bw["vddh"]) < 0.01 and
                           x["freq_mhz"] == bw["freq_mhz"]), None)
+                labels[st] = f"{base} (|Vox|={fx(w.get('max_vox_v'), 3)}V)" if w else f"{base} ([N/A] in {dict(STAGES)[st]})"
                 if w and w.get("waveform"):
                     src, note = self.hvwave(st, w)
-                    blocks.append({"type": "chart", "stage": st, "alt": "hvw", "src": src, "height": 360})
+                    blocks.append({"type": "chart", "stage": st, "alt": "hvw", "src": src, "height": 380})
                     blocks.append({"type": "note", "stage": st, "alt": "hvwn", "tone": "muted", "text": note})
-            tabs.append({"label": f"{bw['topology']} — {fx(bw['vddl'], 1)}V → {fx(bw['vddh'], 1)}V @ {bw['freq_mhz']}MHz "
-                                  f"(|Vox|={fx(bw.get('max_vox_v'), 3)}V)", "blocks": blocks})
-        return {"type": "tabs", "style": "select", "label": "Select Operating Point", "tabs": tabs} if tabs else None
+            tabs.append({"label": labels.get("pre", base), "labels": labels, "vdd": bw["vddh"],
+                         "key": f"{bw['topology']}_{fv(bw['vddl'])}_{fv(bw['vddh'])}_{bw['freq_mhz']}", "blocks": blocks})
+        return {"type": "tabs", "style": "select", "label": "Select Operating Point", "id": "hv_wave", "tabs": tabs} if tabs else None
 
 
 # ===================================================================================== designs
@@ -623,8 +625,23 @@ METRICS = [
     ("mc_tpd3s", "MC tpd µ+3σ", "s", True, "low", 4),
     ("mc_swing3s", "MC swing µ−3σ", "%", False, "high", 3),
     ("mc_pstat3s", "MC Pstat µ+3σ", "W", True, "low", 3),
-    ("area", "Layout area (gLayout bbox)", "µm²", False, "low", 4),
+    ("area", "Layout area (gLayout bbox)", "µm²", False, "low", 6),
 ]
+METRIC_DESC = {
+    "tpd": "Mean of tpLH and tpHL (50 % crossings) of the nominal tt / 27 °C transient, CL = 20 fF, 10 MHz (HV points: 25 MHz). Empty when the output does not switch.",
+    "tplh": "Rising-edge (turn-on) logical delay at tt / 27 °C.", "tphl": "Falling-edge (turn-off) logical delay at tt / 27 °C.",
+    "pstat": "Static power from the nominal transient (all rails).", "ptot": "Total average power of the nominal transient.",
+    "edyn": "Dynamic energy per output transition reported by the repo (Psw = 2·f·Edyn).",
+    "swing": "Output swing as % of the output-domain span; the repo's pass criterion is ≥ 85 %.",
+    "vox": "Peak max(|VGS|,|VGD|) over all MOSFETs during the nominal transient (HV oxide check; limit 1.8 V).",
+    "pvt_yield": "Share of PVT corners that pass (20 corners tt/ss/ff/fs/sf × −40/27/85/125 °C; HV points: 15 corners incl. the 1.8 V oxide assertion).",
+    "wc_tpd": "Slowest tpd over the PVT corners.", "wc_pstat": "Highest static power over the PVT corners.",
+    "wc_vox": "Highest peak oxide stress over the 15 HV PVT corners.",
+    "mc_yield": "Passing seeds of the 80-run Monte Carlo (global process + local mismatch).",
+    "mc_tpd3s": "Monte Carlo µ+3σ of tpd; the 3σ acceptance requires < 25 ns.",
+    "mc_swing3s": "Monte Carlo µ−3σ of the output swing; the 3σ acceptance requires ≥ 85 %.",
+    "area": "gLayout bounding-box area of the extracted cell (a layout measurement, identical at every stage).",
+}
 
 
 def nominal_metrics(r):
@@ -670,11 +687,13 @@ def stage_result(c: Ctx, st, tid, dom, area):
         if summ:
             m.update(pvt_yield=summ["yield_pct"], wc_tpd=mul(summ.get("wc_tpd_ps"), PS), wc_tplh=mul(summ.get("wc_tplh_ps"), PS),
                      wc_tphl=mul(summ.get("wc_tphl_ps"), PS), wc_pstat=mul(summ.get("wc_pstat_nw"), NW))
-            if nom and (summ.get("nom_tpd_ps") != nom.get("tpd_ps") or summ.get("nom_pstat_nw") != nom.get("p_stat_nw")):
-                notes.append(f"the PVT sweep ran on an earlier netlist revision than the nominal pilot (its tt/27 °C point: "
-                             f"tpd {fx(summ.get('nom_tpd_ps'))} ps, Pstat {fx(summ.get('nom_pstat_nw'))} nW vs pilot "
-                             f"{fx(nom.get('tpd_ps'))} ps, {fx(nom.get('p_stat_nw'))} nW)")
         mc = ix["mc_summary"].get((tid, dom["id"]))
+        if summ and nom and (summ.get("nom_tpd_ps") != nom.get("tpd_ps") or summ.get("nom_pstat_nw") != nom.get("p_stat_nw")):
+            mc_txt = f"; MC mean tpd {fx(mc.get('tpd_mean_ps'))} ps" if mc else ""
+            notes.append(f"the PVT sweep{' and the Monte Carlo ensemble' if mc else ''} ran on an earlier netlist revision than "
+                         f"the nominal pilot (PVT-run tt/27 °C point: tpd {fx(summ.get('nom_tpd_ps'))} ps, Pstat "
+                         f"{fx(summ.get('nom_pstat_nw'))} nW vs pilot {fx(nom.get('tpd_ps'))} ps, {fx(nom.get('p_stat_nw'))} nW{mc_txt}), "
+                         f"so the worst-case, Monte Carlo and robust figures describe that revision")
         if mc:
             m.update(mc_yield=mc["yield_pct"], mc_tpd_mean=mul(mc.get("tpd_mean_ps"), PS), mc_tpd_sd=mul(mc.get("tpd_std_ps"), PS),
                      mc_tpd3s=mul(mc.get("tpd_3sigma_ps"), PS), mc_swing3s=mc.get("swing_3sigma_low_pct"),
@@ -689,6 +708,7 @@ def stage_result(c: Ctx, st, tid, dom, area):
     if mc:
         res["mc"] = {"pass": mc["n_pass"], "total": mc["n_runs"]}
     if nom is not None and not nom.get("pass"):
+        res["status"] = "fail"
         notes.insert(0, "fails at the nominal tt/27 °C point" + (f" (swing {fx((nom.get('swing_ratio') or 0) * 100, 0)} %)"
                                                                   if not nom.get("logic_pass", True) or not dom["hv"] else ""))
     if st == "full":
@@ -825,7 +845,7 @@ def topo_md(t):
 def pex_kv(t):
     pm, a = t.get("pex_meta") or {}, t.get("area") or {}
     return [{"label": "gLayout BBox W × H", "value": f"{fx(pm.get('width_um'))} × {fx(pm.get('height_um'))} µm"},
-            {"label": "gLayout bbox area", "value": pm.get("layout_area_um2"), "unit": "µm²", "digits": 6},
+            {"label": "gLayout bbox area", "value": f"{fx(pm['layout_area_um2'], 2)} µm²" if pm.get("layout_area_um2") is not None else None},
             {"label": "Extracted devices", "value": pm.get("n_extracted_devs"), "digits": 0},
             {"label": "Parasitic caps (count · total)", "value": f"{pm.get('n_parasitic_caps')} · {fx(pm.get('total_cap_ff'), 2)} fF"},
             {"label": "Parasitic resistors (count · total)", "value": f"{pm.get('n_parasitic_res')} · {fx(pm.get('total_res_ohm'))} Ω"},
@@ -855,7 +875,7 @@ def build_designs(c: Ctx, pages_mod):
     for t in c.topos:
         tid = t["id"]
         pm, ar = t.get("pex_meta") or {}, t.get("area") or {}
-        area = pm.get("layout_area_um2")
+        area = Keep(pm["layout_area_um2"]) if pm.get("layout_area_um2") is not None else None
         for did in order:
             d = doms[did]
             if d["hv"] and (tid, did) not in hv_pairs:
@@ -1000,7 +1020,8 @@ def detail_blocks(c: Ctx, t, d, rec, P):
                   "intro": f"Input domain [{fv(d['vssl'])}, {fv(d['vddl'])} V] → output domain [{fv(d['vssh'])}, {fv(d['vddh'])} V].",
                   "blocks": nb})
         B.append({"type": "section", "title": "Transient waveforms (nominal and worst-case PVT corners)",
-                  "blocks": c.wave_blocks(tid, did)})
+                  "blocks": c.wave_blocks(tid, did) + [{"type": "markdown", "text": f"[Open in the waveform viewer (other domains of {tid}) →]"
+                                                                                  f"(#/ls?page=waveforms&t.wave_topo={tid}&t.wave_dom={did})"}]})
         pb = []
         for st, lab in STAGES:
             p = c.ix[st]["pvt_summary"].get((tid, did))
@@ -1066,8 +1087,8 @@ def main():
         "stats": [{"label": "simulations (pre-PEX)", "value": f"{pre_sims:,}"},
                   {"label": "simulations (post-PEX)", "value": f"{pex_sims:,}"},
                   {"label": "DSE sizing candidates", "value": f"{dse.get('n_total', 0):,}"}],
-        "metrics": [{k: v for k, v in dict(key=k, label=lab, unit=u, si=si or None, better=b, digits=dg).items() if v is not None}
-                    for k, lab, u, si, b, dg in METRICS],
+        "metrics": [{k: v for k, v in dict(key=k, label=lab, unit=u, si=si or None, better=b, digits=dg, desc=METRIC_DESC.get(k)).items()
+                     if v is not None} for k, lab, u, si, b, dg in METRICS],
         "axes": {
             "topology": {"label": "Topology", "values": [{"id": t["id"], "label": f"{t['id'].split('_')[0]} · {t['short_name']}"} for t in c.topos]},
             "domain": {"label": "Domain crossing", "values": [{"id": k, "label": c.doms[k]["label"]} for k in c.dom_order]},
@@ -1076,15 +1097,16 @@ def main():
             "direction": {"label": "Direction", "values": [{"id": "up", "label": "Step-up"}, {"id": "down", "label": "Step-down"}]},
             "coupling": {"label": "Coupling", "values": [{"id": x, "label": x} for x in coupling]},
         },
-        "matrix": {"rows": ["topology"], "cols": ["domain"], "metrics": ["tpd", "pvt_yield"],
-                   "presets": [{"label": "Delay & PVT yield", "metrics": ["tpd", "pvt_yield"]},
+        "matrix": {"rows": ["topology"], "cols": ["domain"], "metrics": ["tpd", "pvt_yield", "swing"],
+                   "presets": [{"label": "Delay, PVT yield & swing", "metrics": ["tpd", "pvt_yield", "swing"]},
                                {"label": "Static power & switching energy", "metrics": ["pstat", "edyn"]},
                                {"label": "Rise / fall delay", "metrics": ["tplh", "tphl"]},
                                {"label": "Worst-case PVT delay", "metrics": ["wc_tpd", "pvt_yield"]},
                                {"label": "Monte Carlo µ+3σ", "metrics": ["mc_tpd3s", "mc_yield"]},
                                {"label": "Oxide stress (HV points)", "metrics": ["wc_vox", "vox"]},
                                {"label": "Layout area", "metrics": ["area", "tpd"]}]},
-        "card_metrics": ["tpd", "pvt_yield", "edyn", "pstat", "area"],
+        "card_metrics": ["tpd", "pvt_yield", "edyn", "pstat", "swing", "area"],
+        "cards_group_by": "topology",
         "pages": pages,
         "designs": designs,
     }

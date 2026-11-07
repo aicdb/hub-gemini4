@@ -26,7 +26,8 @@
     if (typeof v !== 'number' || !isFinite(v)) return String(v);
     const a = Math.abs(v);
     if (Number.isInteger(v) && a < 1e15) return v.toLocaleString('en-US');
-    if (a >= 1e4) return Math.round(v).toLocaleString('en-US');
+    if (a >= 10 ** Math.max(digits, 1)) return Math.round(v).toLocaleString('en-US');   // more integer digits than requested precision
+    if (a >= 1e4) return (+v.toPrecision(digits)).toLocaleString('en-US', { maximumFractionDigits: 20 });
     if (a === 0) return '0';
     return String(+v.toPrecision(digits));
   }

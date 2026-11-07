@@ -34,7 +34,7 @@ POST_NOTE = ("Whole-cell Magic `ext2spice` extraction of the complete op-amp lay
 METRICS = [
     ("ugb", "UGB", "Hz", True, "high", "ugb_hz", 1, 3),
     ("a0", "DC gain", "dB", False, "high", "a0_db", 1, 4),
-    ("cl_bw", "Closed-loop −3 dB BW (ULP)", "Hz", True, None, "cl_bw_hz", 1, 3),
+    ("cl_bw", "CL −3 dB BW (ULP only)", "Hz", True, None, "cl_bw_hz", 1, 3),
     ("pm", "Phase margin", "°", False, "high", "pm_deg", 1, 4),
     ("gm", "Gain margin", "dB", False, "high", "gm_db", 1, 3),
     ("idd", "Supply current", "A", True, "low", "idd_ua", 1e-6, 3),
@@ -64,6 +64,23 @@ METRICS = [
     ("area", "Layout area", "µm²", False, "low", None, 1, 5),
 ]
 MDEF = {m[0]: m for m in METRICS}
+METRIC_DESC = {
+    "ugb": "Open-loop unity-gain bandwidth, nominal TT 27 °C, at the card's load C_L",
+    "a0": "Open-loop DC gain, nominal TT 27 °C",
+    "cl_bw": "Closed-loop −3 dB bandwidth of the unity-gain follower; reported for the ultra-low-power (<0.1 µW, <10 kHz) designs only",
+    "pm": "Open-loop phase margin, nominal TT 27 °C (multi-crossing aware)",
+    "idd": "Quiescent supply current of the op-amp (excluding the reference branch)",
+    "power": "Quiescent power I_DD × V_DD",
+    "vn_1k": "Input-referred noise density at 1 kHz",
+    "vn_rms": "Integrated input-referred noise, 1 Hz–1 MHz",
+    "pm_min": "Minimum phase margin over the 17 recorded PVT corners",
+    "a0_min": "Minimum DC gain over the 17 recorded PVT corners",
+    "mc_yield": "Yield of the 50-run per-finger mismatch Monte Carlo (PM ≥ 45°, step-stable; pre-PEX also all devices saturated)",
+    "vos_sigma": "Standard deviation of the input offset over the 50 Monte Carlo runs",
+    "pm_p5": "5th percentile of the phase margin over the 50 Monte Carlo runs",
+    "zin": "Closed-loop input impedance at 1 kHz in the 1 V/V follower",
+    "area": "Layout bounding-box area from the GDS (a layout property, reported with the full post-PEX stage)",
+}
 
 KNOBS = {  # card.knobs key -> (label, unit, scale)
     "l_in": ("L<sub>in</sub>", "µm", 1), "l_load": ("L<sub>load</sub>", "µm", 1), "l_tail": ("L<sub>tail</sub>", "µm", 1),
@@ -156,6 +173,7 @@ def phys_badge(p):
 
 
 def stage_result(s, area, mc):
+    """area: only passed for the full (post-layout) stage; it is a layout property, not a simulation result."""
     if not s:
         return None
     m = {}
@@ -163,8 +181,10 @@ def stage_result(s, area, mc):
         if field and fin(s.get(field)):
             m[key] = r5(s[field] * k) if k != 1 else r5(float(s[field]))
     if fin(area):
-        m["area"] = r5(float(area))
+        m["area"] = area
     out = {"metrics": m, "robust": bool(s.get("pvt_robust"))}
+    if s.get("pm_pass") is False:
+        out["status"] = "fail"  # nominal PM screen failed at this stage (old site: 'Screen warn', red)
     if s.get("pvt_total"):
         out["pvt"] = {"pass": s["pvt_pass"], "total": s["pvt_total"]}
     if mc and mc.get("n_completed") and fin(mc.get("yield_pct")):
@@ -322,11 +342,15 @@ def kpi_items(card, st, phys, cl_pf):
         ("Worst-Case PVT PM", f"{num(pvt.get('pm_min_deg'), 2)}°", f"{n_pass}/{n_pts} PVT corners pass >45°"),
         ("Input Noise @ 1 kHz", f"{num(nom.get('vn_1khz_nv_rthz'), 1)} nV/√Hz", f"Integrated (1Hz–1MHz): {num(nom.get('vn_rms_1hz_1mhz_uv'), 2)} μVrms"),
         ("Mismatch Offset σ", f"{num(mc.get('vos_sigma_mv'), 3)} mV", f"50-run MC yield: {num(mc.get('yield_pct'), 1)}% (P5 PM {num(mc.get('pm_p5_deg'), 1)}°)"),
-        ("CMRR / PSRR+ / PSRR−", f"{num(nom.get('cmrr_dc_db'), 1)} / {num(nom.get('psrr_p_dc_db'), 1)} / {num(nom.get('psrr_n_dc_db'), 1)} dB", "DC rejection ratios"),
-        ("Slew Rate (+ / −)", f"{num(nom.get('sr_pos_vus'), 3)} / {num(nom.get('sr_neg_vus'), 3)} V/μs", f"1% settling: {num(nom.get('ts_1pct_us'), 3)} μs"),
-        ("THD / Two-Tone IM3", f"{num(nom.get('thd_pct'), 4)}% / {num(nom.get('im3_dbc'), 1)} dBc", f"HD2 {num(nom.get('hd2_dbc'), 1)} dBc, HD3 {num(nom.get('hd3_dbc'), 1)} dBc"),
-        ("Physical Footprint", f"{num(phys.get('area_um2'), 1)} μm²" if phys.get("area_um2") else "Pending",
-         f"{num(phys.get('width_um'), 1)} × {num(phys.get('height_um'), 1)} μm ({phys.get('parasitic_c_count') or 0} par C)" if phys.get("width_um") else ""),
+        ("CMRR (DC)", f"{num(nom.get('cmrr_dc_db'), 1)} dB", "DC rejection ratio (original tile: CMRR / PSRR+ / PSRR−)"),
+        ("PSRR+ (DC)", f"{num(nom.get('psrr_p_dc_db'), 1)} dB", "DC rejection ratio"),
+        ("PSRR− (DC)", f"{num(nom.get('psrr_n_dc_db'), 1)} dB", "DC rejection ratio"),
+        ("Slew Rate +", f"{num(nom.get('sr_pos_vus'), 3)} V/μs", f"1% settling: {num(nom.get('ts_1pct_us'), 3)} μs"),
+        ("Slew Rate −", f"{num(nom.get('sr_neg_vus'), 3)} V/μs", "unity-follower step"),
+        ("THD", f"{num(nom.get('thd_pct'), 4)}%", f"HD2 {num(nom.get('hd2_dbc'), 1)} dBc, HD3 {num(nom.get('hd3_dbc'), 1)} dBc"),
+        ("Two-Tone IM3", f"{num(nom.get('im3_dbc'), 1)} dBc", "coherent FFT"),
+        ("Physical Footprint", f"{phys['area_um2']:,.0f} μm²" if phys.get("area_um2") else "Pending",
+         f"{num(phys.get('area_um2'), 1)} μm² · {num(phys.get('width_um'), 1)} × {num(phys.get('height_um'), 1)} μm ({phys.get('parasitic_c_count') or 0} par C)" if phys.get("width_um") else ""),
     ]
     return [{"label": a, "value": b, "sub": c} for a, b, c in items]
 
@@ -398,15 +422,15 @@ def extra_nominal_items(nom):
 
 OP_COLS = [
     {"key": "dev", "label": "Device", "type": "text"}, {"key": "role", "label": "Role", "type": "text"},
-    {"key": "model", "label": "Model", "type": "text"}, {"key": "nets", "label": "Nets (D, G, S, B)", "type": "text"},
+    {"key": "model", "label": "Model", "type": "text"}, {"key": "nets", "label": "Nets (D, G, S, B)", "type": "text", "wrap": True},
     {"key": "wf", "label": "W<sub>f</sub> (µm)", "digits": 4}, {"key": "l", "label": "L (µm)", "digits": 4},
     {"key": "m", "label": "m", "digits": 4}, {"key": "wt", "label": "W<sub>tot</sub> (µm)", "digits": 5},
     {"key": "gt", "label": "gm/Id Tgt", "digits": 3}, {"key": "gs", "label": "gm/Id Sim", "digits": 4},
     {"key": "it", "label": "I<sub>D</sub> Tgt", "unit": "A", "si": True}, {"key": "is", "label": "I<sub>D</sub> Sim", "unit": "A", "si": True},
     {"key": "gm", "label": "g<sub>m</sub>", "unit": "S", "si": True}, {"key": "gds", "label": "g<sub>ds</sub>", "unit": "S", "si": True},
-    {"key": "vgs", "label": "V<sub>GS</sub> (V)", "digits": 3}, {"key": "vds", "label": "V<sub>DS</sub> (V)", "digits": 3},
-    {"key": "vth", "label": "V<sub>th</sub> (V)", "digits": 3}, {"key": "vdsat", "label": "V<sub>DSAT</sub> (V)", "digits": 3},
-    {"key": "hr", "label": "|V<sub>DS</sub>|−V<sub>DSAT</sub> (V)", "digits": 3, "title": "Saturation headroom computed from the simulated V_DS and V_DSAT (red when negative)"},
+    {"key": "vgs", "label": "V<sub>GS</sub> (V)", "digits": 4}, {"key": "vds", "label": "V<sub>DS</sub> (V)", "digits": 4},
+    {"key": "vth", "label": "V<sub>th</sub> (V)", "digits": 4}, {"key": "vdsat", "label": "V<sub>DSAT</sub> (V)", "digits": 4},
+    {"key": "hr", "label": "|V<sub>DS</sub>|−V<sub>DSAT</sub> (V)", "digits": 4, "title": "Saturation headroom computed from the simulated V_DS and V_DSAT (red when negative)"},
     {"key": "sat", "label": "Sat.", "type": "status"},
 ]
 
@@ -428,11 +452,11 @@ def op_rows(card):
 
 PVT_COLS = [
     {"key": "corner", "label": "Corner", "type": "text"}, {"key": "temp", "label": "Temp (°C)", "digits": 3},
-    {"key": "vdd", "label": "V<sub>DD</sub> (V)", "digits": 3}, {"key": "idd", "label": "I<sub>DD</sub>", "unit": "A", "si": True},
+    {"key": "vcorner", "label": "V<sub>DD</sub> (V)", "digits": 3}, {"key": "idd", "label": "I<sub>DD</sub>", "unit": "A", "si": True},
     {"key": "a0", "label": "DC Gain (dB)", "digits": 5}, {"key": "ugb", "label": "UGB", "unit": "Hz", "si": True},
-    {"key": "pm", "label": "PM (°)", "digits": 4}, {"key": "gm", "label": "GM (dB)", "digits": 3},
-    {"key": "vos", "label": "V<sub>os</sub> (mV)", "digits": 3}, {"key": "os", "label": "Overshoot (%)", "digits": 3},
-    {"key": "ts", "label": "1% Settling (μs)", "digits": 4}, {"key": "sat", "label": "All sat.", "type": "status"},
+    {"key": "pm", "label": "PM (°)", "digits": 5}, {"key": "gm", "label": "GM (dB)", "digits": 4},
+    {"key": "vos", "label": "V<sub>os</sub> (mV)", "digits": 5}, {"key": "os", "label": "Overshoot (%)", "digits": 4},
+    {"key": "ts", "label": "1% Settling (μs)", "digits": 6}, {"key": "sat", "label": "All sat.", "type": "status"},
     {"key": "pass", "label": "Pass", "type": "text"},
 ]
 
@@ -444,7 +468,7 @@ def pvt_rows(pts):
         # vdd column renamed so the table does not follow the global VDD filter
         out.append([p.get("corner"), p.get("temp_c"), r5(p.get("vdd")), scale(p.get("idd_ua"), 1e-6), r5(p.get("a0_db")),
                     r5(p.get("ugb_hz")), r5(p.get("pm_deg")), r5(p.get("gm_db")), r5(p.get("vos_mv")), r5(p.get("overshoot_pct")),
-                    r5(p.get("ts_1pct_us")), p.get("all_saturated"), {"v": "PASS" if ok else "WARN", "s": "good" if ok else "warn"}])
+                    r5(p.get("ts_1pct_us"), 7), p.get("all_saturated"), {"v": "PASS" if ok else "WARN", "s": "good" if ok else "warn"}])
     return out
 
 
@@ -505,7 +529,7 @@ def detail_doc(lt, ld, card, base, twin):
     ov += stage_alts("kpi", lambda st: {"type": "stats", "items": kpi_items(card, st, phys, cl_pf), "span": 2},
                      "Key nominal results (TT, 27 °C)")
     ov += stage_alts("checklist", lambda st: {"type": "table", "columns": [
-        {"key": "check", "label": "Check", "type": "text"}, {"key": "ev", "label": "Evidence Summary", "type": "text"},
+        {"key": "check", "label": "Check", "type": "text", "wrap": True}, {"key": "ev", "label": "Evidence Summary", "type": "text", "wrap": True},
         {"key": "st", "label": "Status", "type": "text"}], "rows": checklist_rows(card, st, phys), "csv": False, "search": False},
         "Verification Signoff Checklist")
     ov += stage_alts("target", lambda st: {"type": "kv", "cols": 1, "items": design_target_items(card, st)},
@@ -524,8 +548,8 @@ def detail_doc(lt, ld, card, base, twin):
         {"label": "Post-PEX Extracted SPICE", "file": files.get("pex_spice")} if files.get("pex_spice") else None,
         {"label": "Full-Resolution Schematic SVG", "src": sch} if sch else None] if x]}]
     if sch:
-        sblocks.append({"type": "image", "src": sch, "bg": "dark", "max_height": 900, "title": "Annotated schematic",
-                        "caption": "Transistor-level schematic annotated with per-finger W/L, finger multiplier m, target gm/Id, and simulated operating-point gm/Id & drain current. Click to open full size (zoom in the browser)."})
+        sblocks.append({"type": "markdown", "text": "Transistor-level schematic annotated with per-finger W/L, finger multiplier m, target gm/Id, and simulated operating-point gm/Id & drain current: "
+                                                    "see **Figures → Schematic** at the top of this page (click it to open the full-resolution SVG and zoom in the browser)."})
     sblocks.append({"type": "table", "title": "Transistor Sizing & Simulated Operating Point (Nominal TT, 27 °C)",
                     "columns": OP_COLS, "rows": op_rows(card), "search": False,
                     "caption": "Operating point (g<sub>m</sub>/I<sub>D</sub>, I<sub>D</sub>, V<sub>GS</sub>, V<sub>DS</sub>, V<sub>DSAT</sub> …) from the **pre-PEX** schematic simulation — the post-PEX netlist carries no per-device operating-point map. The headroom column |V<sub>DS</sub>|−V<sub>DSAT</sub> is computed from the simulated values (red = negative)."})
@@ -577,9 +601,10 @@ def detail_doc(lt, ld, card, base, twin):
                    "text": f"Full-custom passive-inclusive physical layout generated with experimental gLayout (PR #128) · DRC: **{'0 effective violations (PASS)' if phys.get('drc_ok') else 'Pending'}** · "
                            f"LVS: **{phys.get('lvs_conclusion') or 'Pending'}** · Magic PEX: **{'Extracted (%s parasitic caps)' % phys.get('parasitic_c_count') if phys.get('pex_ok') else 'Pending'}**"}]
     if gds:
-        lay_blocks.append({"type": "layout", "gds": gds, "span": 2, "max_height": 620, "title": "Physical layout (rendered from the GDS)",
-                           "caption": f"Footprint: {num(phys.get('width_um'), 2)} μm × {num(phys.get('height_um'), 2)} μm = {num(phys.get('area_um2'), 1)} μm². "
-                                      "Thumbnail rendered by the hub from the GDS; the full-resolution layout is in the GDS file."})
+        lay_blocks.append({"type": "markdown", "span": 2,
+                           "text": f"Footprint: {num(phys.get('width_um'), 2)} μm × {num(phys.get('height_um'), 2)} μm = {num(phys.get('area_um2'), 1)} μm². "
+                                   "The layout view is **Figures → Layout** at the top of this page (rendered by the hub from the GDS; the thumbnail size line is the GDS bounding box). "
+                                   "The full-resolution layout is the GDS file below."})
     lay_blocks.append({"type": "downloads", "span": 2, "items": [x for x in [
         {"label": "Compressed GDSII (.gds.gz)", "file": gds} if gds else None,
         {"label": "KLayout LVS Reference Netlist", "file": phys.get("lvs_ref_spice") or files.get("lvs_ref_spice")} if (phys.get("lvs_ref_spice") or files.get("lvs_ref_spice")) else None,
@@ -587,9 +612,9 @@ def detail_doc(lt, ld, card, base, twin):
     lay_blocks.append({"type": "kv", "cols": 1, "title": "Physical Verification & Extraction Summary", "items": phys_items(phys)})
     lay_blocks.append({"type": "table", "title": "Top-Level Pin Coordinates (METAL2 36/10)", "search": False, "csv": False,
                        "columns": [{"key": "n", "label": "Port Name", "type": "text"}, {"key": "l", "label": "Layer", "type": "text"},
-                                   {"key": "g", "label": "GDS (Layer/DT)", "type": "text"}, {"key": "x", "label": "X (μm)", "digits": 5},
-                                   {"key": "y", "label": "Y (μm)", "digits": 5}],
-                       "rows": [[p.get("name"), p.get("layer"), "/".join(str(v) for v in (p.get("gds_layer") or [])), r5(p.get("x_um")), r5(p.get("y_um"))]
+                                   {"key": "g", "label": "GDS (Layer/DT)", "type": "text"}, {"key": "x", "label": "X (μm)", "digits": 7},
+                                   {"key": "y", "label": "Y (μm)", "digits": 7}],
+                       "rows": [[p.get("name"), p.get("layer"), "/".join(str(v) for v in (p.get("gds_layer") or [])), p.get("x_um"), p.get("y_um")]
                                 for p in phys.get("pin_coords") or []]})
     blocks.append({"type": "section", "title": "Physical layout & PEX", "cols": 2, "blocks": lay_blocks})
 
@@ -635,23 +660,37 @@ def overview_page(loads, summ, ulp, ids):
     tabs = []
     for ld in loads:
         m = summ[ld["id"]]["meta"]
-        tabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "blocks": [{"type": "stats", "items": [
+        sblocks = [{"type": "stats", "title": "All supplies", "items": [
             {"label": f"deliverable cards · CL = {m['cl_label']}", "value": str(m["total_cards"])},
             {"label": "pass all 17 PVT corners (>45° PM) — pre-PEX", "value": f"{m['pre_pvt_robust_count']}/{m['total_cards']}"},
             {"label": "pass all 17 PVT corners (>45° PM) — post-PEX", "value": f"{m.get('post_pvt_robust_count', '—')}/{m['total_cards']}"},
             {"label": "post-PEX results available", "value": f"{m.get('post_ready_count', '—')}/{m['total_cards']}"},
             {"label": "DRC/LVS/PEX-clean physical layouts", "value": f"{m['phys_clean_count']}/{m['total_cards']}"},
             {"label": "ngspice-46 compute farm evaluations", "value": f"{m['total_farm_sims']:,}"},
-        ]}]})
-    blocks.append({"type": "section", "title": "Library statistics", "blocks": [{"type": "tabs", "tabs": tabs}]})
+        ]}]
+        for vdd in sorted({c["vdd"] for c in summ[ld["id"]]["cards"]}):
+            cs = [c for c in summ[ld["id"]]["cards"] if c["vdd"] == vdd]
+            n = len(cs)
+            sblocks.append({"type": "stats", "vdd": vdd, "title": f"V<sub>DD</sub> = {jsn(vdd)} V", "items": [
+                {"label": f"deliverable cards · CL = {m['cl_label']}", "value": str(n)},
+                {"label": "pass all 17 PVT corners — pre-PEX", "value": f"{sum(1 for c in cs if (c.get('pre') or {}).get('pvt_robust'))}/{n}"},
+                {"label": "pass all 17 PVT corners — post-PEX", "value": f"{sum(1 for c in cs if (c.get('post') or {}).get('pvt_robust'))}/{n}"},
+                {"label": "DRC/LVS/PEX-clean physical layouts", "value": f"{sum(1 for c in cs if all((c.get('physical') or {}).get(k) for k in ('drc_ok', 'lvs_ok', 'pex_ok')))}/{n}"},
+            ]})
+        tabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "key": ld["id"], "blocks": sblocks})
+    blocks.append({"type": "section", "title": "Library statistics", "intro": "Totals over both supplies, then per supply (the per-supply tiles follow the global V<sub>DD</sub> option).",
+                   "blocks": [{"type": "tabs", "id": "stats", "tabs": tabs}]})
 
     # classic coverage matrix (port of renderMatrix) per load and stage
     ulp_t = (ulp or {}).get("topologies") or {}
-    cols = [{"key": "row", "label": "Architecture · Regime (gm/Id)", "type": "text"},
-            {"key": "ulp", "label": "Low Power (<0.1 μW)", "md": True, "group": "ULP High-Gain (<10 kHz)", "type": "text"}]
+    vcols = {}
     for vt, vl in (("1v8", "1.8"), ("3v3", "3.3")):
+        cols = [{"key": "row", "label": "Architecture · Regime (gm/Id)", "type": "text", "wrap": True}]
+        if vt == "1v8":
+            cols.append({"key": "ulp", "label": "Low Power (<0.1 μW)", "md": True, "group": "ULP High-Gain (<10 kHz)", "type": "text", "wrap": True})
         for c in classes:
-            cols.append({"key": f"{vt}_{c['tag']}", "label": c["label"], "md": True, "type": "text", "group": f"V<sub>DD</sub> = {vl} V"})
+            cols.append({"key": f"{vt}_{c['tag']}", "label": c["label"], "md": True, "type": "text", "wrap": True, "group": f"V<sub>DD</sub> = {vl} V"})
+        vcols[vt] = cols
     mtabs = []
     for ld in loads:
         lt = ld["id"]
@@ -698,15 +737,18 @@ def overview_page(loads, summ, ulp, ids):
                             row[f"{vt}_{ic['tag']}"] = {"v": f"[**{si(s.get('ugb_hz') or 0, 'Hz')}**](#/opa/{lt}-{cid}) · {num(s.get('a0_db'), 1)} dB<br><small>PM {num(s.get('pm_deg'), 1)}° · {st_short} {ptag}</small>",
                                                         "s": kind, "title": f"{lt}-{cid}"}
                     rows.append(row)
-            alts.append({"type": "table", "alt": f"mx_{lt}", "stage": st, "columns": cols, "rows": rows, "csv": False, "search": False, "max_height": 2400,
-                         "title": f"C<sub>L</sub> = {ld['label']} — {'Pre-PEX schematic' if st == 'pre' else 'Post-PEX extracted'} results"})
-        mtabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "blocks": alts})
+            for vt, vnum in (("1v8", 1.8), ("3v3", 3.3)):
+                keys = [c["key"] for c in vcols[vt]]
+                alts.append({"type": "table", "alt": f"mx_{lt}_{vt}", "stage": st, "vdd": vnum, "columns": vcols[vt],
+                             "rows": [{k: r.get(k) for k in keys} for r in rows], "csv": False, "search": False, "max_height": 2400,
+                             "title": f"C<sub>L</sub> = {ld['label']} · V<sub>DD</sub> = {jsn(vnum)} V{' (+ ULP column)' if vt == '1v8' else ''} — {'Pre-PEX schematic' if st == 'pre' else 'Post-PEX extracted'} results"})
+        mtabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "key": lt, "blocks": alts})
     blocks.append({"type": "section", "title": "Coverage matrix (12 architectures × 2 regimes × [Low Power <0.1 μW + 6 V<sub>DD</sub>/I<sub>DD</sub> classes] = 168 cells)",
                    "intro": "The **Low Power (<0.1 μW)** column highlights low-speed (<10 kHz closed-loop BW), high-gain nW/pW designs alongside the standard 1.8 V and 3.3 V current envelopes. "
                             "ULP cells show A<sub>0</sub> · closed-loop BW, power, PM, PVT and the per-topology ULP frontier (minimum power · maximum gain, from the ULP exploration); standard cells show UGB · A<sub>0</sub>, PM and PVT. "
                             "Green = 17/17 PVT pass, amber = nominal PM pass but < 17/17 PVT, red = screen warning. Click a value to open the design card. "
                             "The values follow the **Simulation** stage selector (Pre-PEX / Full post-PEX); the interactive matrix with a metric selector is on the **Designs** tab.",
-                   "blocks": [{"type": "tabs", "tabs": mtabs}]})
+                   "blocks": [{"type": "tabs", "id": "mx", "tabs": mtabs}]})
 
     dls = [{"label": f"{ld['label']} Library Manifest (JSON)", "file": f"data/{ld['id']}/library.json"} for ld in loads]
     dls += [{"label": f"{ld['label']} Coverage Summary (JSON)", "file": f"data/{ld['id']}/summary.json"} for ld in loads]
@@ -723,7 +765,7 @@ def overview_page(loads, summ, ulp, ids):
 
 def dse_data(loads, summ, dse, out, ids):
     """Columnar explorer data: candidates + delivered pre/post points (per load and combined)."""
-    keys = ["idd", "ugb", "a0", "pm", "fom", "vos", "arch", "kind", "cls", "regime", "supply", "pmpass", "load", "vdd", "design", "delivered", "label"]
+    keys = ["idd", "ugb", "a0", "pm", "fom", "vos", "arch", "archs", "kind", "cls", "regime", "supply", "pmpass", "load", "vdd", "stage", "design", "delivered", "label"]
     allc = {k: [] for k in keys}
     for ld in loads:
         lt = ld["id"]
@@ -737,6 +779,7 @@ def dse_data(loads, summ, dse, out, ids):
             did = f"{lt}-{p['card_id']}"
             add(idd=scale(p.get("idd_ua"), 1e-6), ugb=r5(p.get("ugb_hz")), a0=r5(p.get("a0_db")), pm=r5(p.get("pm_deg")),
                 fom=r5(p.get("fom_s")), vos=scale(p.get("vos_mv"), 1e-3), arch=p.get("arch"),
+                archs=p.get("arch") if p.get("feasible") else "screened",
                 kind="feasible" if p.get("feasible") else "screened", cls=p.get("iclass_tag"), regime=p.get("inv_tag"),
                 supply=p.get("vdd_tag"), pmpass="pass" if p.get("pm_pass") else "fail", load=lt, vdd=p.get("vdd"),
                 design=did if did in ids else None, delivered=False, label=f"{p['card_id']} · candidate #{p.get('cand_idx')}")
@@ -748,8 +791,9 @@ def dse_data(loads, summ, dse, out, ids):
                     continue
                 fom = s["ugb_hz"] / 1e6 * cl_pf / (s["idd_ua"] / 1e3) if fin(s.get("ugb_hz")) and fin(s.get("idd_ua")) and s["idd_ua"] > 0 else None
                 add(idd=scale(s.get("idd_ua"), 1e-6), ugb=r5(s.get("ugb_hz")), a0=r5(s.get("a0_db")), pm=r5(s.get("pm_deg")),
-                    fom=r5(fom), vos=scale(s.get("vos_mv"), 1e-3), arch=c["arch"], kind=kind, cls=c["iclass_tag"], regime=c["inv_tag"],
-                    supply=c["vdd_tag"], pmpass="pass" if s.get("pm_pass") else "fail", load=lt, vdd=c["vdd"], design=did, delivered=True,
+                    fom=r5(fom), vos=scale(s.get("vos_mv"), 1e-3), arch=c["arch"], archs=c["arch"], kind=kind, cls=c["iclass_tag"], regime=c["inv_tag"],
+                    supply=c["vdd_tag"], pmpass="pass" if s.get("pm_pass") else "fail", load=lt, vdd=c["vdd"],
+                    stage="pre" if st == "pre" else "full", design=did, delivered=True,
                     label=f"{c['card_id']} · delivered ({'pre-PEX' if st == 'pre' else 'post-PEX'})")
         dump(out / "data" / f"dse_{lt}.json", {"columns": {k: v for k, v in C.items() if k != "load"}})
         for k in keys:
@@ -762,6 +806,7 @@ def explore_page(loads, summ, ulp, bnd, out):
     archs, classes = meta["architectures"], meta["current_classes"]
     arch_labels = {a["id"]: a["short"] for a in archs}
     order = [a["id"] for a in archs]
+    arch_colors = {a["id"]: ARCH_COLORS[i % len(ARCH_COLORS)] for i, a in enumerate(archs)}
     cls_labels = {meta["ulp_class"]["tag"]: "<0.1 µW (ULP)", **{c["tag"]: c["label"] for c in classes}}
     reg_labels = {r["tag"]: f"{r['label']} ({jsn(r['gmid_target_in'])} V⁻¹)" for r in meta["inversion_regimes"]}
     dims = [
@@ -771,39 +816,49 @@ def explore_page(loads, summ, ulp, bnd, out):
         {"key": "pm", "label": "Phase margin PM", "unit": "°", "better": "high", "digits": 4},
         {"key": "fom", "label": "Small-signal FoM UGB·CL/IDD", "unit": "MHz·pF/mA", "log": True, "better": "high", "digits": 4},
         {"key": "vos", "label": "Nominal offset Vos", "unit": "V", "si": True},
-        {"key": "arch", "label": "Architecture", "type": "cat", "labels": arch_labels, "order": order},
+        {"key": "archs", "label": "Architecture (screened grey)", "type": "cat", "labels": {**arch_labels, "screened": "Screened candidates"},
+         "order": ["screened"] + order, "colors": {**arch_colors, "screened": "#94a3b8"}},
+        {"key": "arch", "label": "Architecture", "type": "cat", "labels": arch_labels, "order": order, "colors": arch_colors},
         {"key": "kind", "label": "Point type", "type": "cat", "order": ["feasible", "screened", "del_pre", "del_post"],
-         "labels": {"feasible": "Feasible candidate", "screened": "Screened candidate", "del_pre": "Delivered · pre-PEX", "del_post": "Delivered · post-PEX"}},
+         "labels": {"feasible": "Feasible candidate", "screened": "Screened candidate", "del_pre": "Delivered · pre-PEX", "del_post": "Delivered · post-PEX"},
+         "colors": {"feasible": "#225bb2", "screened": "#94a3b8", "del_pre": "#111827", "del_post": "#dc2626"}},
         {"key": "cls", "label": "Current class", "type": "cat", "labels": cls_labels, "order": list(cls_labels)},
         {"key": "regime", "label": "Inversion regime", "type": "cat", "labels": reg_labels, "order": list(reg_labels)},
         {"key": "supply", "label": "Supply", "type": "cat", "labels": {"1v8": "1.8 V", "3v3": "3.3 V"}, "order": ["1v8", "3v3"]},
         {"key": "pmpass", "label": "Nominal PM check", "type": "cat", "labels": {"pass": "PM pass", "fail": "PM fail"}, "order": ["pass", "fail"]},
     ]
     presets = [
-        {"label": "UGB vs I<sub>DD</sub> (original default)", "x": "idd", "y": "ugb", "color": "arch", "symbol": "kind"},
-        {"label": "A<sub>0</sub> vs I<sub>DD</sub>", "x": "idd", "y": "a0", "color": "arch", "symbol": "kind"},
-        {"label": "PM vs UGB", "x": "ugb", "y": "pm", "color": "arch", "symbol": "kind"},
-        {"label": "A<sub>0</sub> vs UGB", "x": "ugb", "y": "a0", "color": "arch", "symbol": "kind"},
-        {"label": "FoM vs I<sub>DD</sub>", "x": "idd", "y": "fom", "color": "arch", "symbol": "kind"},
-        {"label": "PM vs A<sub>0</sub>", "x": "a0", "y": "pm", "color": "arch", "symbol": "kind"},
-        {"label": "Feasible vs screened", "x": "idd", "y": "ugb", "color": "kind", "symbol": ""},
+        {"label": "UGB vs I<sub>DD</sub> (original default)", "x": "idd", "y": "ugb", "color": "archs", "symbol": "kind"},
+        {"label": "A<sub>0</sub> vs I<sub>DD</sub>", "x": "idd", "y": "a0", "color": "archs", "symbol": "kind"},
+        {"label": "PM vs UGB", "x": "ugb", "y": "pm", "color": "archs", "symbol": "kind"},
+        {"label": "A<sub>0</sub> vs UGB", "x": "ugb", "y": "a0", "color": "archs", "symbol": "kind"},
+        {"label": "FoM vs I<sub>DD</sub>", "x": "idd", "y": "fom", "color": "archs", "symbol": "kind"},
+        {"label": "PM vs A<sub>0</sub>", "x": "a0", "y": "pm", "color": "archs", "symbol": "kind"},
+        {"label": "Feasible vs screened", "x": "idd", "y": "ugb", "color": "kind", "symbol": "",
+         "desc": "Colour = point type: feasible candidates blue, screened (PM / I<sub>DD</sub> / saturation screen failed) grey, delivered cards dark / red."},
+        {"label": "Feasible only + Pareto", "x": "idd", "y": "ugb", "color": "archs", "symbol": "kind", "pareto": "all",
+         "show": {"kind": ["feasible", "del_pre", "del_post"]}, "desc": "Screened candidates hidden; the front is computed over feasible, PM-passing candidates only."},
         {"label": "Per architecture", "x": "idd", "y": "ugb", "color": "kind", "symbol": "", "facet": "arch"},
         {"label": "Per current class", "x": "idd", "y": "ugb", "color": "arch", "symbol": "kind", "facet": "cls"},
         {"label": "Per supply", "x": "idd", "y": "ugb", "color": "arch", "symbol": "kind", "facet": "supply"},
         {"label": "Per regime", "x": "idd", "y": "ugb", "color": "arch", "symbol": "kind", "facet": "regime"},
     ]
-    ex_common = {"type": "explorer", "dims": dims, "x": "idd", "y": "ugb", "color": "arch", "symbol": "kind",
+    ex_common = {"type": "explorer", "dims": dims, "x": "idd", "y": "ugb", "color": "archs", "symbol": "kind",
                  "filters": ["kind", "arch", "supply", "cls", "regime", "pmpass", "a0", "pm", "ugb", "idd"],
                  "highlight": "delivered", "highlight_label": "Delivered cards", "design_key": "design", "label_key": "label",
+                 "stage_group": "design", "pareto_on": {"kind": ["feasible"], "pmpass": ["pass"]},
                  "hover": ["a0", "pm", "fom", "cls", "regime", "supply", "kind"], "height": 600}
     tabs = []
     for ld in loads:
         m = summ[ld["id"]]["meta"]
-        tabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "blocks": [dict(ex_common, src=f"hub/data/dse_{ld['id']}.json", presets=presets,
-                     caption=f"{m['dse_points_count']:,} candidates + {m['total_cards']} delivered cards (pre-PEX ◆ and post-PEX ■, highlighted rings) at C<sub>L</sub> = {ld['label']}. "
+        tabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "key": ld["id"], "blocks": [dict(ex_common, src=f"hub/data/dse_{ld['id']}.json", presets=presets,
+                     caption=f"{m['dse_points_count']:,} candidates + {m['total_cards']} delivered cards at C<sub>L</sub> = {ld['label']}. Delivered cards are ringed and drawn at the selected "
+                             "**Simulation** stage (◆ pre-PEX, ■ post-PEX); candidates are pre-PEX schematic evaluations and always shown. "
+                             "The Pareto front (Pareto menu) is computed over feasible, PM-passing candidates only (screened points and the delivered overlay are excluded). "
                              "FoM of delivered cards is computed with the same formula as for the candidates (UGB[MHz]·C<sub>L</sub>[pF]/I<sub>DD</sub>[mA]) from their measured UGB and I<sub>DD</sub>.")]})
-    dims_all = dims + [{"key": "load", "label": "Load", "type": "cat", "labels": {ld["id"]: ld["label"] for ld in loads}, "order": [ld["id"] for ld in loads]}]
-    tabs.append({"label": "Both loads (compare)", "blocks": [dict(ex_common, src="hub/data/dse_all.json", dims=dims_all, color="load", symbol="kind",
+    dims_all = dims + [{"key": "load", "label": "Load", "type": "cat", "labels": {ld["id"]: ld["label"] for ld in loads}, "order": [ld["id"] for ld in loads],
+                        "colors": {ld["id"]: c for ld, c in zip(loads, ["#225bb2", "#d96b27", "#1e8565"])}}]
+    tabs.append({"label": "Both loads (compare)", "key": "all", "blocks": [dict(ex_common, src="hub/data/dse_all.json", dims=dims_all, color="load", symbol="kind",
                  filters=["load"] + ex_common["filters"], hover=ex_common["hover"] + ["load"],
                  presets=[{"label": "UGB vs I<sub>DD</sub> by load", "x": "idd", "y": "ugb", "color": "load", "symbol": "kind"},
                           {"label": "PM vs UGB by load", "x": "ugb", "y": "pm", "color": "load", "symbol": "kind"},
@@ -814,11 +869,12 @@ def explore_page(loads, summ, ulp, bnd, out):
     intro = (f"**PARETO DESIGN-SPACE EXPLORATION & VALID PARAMETER BOUNDARIES**\n\n"
              f"## Measured design space ({counts} candidates / load + {meta.get('bounds_jobs_count', 0):,} boundary sweeps)\n\n"
              "Every candidate point is a recorded compute-farm ngspice-46 evaluation. Circles pass all nominal constraints (PM > 45°, I<sub>DD</sub> in decade, all devices saturated); "
-             f"crosses were screened out; open diamonds (pre-PEX) and open squares (post-PEX) mark the {meta['total_cards']} selected deliverable designs per load (click any point to inspect the card it was generated for).")
+             f"crosses (grey) were screened out; the {meta['total_cards']} selected deliverable designs per load are ringed — ◆ pre-PEX or ■ post-PEX values, following the **Simulation** stage option "
+             "(click any point to inspect the card it was generated for).")
     blocks = [{"type": "section", "title": "Interactive Pareto trade-off plot",
                "intro": "Choose X / Y / colour / symbol / facet, toggle log axes and the Pareto front, and filter by point type, architecture, supply, class, regime and numeric ranges. "
                         "The global V<sub>DD</sub> option filters the supply. Click any delivered (ringed) point — or any candidate — to open its design card.",
-               "blocks": [{"type": "tabs", "tabs": tabs}]}]
+               "blocks": [{"type": "tabs", "id": "dse", "tabs": tabs}]}]
 
     # ---------------- ULP frontier
     if ulp and ulp.get("topologies"):
@@ -850,15 +906,15 @@ def explore_page(loads, summ, ulp, bnd, out):
                 "mg": f"**{num(mg.get('a0_db'), 2)} dB** @ {fp(mg.get('power_nw'))}<br><small>{fi(mg.get('idd_na'))} @ {num(mg.get('vdd'), 2)} V · BW {num(mg.get('cl_bw_hz'), 1)} Hz · PM {num(mg.get('pm_deg'), 1)}°</small>" if mg else "—",
                 "env": f"[{num(env.get('cl_bw_hz_min'), 2)} Hz, {num(env.get('cl_bw_hz_max'), 0)} Hz]" if env.get("cl_bw_hz_min") is not None else "—",
                 "fom": f"**{num(env.get('fom_p_max'), 0)}**" if env.get("fom_p_max") is not None else "—"})
-        tcols = [{"key": "top", "label": "Topology", "md": True, "type": "text"},
+        tcols = [{"key": "top", "label": "Topology", "md": True, "type": "text", "wrap": True},
                  {"key": "valid", "label": "Valid ULP Designs (<10 kHz)", "md": True, "type": "text"},
-                 {"key": "mp", "label": "Min Power Frontier (A<sub>0</sub> ≥ 35 dB)", "md": True, "type": "text"},
-                 {"key": "mp60", "label": "Min Power w/ A<sub>0</sub> ≥ 60 dB", "md": True, "type": "text"},
-                 {"key": "mp80", "label": "Min Power w/ A<sub>0</sub> ≥ 80 dB", "md": True, "type": "text"},
-                 {"key": "mg", "label": "Max DC Gain A<sub>0,max</sub> (<10 kHz, nW)", "md": True, "type": "text"},
+                 {"key": "mp", "label": "Min Power Frontier (A<sub>0</sub> ≥ 35 dB)", "md": True, "type": "text", "wrap": True},
+                 {"key": "mp60", "label": "Min Power w/ A<sub>0</sub> ≥ 60 dB", "md": True, "type": "text", "wrap": True},
+                 {"key": "mp80", "label": "Min Power w/ A<sub>0</sub> ≥ 80 dB", "md": True, "type": "text", "wrap": True},
+                 {"key": "mg", "label": "Max DC Gain A<sub>0,max</sub> (<10 kHz, nW)", "md": True, "type": "text", "wrap": True},
                  {"key": "env", "label": "Valid CL BW Envelope", "type": "text"},
                  {"key": "fom", "label": "Peak FoM<sub>P</sub> (MHz·pF/mW)", "md": True, "type": "text"}]
-        ecols = [{"key": "arch", "label": "Topology", "type": "text"}, {"key": "n", "label": "Evaluated", "digits": 0},
+        ecols = [{"key": "arch", "label": "Topology", "type": "text", "wrap": True}, {"key": "n", "label": "Evaluated", "digits": 0},
                  {"key": "v", "label": "Valid", "digits": 0}, {"key": "v60", "label": "≥60 dB", "digits": 0},
                  {"key": "v80", "label": "≥80 dB", "digits": 0}, {"key": "v90", "label": "≥90 dB", "digits": 0},
                  {"key": "pmin", "label": "P min", "unit": "W", "si": True, "group": "Power"}, {"key": "pmax", "label": "P max", "unit": "W", "si": True, "group": "Power"},
@@ -869,7 +925,7 @@ def explore_page(loads, summ, ulp, bnd, out):
                  {"key": "pmn", "label": "min (°)", "digits": 4, "group": "PM"}, {"key": "pmx", "label": "max (°)", "digits": 4, "group": "PM"},
                  {"key": "vmn", "label": "min (V)", "digits": 3, "group": "V<sub>DD</sub>"}, {"key": "vmx", "label": "max (V)", "digits": 3, "group": "V<sub>DD</sub>"},
                  {"key": "fomp", "label": "FoM<sub>P</sub> max", "digits": 4},
-                 {"key": "mf", "label": "Max-FoM design", "md": True, "type": "text"}]
+                 {"key": "mf", "label": "Max-FoM design", "md": True, "type": "text", "wrap": True}]
         erows = []
         for t in tops:
             e, mf = t.get("envelopes") or {}, t.get("max_fom_design")
@@ -898,7 +954,7 @@ def explore_page(loads, summ, ulp, bnd, out):
             {"key": "fom_s", "label": "FoM_S (MHz·pF/mA)", "unit": "", "log": True, "better": "high", "digits": 4},
             {"key": "fom_p", "label": "FoM_P (MHz·pF/mW)", "unit": "", "log": True, "better": "high", "digits": 4},
         ] + knob_dims + [
-            {"key": "arch", "label": "Architecture", "type": "cat", "labels": arch_labels, "order": order},
+            {"key": "arch", "label": "Architecture", "type": "cat", "labels": arch_labels, "order": order, "colors": arch_colors},
             {"key": "set", "label": "Data set", "type": "cat", "order": ["sample", "curve", "frontier"],
              "labels": {"sample": "Exploration sample", "curve": "Power-scaling curve", "frontier": "Frontier design"}},
             {"key": "stype", "label": "Sample type", "type": "cat"},
@@ -939,7 +995,7 @@ def explore_page(loads, summ, ulp, bnd, out):
 
     # ---------------- parameter boundaries
     if bnd and bnd.get("topologies"):
-        blocks.append(boundary_section(bnd))
+        blocks.append(boundary_section(bnd, arch_labels))
     return {"intro": intro, "blocks": blocks}
 
 
@@ -976,12 +1032,13 @@ def ulp_points(ulp, out):
     dump(out / "data" / "ulp_points.json", {"columns": C})
 
 
-def boundary_section(bnd):
+def boundary_section(bnd, short=None):
+    short = short or {}
     tops = bnd["topologies"]
     vc, cc = bnd.get("validity_criteria") or {}, bnd.get("core_criteria") or {}
-    ocols = [{"key": "t", "label": "Topology", "md": True, "type": "text"}, {"key": "io", "label": "Input / Stages", "type": "text"},
+    ocols = [{"key": "t", "label": "Topology", "md": True, "type": "text", "wrap": True}, {"key": "io", "label": "Input / Stages", "type": "text", "wrap": True},
              {"key": "fr", "label": "Feasible Rate", "type": "text"}, {"key": "cr", "label": "Strict Core Rate", "md": True, "type": "text"},
-             {"key": "vdd", "label": "Valid V<sub>DD</sub> Range (Core)", "md": True, "type": "text"},
+             {"key": "vddr", "label": "Valid V<sub>DD</sub> Range (Core)", "md": True, "type": "text"},
              {"key": "vcm", "label": "Valid V<sub>CM</sub>/V<sub>DD</sub> ICMR (Core)", "md": True, "type": "text"},
              {"key": "gm", "label": "Valid g<sub>m</sub>/I<sub>D,in</sub> (V⁻¹)", "md": True, "type": "text"},
              {"key": "li", "label": "Valid L<sub>in</sub> (μm)", "md": True, "type": "text"},
@@ -994,13 +1051,14 @@ def boundary_section(bnd):
             "t": f"**{t['title']}**<br><small>`{t['arch']}`</small>", "io": f"{t.get('input_type')} · {t.get('stage_count')}-st",
             "fr": {"v": f"{num(t.get('valid_rate_pct'), 1)}% ({t.get('valid_count')}/{t.get('total_evaluated')})", "s": "good" if (t.get("valid_rate_pct") or 0) >= 75 else "warn"},
             "cr": f"**{num(t.get('core_rate_pct'), 1)}%**",
-            "vdd": f"{fmt_range(g('vdd_v', 'valid_min'), g('vdd_v', 'valid_max'), 2, 'V')}<br><small>Core: {fmt_range(g('vdd_v', 'core_min'), g('vdd_v', 'core_max'), 2, 'V')}</small>",
+            "vddr": f"{fmt_range(g('vdd_v', 'valid_min'), g('vdd_v', 'valid_max'), 2, 'V')}<br><small>Core: {fmt_range(g('vdd_v', 'core_min'), g('vdd_v', 'core_max'), 2, 'V')}</small>",
             "vcm": f"{fmt_range(g('vcm_ratio', 'valid_min'), g('vcm_ratio', 'valid_max'), 2)}<br><small>Core: {fmt_range(g('vcm_ratio', 'core_min'), g('vcm_ratio', 'core_max'), 2)}</small>",
             "gm": f"{fmt_range(g('gmid_in', 'valid_min'), g('gmid_in', 'valid_max'), 1)}<br><small>1D ray: {fmt_range(g('gmid_in', 'ray_valid_min'), g('gmid_in', 'ray_valid_max'), 1)}</small>",
             "li": f"{fmt_range(g('l_in', 'valid_min'), g('l_in', 'valid_max'), 2)}<br><small>1D ray: {fmt_range(g('l_in', 'ray_valid_min'), g('l_in', 'ray_valid_max'), 2)}</small>",
             "idd": fmt_range((env.get("idd_ua") or {}).get("min"), (env.get("idd_ua") or {}).get("max"), 2, "μA"),
-            "a0": fmt_range((env.get("a0_db") or {}).get("min"), (env.get("a0_db") or {}).get("max"), 1, "dB")})
-    pcols = [{"key": "p", "label": "Parameter", "md": True, "type": "text"}, {"key": "d", "label": "Description", "type": "text"},
+            "a0": fmt_range((env.get("a0_db") or {}).get("min"), (env.get("a0_db") or {}).get("max"), 1, "dB"),
+            "_href": f"#/opa?page=explore&t.topo={t['arch']}"})
+    pcols = [{"key": "p", "label": "Parameter", "md": True, "type": "text", "wrap": True}, {"key": "d", "label": "Description", "type": "text", "wrap": True},
              {"key": "ex", "label": "Explored Range", "type": "text"}, {"key": "ray", "label": "1-D Orthogonal Ray Valid", "md": True, "type": "text"},
              {"key": "nd", "label": "N-D Feasible Boundary", "md": True, "type": "text"}, {"key": "core", "label": "Strict Saturation Core", "type": "text"},
              {"key": "v18", "label": "1.8 V Valid Range", "type": "text"}, {"key": "v33", "label": "3.3 V Valid Range", "type": "text"},
@@ -1034,15 +1092,15 @@ def boundary_section(bnd):
                 "p595": fmt_range(p.get("valid_p5"), p.get("valid_p95"), d), "c18": fmt_range(v18.get("core_min"), v18.get("core_max"), d),
                 "c33": fmt_range(v33.get("core_min"), v33.get("core_max"), d), "r18": fmt_range(v18.get("ray_valid_min"), v18.get("ray_valid_max"), d),
                 "r33": fmt_range(v33.get("ray_valid_min"), v33.get("ray_valid_max"), d)})
-            rtabs.append({"label": f"{p.get('label')} ({p.get('name')})", "blocks": [ray_chart(p, u)]})
+            rtabs.append({"label": p.get("label") or p.get("name"), "key": p.get("name"), "blocks": [ray_chart(p, u)]})
         env = t.get("achieved_envelopes") or {}
         erows = [[ENV_LABEL.get(m, m)] + [r5(env[m].get(q)) for q in ("min", "p5", "median", "p95", "max")] for m in env]
-        atabs.append({"label": f"{t['title']} ({an})", "blocks": [
+        atabs.append({"label": short.get(an, t["title"]), "key": an, "blocks": [
             {"type": "table", "title": f"Per-Parameter Valid Design Boundary: {t['title']} (`{an}`)", "columns": pcols, "rows": prow, "search": False,
              "caption": f"{t.get('summary', '')} — {t.get('valid_count')}/{t.get('total_evaluated')} feasible ({num(t.get('valid_rate_pct'), 1)}%), "
                         f"{t.get('core_count')} strict core ({num(t.get('core_rate_pct'), 1)}%). Pick another topology with the selector above."},
             {"type": "table", "title": "Achieved performance envelope over feasible points", "columns": ecols, "rows": erows, "search": False, "csv": False},
-            {"type": "tabs", "style": "select", "label": "1-D parameter ray", "title": "1-D orthogonal parameter rays (A<sub>0</sub> and PM vs parameter, 1.8 V and 3.3 V centres)",
+            {"type": "tabs", "style": "select", "label": "1-D parameter ray", "id": f"ray_{an}", "title": "1-D orthogonal parameter rays (A<sub>0</sub> and PM vs parameter, 1.8 V and 3.3 V centres)",
              "tabs": rtabs,
              "caption": "Filled circles: feasible and in the strict saturation core; open circles: feasible only; crosses: infeasible. Shaded band: N-D feasible boundary. "
                         "These ray samples are in the boundary JSON but were not plotted on the original site."}]})
@@ -1056,13 +1114,13 @@ def boundary_section(bnd):
                      + f" {bnd.get('total_jobs', 0):,} sweep jobs, {bnd.get('total_valid', 0):,} feasible, {bnd.get('total_core', 0):,} strict core (load tag `{bnd.get('load_tag', '2p')}`).",
             "blocks": [{"type": "downloads", "items": [{"label": "Download Boundary JSON", "file": "data/param_boundaries.json"}]},
                        {"type": "table", "title": "Boundary overview", "columns": ocols, "rows": orows, "search": False, "csv": False,
-                        "caption": "The original *Inspect / Parameters →* buttons map to the topology selector below."},
-                       {"type": "tabs", "style": "select", "label": "Topology", "default": default, "tabs": atabs}]}
+                        "caption": "Click a row to show that topology's per-parameter boundary below (the original *Inspect / Parameters →* buttons)."},
+                       {"type": "tabs", "style": "select", "label": "Topology", "id": "topo", "default": default, "tabs": atabs}]}
 
 
 def ray_chart(p, u):
     tr = []
-    for vt, col, vl in (("1v8", PRE_C, "1.8 V"), ("3v3", ORANGE, "3.3 V")):
+    for vt, col, vl, vnum in (("1v8", PRE_C, "1.8 V", 1.8), ("3v3", ORANGE, "3.3 V", 3.3)):
         ray = ((p.get("by_vdd") or {}).get(vt) or {}).get("ray") or []
         if not ray:
             continue
@@ -1073,10 +1131,10 @@ def ray_chart(p, u):
         x = rl([r.get("val") for r in ray])
         tr.append({"type": "scatter", "mode": "lines+markers", "name": f"A0 @ {vl}", "x": x, "y": rl([r.get("a0_db") for r in ray]),
                    "line": {"color": col, "width": 2}, "marker": {"symbol": sym, "size": 9, "color": col}, "customdata": cd,
-                   "hovertemplate": ht + f"A0 {vl}</extra>"})
+                   "hovertemplate": ht + f"A0 {vl}</extra>", "meta": {"vdd": vnum}})
         tr.append({"type": "scatter", "mode": "lines+markers", "name": f"PM @ {vl}", "x": x, "y": rl([r.get("pm_deg") for r in ray]), "yaxis": "y2",
                    "line": {"color": col, "width": 1.5, "dash": "dash"}, "marker": {"symbol": sym, "size": 7, "color": col}, "customdata": cd,
-                   "hovertemplate": ht + f"PM {vl}</extra>"})
+                   "hovertemplate": ht + f"PM {vl}</extra>", "meta": {"vdd": vnum}})
     shapes = []
     if p.get("valid_min") is not None and p.get("valid_max") is not None:
         shapes.append({"type": "rect", "xref": "x", "yref": "paper", "x0": r5(p["valid_min"]), "x1": r5(p["valid_max"]), "y0": 0, "y1": 1,
@@ -1107,7 +1165,8 @@ DB_COLS = [  # key, label, group, spec
     ("icmr", "ICMR span (V)", "Range", {"digits": 3}), ("swing", "Swing (V)", "Range", {"digits": 4}),
     ("thd", "THD (%)", "Linearity", {"digits": 3}), ("hd2", "HD2 (dBc)", "Linearity", {"digits": 4}), ("hd3", "HD3 (dBc)", "Linearity", {"digits": 4}),
     ("im3", "IM3 (dBc)", "Linearity", {"digits": 4}), ("zin", "Z<sub>in</sub> @1k (MΩ)", "Linearity", {"digits": 5}),
-    ("pm_pass", "PM pass", "Checks", {"type": "status"}), ("sat", "All sat.", "Checks", {"type": "status"}),
+    ("pm_pass", "PM pass", "Checks", {"type": "status"}),
+    ("sat", "All sat.", "Checks", {"type": "status", "title": "All devices saturated at the nominal operating point (pre-PEX only: the extracted netlist has no device operating-point map)"}),
     ("area", "Area (μm²)", "Physical", {"digits": 6, "better": "low"}), ("w", "W (μm)", "Physical", {"digits": 4}), ("h", "H (μm)", "Physical", {"digits": 4}),
     ("wl", "Wirelength (μm)", "Physical", {"digits": 5}), ("vias", "Vias", "Physical", {"digits": 4}), ("parc", "Parasitic C", "Physical", {"digits": 4}),
     ("phys", "Physical", "Physical", {"type": "text"}),
@@ -1140,7 +1199,7 @@ def db_data(loads, summ, out):
                      "sr_neg": r5(s.get("sr_neg_vus")), "ts": r5(s.get("ts_1pct_us")), "overshoot": r5(s.get("overshoot_pct")),
                      "icmr": r5(s.get("icmr_span_v")), "swing": r5(s.get("vout_swing_v")), "thd": r5(s.get("thd_pct")), "hd2": r5(s.get("hd2_dbc")),
                      "hd3": r5(s.get("hd3_dbc")), "im3": r5(s.get("im3_dbc")), "zin": r5(s.get("zin_1khz_mohm")), "pm_pass": s.get("pm_pass"),
-                     "sat": s.get("all_saturated"), "area": r5(p.get("area_um2")), "w": r5(p.get("width_um")), "h": r5(p.get("height_um")),
+                     "sat": s.get("all_saturated") if st == "pre" else None, "area": r5(p.get("area_um2")), "w": r5(p.get("width_um")), "h": r5(p.get("height_um")),
                      "wl": r5(p.get("wirelength_um")), "vias": p.get("vias"), "parc": p.get("parasitic_c_count"), "phys": {"v": pl, "s": pk}}
                 row = [v.get(k) for k, _l, _g, _s in DB_COLS]
                 rows.append(row)
@@ -1156,10 +1215,10 @@ def db_page(loads, summ, files):
     cols = [dict({"key": k, "label": l, "group": g}, **s) for k, l, g, s in DB_COLS]
     total = summ[loads[0]["id"]]["meta"]["total_cards"]
     n_ulp = sum(1 for c in summ[loads[0]["id"]]["cards"] if c.get("iclass_tag") == "ulp_lt0p1uw")
-    tabs = [{"label": f"C<sub>L</sub> = {ld['label']}", "blocks": [{"type": "table", "src": files[ld["id"]], "columns": cols, "stage_column": "stage",
+    tabs = [{"label": f"C<sub>L</sub> = {ld['label']}", "key": ld["id"], "blocks": [{"type": "table", "src": files[ld["id"]], "columns": cols, "stage_column": "stage", "stage_group": "design",
              "sort": {"key": "ugb", "dir": "desc"}, "max_height": 760, "page_size": 400, "csv_name": f"gf180-opamp-{ld['id']}",
              "title": f"Specification database — C<sub>L</sub> = {ld['label']}"}]} for ld in loads]
-    tabs.append({"label": "Both loads", "blocks": [{"type": "table", "src": files["all"], "columns": cols, "stage_column": "stage",
+    tabs.append({"label": "Both loads", "key": "all", "blocks": [{"type": "table", "src": files["all"], "columns": cols, "stage_column": "stage", "stage_group": "design",
                  "sort": {"key": "ugb", "dir": "desc"}, "max_height": 760, "page_size": 400, "csv_name": "gf180-opamp-all",
                  "title": "Specification database — both loads"}]})
     intro = ("**COMPLETE ENGINEERING DATABASE**\n\n"
@@ -1167,7 +1226,7 @@ def db_page(loads, summ, files):
              f"Sortable master table across all {total} deliverable cards (including the {n_ulp} Low Power <0.1 μW ULP high-gain designs) for the active load capacitance "
              "(tabs) and simulation level (the **Simulation** stage selector: Pre-PEX or Full post-PEX). Click any column header to sort or any Card ID to open the card. "
              "The table carries every scalar of the coverage summaries (a superset of the original database and comparison-table columns), follows the global V<sub>DD</sub> filter and exports CSV.")
-    return {"intro": intro, "blocks": [{"type": "tabs", "tabs": tabs}]}
+    return {"intro": intro, "blocks": [{"type": "tabs", "id": "db", "tabs": tabs}]}
 
 
 def method_page(meta, lut):
@@ -1176,7 +1235,7 @@ def method_page(meta, lut):
         "2. **Fully Parameterized gm/Id Topology & Device Generator:** 12 architectures parameterized across continuous supply V<sub>DD</sub>, unclamped quiescent current I<sub>DD</sub>, common-mode ratio V<sub>CM</sub>/V<sub>DD</sub>, load capacitance C<sub>L</sub>, per-stage g<sub>m</sub>/I<sub>D</sub> targets, continuous gate lengths (L<sub>in</sub>, L<sub>load</sub>, L<sub>tail</sub>, L<sub>casc</sub>, L<sub>out</sub>), unit finger width W<sub>unit</sub>, branch mirror ratios (m<sub>tail</sub>, m<sub>st2</sub>, m<sub>fold</sub>, m<sub>out_br</sub>), and passive compensation scales (c<sub>c,scale</sub>, r<sub>z,scale</sub>).\n"
         "3. **Multi-Crossing & Doublet-Aware Stability Verification:** Open-loop AC analysis checks every 0 dB crossing up to 5×UGB alongside closed-loop unity-gain step response (overshoot < 55%, monotonic settling) so pole-zero doublets cannot masquerade as stable.\n"
         "4. **Comprehensive Nominal Testbench Suite:** Evaluates DC operating point, Bode gain/phase, CMRR/PSRR+/PSRR− vs frequency, input-referred noise (1 Hz–1 GHz), rising/falling slew rate, DC ICMR & output swing, coherent-FFT HD2/HD3/THD & two-tone IM3, and closed-loop |Z<sub>in</sub>(f)| at 1× and 6×.\n"
-        "5. **17-Corner PVT & 50-Run Mismatch Monte Carlo:** Full 17-point PVT matrix (`tt`, `ff`, `ss`, `fnsp`, `snfp` × −40/27/125 °C × ±10% V<sub>DD</sub>) plus 50-run Monte Carlo with per-finger uncorrelated mismatch expansion (`m=M → M × m=1`).\n"
+        "5. **17-Corner PVT & 50-Run Mismatch Monte Carlo:** Full 17-point PVT matrix (`tt`, `ff`, `ss`, `sf`, `fs` × −40/27/125 °C, plus `tt` 27 °C at ±10% V<sub>DD</sub>) plus 50-run Monte Carlo with per-finger uncorrelated mismatch expansion (`m=M → M × m=1`).\n"
         "6. **Experimental gLayout (PR #128) + KLayout DRC/LVS:** Generates common-centroid diffusion-shared MOSFET rows with well-tie taprings, custom DRC/LVS-clean `ppolyf_u_1k` serpentine poly resistors and Option-B `cap_mim_2f0fF` MIM capacitors, simulated-annealing floorplanning, and two-layer rip-up-and-reroute A* routing. Verified with `gf180mcu.drc` (0 effective violations) and `gf180mcu.lvs` (`Netlists match`).\n"
         "7. **Magic Parasitic Extraction & Post-PEX Farm Closure:** Extracts distributed coupling and ground capacitances via Magic `ext2spice`, validates device/port counts, and re-runs the full testbench suite, 17-corner PVT, and 50-run Monte Carlo on the compute farm.")
     portfolio = [  # verbatim from the original methodology table
@@ -1187,27 +1246,33 @@ def method_page(meta, lut):
         ("symmetrical_ota", "Symmetrical Current-Mirror OTA", "NMOS", 1), ("rail_to_rail", "Complementary NMOS+PMOS Rail-to-Rail 2-Stage", "Rail-to-Rail", 2),
         ("cherry_hooper", "Cherry-Hooper Gm-TIS 2-Stage Op-Amp", "NMOS", 2), ("current_reuse", "Current-Reuse Complementary Input LNA / Op-Amp", "NMOS+PMOS (Current-Reuse)", 2),
     ]
-    desc = {a["id"]: a.get("desc", "") for a in meta.get("architectures") or []}
+    amap = {a["id"]: a for a in meta.get("architectures") or []}
+    desc = {i: a.get("desc", "") for i, a in amap.items()}
     blocks = [{"type": "section", "blocks": [
         {"type": "markdown", "title": "Seven-stage automated pipeline", "text": pipeline},
         {"type": "table", "title": "Architecture portfolio (12 topologies)", "search": False, "csv": False,
          "columns": [{"key": "id", "label": "ID", "type": "text", "md": True}, {"key": "a", "label": "Architecture", "type": "text"},
                      {"key": "i", "label": "Input", "type": "text"}, {"key": "s", "label": "Stages", "digits": 1}],
-         "rows": [[f"`{i}`", {"v": a, "title": desc.get(i, "")}, inp, s] for i, a, inp, s in portfolio],
-         "caption": "Hover an architecture name for the generator's topology description."}]}]
+         "rows": [[f"`{i}`", {"v": a, "title": desc.get(i, "")}, amap.get(i, {}).get("input_type", inp), amap.get(i, {}).get("stages", s)]
+                  for i, a, inp, s in portfolio],
+         "caption": "Hover an architecture name for the generator's topology description. Input and stage count come from the generator metadata "
+                    "(the original static table listed `symmetrical_ota` as 1 stage; the generator and every card record 2 stages). "
+                    "Step 5 lists the 17 corners as recorded in the card data (the original text named the skew corners `fnsp`/`snfp`)."}]}]
     if lut and lut.get("curves"):
         charts = []
         for kind, dev in (("nfet", "NMOS"), ("pfet", "PMOS")):
             sub = [c for c in lut["curves"] if c.get("kind") == kind]
             vds = "VDS" if kind == "nfet" else "|VDS|"
+            vv = sorted({c.get("vds_v") for c in sub if c.get("vds_v") is not None})
+            vtxt = " / ".join(jsn(v) for v in vv) if vv else "0.6"
             charts.append(chart(f"{dev} ({kind}_03v3) gm/Id vs Drain Current Density ID/W",
                                 [line(c["jd_ua_per_um"], c["gmid"], f"L = {jsn(c['length_um'])} μm", ARCH_COLORS[i % 12]) for i, c in enumerate(sub)],
                                 lay("Drain Current Density ID/W (μA/μm)", "Transconductance Efficiency gm/Id (V⁻¹)", logx=True),
-                                caption=f"Farm LUT characterization at {vds} = 0.6 V, VSB = 0 V", key=kind))
+                                caption=f"Farm LUT characterization at {vds} = {vtxt} V, VSB = 0 V (bias from the LUT data; the original page said 0.6 V)", key=kind))
             charts.append(chart(f"{dev} ({kind}_03v3) Transit Frequency fT vs gm/Id",
                                 [line(c["gmid"], c["ft_mhz"], f"L = {jsn(c['length_um'])} μm", ARCH_COLORS[i % 12]) for i, c in enumerate(sub)],
                                 lay("gm/Id (V⁻¹)", "Transit Frequency fT (MHz)", logy=True),
-                                caption=f"Farm LUT characterization at {vds} = 0.6 V", key=kind + "_ft"))
+                                caption=f"Farm LUT characterization at {vds} = {vtxt} V (bias from the LUT data; the original page said 0.6 V)", key=kind + "_ft"))
         # original order: gm/Id NMOS, gm/Id PMOS, fT NMOS, fT PMOS
         order = [charts[0], charts[2], charts[1], charts[3]]
         for c in order:
@@ -1249,7 +1314,7 @@ def main():
             ph = c.get("physical") or {}
             area = ph.get("area_um2")
             results = {}
-            if (s := stage_result(c.get("pre"), area, part_of(card, "pre", "mc"))):
+            if (s := stage_result(c.get("pre"), None, part_of(card, "pre", "mc"))):
                 results["pre"] = s
             if c.get("post") and (s := stage_result(c.get("post"), area, part_of(card, "full", "mc"))):
                 s["note"] = POST_NOTE
@@ -1317,11 +1382,13 @@ def main():
                     "mismatch MC), gLayout DRC/LVS-clean layouts and Magic PEX."),
         "technology": "gf180mcuD",
         "generated": generated,
-        "stats": [{"label": "ngspice-46 farm evaluations", "value": f"{total_sims:,}"},
-                  {"label": "DSE candidates / load", "value": f"{meta.get('dse_points_count', 0):,}"},
+        "stats": [{"label": f"ngspice-46 farm evaluations ({' / '.join(ld['label'] for ld in loads)})",
+                   "value": " / ".join(f"{summ[ld['id']]['meta'].get('total_farm_sims', 0):,}" for ld in loads)},
+                  {"label": f"DSE candidates ({' / '.join(ld['label'] for ld in loads)})",
+                   "value": " / ".join(f"{summ[ld['id']]['meta'].get('dse_points_count', 0):,}" for ld in loads)},
                   {"label": "boundary sweeps", "value": f"{meta.get('bounds_jobs_count', 0):,}"},
                   {"label": "ULP frontier runs", "value": f"{meta.get('ulp_jobs_count', 0):,}"}],
-        "metrics": [{k: v for k, v in dict(key=k, label=lab, unit=u, si=s or None, better=b, digits=dg).items() if v is not None}
+        "metrics": [{k: v for k, v in dict(key=k, label=lab, unit=u, si=s or None, better=b, digits=dg, desc=METRIC_DESC.get(k)).items() if v is not None}
                     for k, lab, u, s, b, _f, _k, dg in METRICS],
         "axes": {
             "topology": {"label": "Architecture", "values": [{"id": a["id"], "label": a["short"]} for a in archs]},
@@ -1330,17 +1397,18 @@ def main():
                       + [{"id": c["tag"], "label": c["label"]} for c in meta["current_classes"]]},
             "load": {"label": "Load CL", "values": [{"id": ld["id"], "label": ld["label"]} for ld in loads]},
         },
-        "matrix": {"rows": ["topology", "regime"], "cols": ["load", "class"], "metrics": ["ugb", "a0"],
-                   "presets": [{"label": "ULP view: DC gain / closed-loop BW", "metrics": ["a0", "cl_bw"]},
+        "matrix": {"rows": ["topology", "regime", "load"], "cols": ["class"], "metrics": ["ugb", "a0", "pm"],
+                   "presets": [{"label": "ULP view: DC gain / CL BW / power / PM", "metrics": ["a0", "cl_bw", "power", "pm"]},
                                {"label": "Power / DC gain", "metrics": ["power", "a0"]},
-                               {"label": "Stability: PM / worst-case PVT PM", "metrics": ["pm", "pm_min"]},
+                               {"label": "Stability: PM / worst-case PVT PM / MC P5 PM", "metrics": ["pm", "pm_min", "pm_p5"]},
                                {"label": "Noise @ 1 kHz / offset σ", "metrics": ["vn_1k", "vos_sigma"]},
                                {"label": "Rejection: CMRR / PSRR+", "metrics": ["cmrr", "psrr_p"]},
                                {"label": "Linearity: THD / IM3", "metrics": ["thd", "im3"]},
                                {"label": "Speed: slew rate / settling", "metrics": ["sr_pos", "ts"]},
                                {"label": "Monte Carlo: yield / offset σ", "metrics": ["mc_yield", "vos_sigma"]},
                                {"label": "Layout area / power", "metrics": ["area", "power"]}]},
-        "card_metrics": ["ugb", "a0", "pm", "pm_min", "power", "area", "idd", "vn_1k", "mc_yield", "cl_bw"],
+        "card_metrics": ["ugb", "a0", "pm", "pm_min", "idd", "power", "vn_1k", "area", "mc_yield", "cl_bw"],
+        "table_metrics": ["idd", "a0", "ugb", "pm", "pm_min", "vn_1k", "vos_sigma", "thd", "area", "power", "mc_yield", "cl_bw"],
         "pages": [{"id": "overview", "title": "Library overview", "src": "hub/pages/overview.json"},
                   {"id": "explore", "title": "Design space", "src": "hub/pages/explore.json"},
                   {"id": "db", "title": "Database", "src": "hub/pages/db.json"},

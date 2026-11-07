@@ -39,6 +39,7 @@ import json
 import math
 import re
 import sys
+from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -83,8 +84,21 @@ def jsn(x: float) -> str:
     return s
 
 
+def _q(v: float, exp: int) -> Decimal:
+    """round the exact binary value of v to 10**exp like JS (ties → the larger number)"""
+    x = Decimal(float(v))
+    return x.quantize(Decimal(1).scaleb(exp), rounding=ROUND_HALF_UP if x >= 0 else ROUND_HALF_DOWN)
+
+
 def prec(v: float, d: int) -> float:
-    return float(f"{v:.{d}g}")
+    """Number.prototype.toPrecision(d) then Number()"""
+    if v == 0 or not math.isfinite(v):
+        return float(v)
+    e = math.floor(math.log10(abs(v)))
+    r = _q(v, e - d + 1)
+    if r != 0 and math.floor(math.log10(abs(float(r)))) > e:     # 9.995 → 10.0: one digit more
+        r = _q(v, e - d + 2)
+    return float(r)
 
 
 PFX = [(1e9, "G"), (1e6, "M"), (1e3, "k"), (1, ""), (1e-3, "m"), (1e-6, "µ"), (1e-9, "n"), (1e-12, "p"), (1e-15, "f")]
@@ -110,7 +124,7 @@ def si(v, unit="", d=3):
 def num(v, d=1):
     if not isnum(v) or v <= -998:
         return "—"
-    return f"{v:.{d}f}"
+    return f"{_q(v, -d):.{d}f}"
 
 
 def ppm(v):
@@ -138,13 +152,20 @@ TIER = {"pos": "Positive (VSS-Ref)", "neg": "Negative (VDD-Ref)", "all": "All (P
 POL_LABEL = {"pos": "Positive (VSS-ref)", "neg": "Negative (VDD-ref)"}
 
 
+OPA_VARIANT = "2p"     # the LDO error amps are the 2 pF-load cards (device sizes, card figures and schematic_tl.svg match)
+
+
+def opa_id(cid):
+    return f"{OPA_VARIANT}-{cid}"
+
+
 def opa_link(cid):
-    """reused opa-gen cells: link to the hub's op-amp tab, filtered by the cell id (both load sets)"""
-    return f"[`{cid}`](#/opa?q={cid})"
+    """reused opa-gen cell → its exact hub design page"""
+    return f"[`{cid}`](#/opa/{opa_id(cid)})"
 
 
 def sa_link(cid):
-    return f"[`{cid}`](#/sa?q={cid})"
+    return f"[`{cid}`](#/sa/{cid})"
 
 
 def cell_link(c):
@@ -250,6 +271,52 @@ def mc_worst(mc):
     return min(v) if v else None
 
 
+def _interp_logf(f, y, x):
+    if not f or not y:
+        return None
+    pts = [(math.log10(a), b) for a, b in zip(f, y) if isnum(a) and a > 0 and isnum(b)]
+    lx = math.log10(x)
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if x0 <= lx <= x1:
+            return y0 + (lx - x0) / (x1 - x0) * (y1 - y0) if x1 > x0 else y0
+    return None
+
+
+def psrr_signed(ch):
+    """The builder publishes abs(PSRR); restore the sign from the published I_max PSRR curve
+    (negative = supply ripple is amplified).  Values without a curve are dropped."""
+    m = ch.get("metrics") or {}
+    P = (((ch.get("curves") or {}).get("psrr") or {}).get("psrr_imax") or {})
+    f, y = P.get("f") or [], P.get("db") or []
+    out = {}
+    for k, x in (("psrr_1k_imax", 1e3), ("psrr_100k_imax", 1e5)):
+        c = _interp_logf(f, y, x)
+        out[k] = None if c is None or not isnum(m.get(k)) else math.copysign(abs(m[k]), c)
+    out["psrr_dc_imax"] = None if not y or not isnum(m.get("psrr_dc_imax")) else math.copysign(abs(m["psrr_dc_imax"]), y[0])
+    ys = [v for v in y if isnum(v)]
+    out["psrr_worst_imax"] = None if not ys or not isnum(m.get("psrr_worst_imax")) else math.copysign(abs(m["psrr_worst_imax"]), min(ys))
+    return out
+
+
+def startup_ok(ch, vout):
+    """the 98 %-of-final start-up time only means something when the trace settles at the target"""
+    su = ((ch.get("curves") or {}).get("startup") or {}).get("vout") or []
+    return bool(su) and isnum(su[-1]) and abs(su[-1] - vout) <= 0.03 * abs(vout)
+
+
+def settle_window_us(ch):
+    lt = ((ch.get("curves") or {}).get("load_tran") or {}).get("nom") or {}
+    return (lt["t2"] - lt["t1"]) * 1e6 if isnum(lt.get("t1")) and isnum(lt.get("t2")) else None
+
+
+def settle_capped(ch):
+    m, w = ch.get("metrics") or {}, settle_window_us(ch)
+    return w is not None and isnum(m.get("settle_up_us_nom")) and m["settle_up_us_nom"] >= w - 0.3
+
+
+GM_CAP, DROPOUT_FLOOR = 35.0, 0.015      # tb.py: gm_db = 35 when the phase never crosses −180°; dropout = max(15 mV, …)
+
+
 def noise_placeholder(ch):
     n = ((ch or {}).get("curves") or {}).get("noise") or {}
     return not (n.get("f") and n.get("vn"))
@@ -257,37 +324,57 @@ def noise_placeholder(ch):
 
 # ----------------------------------------------------------------------------- metrics (simulated quantities only)
 METRICS = [
-    # key, label, unit, si, better, digits, extractor(m) -> value
-    ("ugb", "UGB", "Hz", True, "high", 3, lambda m: m.get("ugb_min")),
-    ("ugb_max", "UGB max", "Hz", True, "high", 3, lambda m: m.get("ugb_max")),
-    ("pm", "PM (nominal)", "°", False, "high", 3, lambda m: m.get("pm_min")),
-    ("pm_light", "PM light load", "°", False, "high", 3, lambda m: m.get("pm_light")),
-    ("gm", "GM", "dB", False, "high", 3, lambda m: m.get("gm_min")),
-    ("a0", "DC loop gain", "dB", False, "high", 3, lambda m: m.get("a0_min")),
+    # key, label, unit, si, better, digits, extractor(m, ch, card) -> value
+    ("ugb", "UGB", "Hz", True, "high", 3, lambda m, ch, c: m.get("ugb_min")),
+    ("ugb_max", "UGB max", "Hz", True, "high", 3, lambda m, ch, c: m.get("ugb_max")),
+    ("pm", "PM (nominal)", "°", False, "high", 3, lambda m, ch, c: m.get("pm_min")),
+    ("pm_light", "PM light load", "°", False, "high", 3, lambda m, ch, c: m.get("pm_light")),
+    ("gm", "GM", "dB", False, "high", 3, lambda m, ch, c: m.get("gm_min")),
+    ("a0", "DC loop gain", "dB", False, "high", 3, lambda m, ch, c: m.get("a0_min")),
     ("pm_pvt", "PM worst PVT", "°", False, "high", 3, None),
     ("pm_mc", "PM worst MC", "°", False, "high", 3, None),
-    ("iq", "Iq", "A", True, "low", 3, lambda m: m.get("iq") or None),
-    ("iq_max", "Iq @ Imax", "A", True, "low", 3, lambda m: m.get("iq_max_load") or None),
-    ("eff", "Efficiency @ Imax", "%", False, "high", 4, lambda m: None if m.get("current_eff") is None else m["current_eff"] * 100),
-    ("zeta", "Damping ζ", "", False, "high", 3, lambda m: m.get("zeta_min")),
-    ("step_os", "Small-step overshoot", "%", False, "low", 3, lambda m: m.get("step_overshoot_pct")),
-    ("verr", "VOUT error", "V", True, "low", 3, lambda m: None if m.get("verr_max") is None else abs(m["verr_max"])),
-    ("dropout", "Dropout", "V", True, "low", 3, lambda m: m.get("dropout_imax")),
-    ("line_reg", "Line reg", "mV/V", False, "low", 3, lambda m: None if m.get("line_reg_imax") is None else abs(m["line_reg_imax"]) * 1e3),
-    ("load_reg", "Load reg", "V", True, "low", 3, lambda m: None if m.get("load_reg_mv") is None else abs(m["load_reg_mv"]) * 1e-3),
-    ("rout", "Rout", "Ω", True, "low", 3, lambda m: None if m.get("load_reg") is None else abs(m["load_reg"])),
-    ("psrr_1k", "PSRR 1 kHz", "dB", False, "high", 3, lambda m: m.get("psrr_1k_imax")),
-    ("psrr_100k", "PSRR 100 kHz", "dB", False, "high", 3, lambda m: m.get("psrr_100k_imax")),
-    ("psrr_dc", "PSRR DC", "dB", False, "high", 3, lambda m: m.get("psrr_dc_imax")),
-    ("psrr_worst", "PSRR worst", "dB", False, "high", 3, lambda m: m.get("psrr_worst_imax")),
-    ("droop", "Step droop", "V", True, "low", 3, lambda m: None if m.get("undershoot_mv_nom") is None else m["undershoot_mv_nom"] * 1e-3),
-    ("overshoot", "Release overshoot", "V", True, "low", 3, lambda m: None if m.get("overshoot_mv_nom") is None else m["overshoot_mv_nom"] * 1e-3),
-    ("settle", "Settling", "s", True, "low", 3, lambda m: None if m.get("settle_up_us_nom") is None else m["settle_up_us_nom"] * 1e-6),
-    ("fom", "FoM", "s", True, "low", 3, lambda m: None if m.get("fom_ps") is None else m["fom_ps"] * 1e-12),
-    ("line_tran", "Line-step peak", "V", True, "low", 3, lambda m: None if m.get("line_tran_pk_mv") is None else m["line_tran_pk_mv"] * 1e-3),
-    ("startup", "Start-up", "s", True, "low", 3, lambda m: None if m.get("startup_us") is None else m["startup_us"] * 1e-6),
+    ("iq", "Iq", "A", True, "low", 3, lambda m, ch, c: m.get("iq") or None),
+    ("iq_max", "Iq @ Imax", "A", True, "low", 3, lambda m, ch, c: m.get("iq_max_load") or None),
+    ("eff", "Efficiency @ Imax", "%", False, "high", 4, lambda m, ch, c: None if m.get("current_eff") is None else m["current_eff"] * 100),
+    ("zeta", "Damping ζ", "", False, "high", 3, lambda m, ch, c: m.get("zeta_min")),
+    ("step_os", "Small-step overshoot", "%", False, "low", 3, lambda m, ch, c: m.get("step_overshoot_pct")),
+    ("verr", "VOUT error", "V", True, "low", 3, lambda m, ch, c: None if m.get("verr_max") is None else abs(m["verr_max"])),
+    ("dropout", "Dropout", "V", True, "low", 3, lambda m, ch, c: m.get("dropout_imax")),
+    ("line_reg", "Line reg", "mV/V", False, "low", 3, lambda m, ch, c: None if m.get("line_reg_imax") is None else abs(m["line_reg_imax"]) * 1e3),
+    ("load_reg", "Load reg", "V", True, "low", 3, lambda m, ch, c: None if m.get("load_reg_mv") is None else abs(m["load_reg_mv"]) * 1e-3),
+    ("rout", "Rout", "Ω", True, "low", 3, lambda m, ch, c: None if m.get("load_reg") is None else abs(m["load_reg"])),
+    ("psrr_1k", "PSRR 1 kHz", "dB", False, "high", 3, lambda m, ch, c: psrr_signed(ch)["psrr_1k_imax"]),
+    ("psrr_100k", "PSRR 100 kHz", "dB", False, "high", 3, lambda m, ch, c: psrr_signed(ch)["psrr_100k_imax"]),
+    ("psrr_dc", "PSRR DC", "dB", False, "high", 3, lambda m, ch, c: psrr_signed(ch)["psrr_dc_imax"]),
+    ("psrr_worst", "PSRR worst", "dB", False, "high", 3, lambda m, ch, c: psrr_signed(ch)["psrr_worst_imax"]),
+    ("droop", "Step droop", "V", True, "low", 3, lambda m, ch, c: None if m.get("undershoot_mv_nom") is None else m["undershoot_mv_nom"] * 1e-3),
+    ("overshoot", "Release overshoot", "V", True, "low", 3, lambda m, ch, c: None if m.get("overshoot_mv_nom") is None else m["overshoot_mv_nom"] * 1e-3),
+    ("settle", "Settling", "s", True, "low", 3, lambda m, ch, c: None if m.get("settle_up_us_nom") is None or settle_capped(ch) else m["settle_up_us_nom"] * 1e-6),
+    ("fom", "FoM", "s", True, "low", 3, lambda m, ch, c: None if m.get("fom_ps") is None else m["fom_ps"] * 1e-12),
+    ("line_tran", "Line-step peak", "V", True, "low", 3, lambda m, ch, c: None if m.get("line_tran_pk_mv") is None else m["line_tran_pk_mv"] * 1e-3),
+    ("startup", "Start-up", "s", True, "low", 3, lambda m, ch, c: None if m.get("startup_us") is None or not startup_ok(ch, c["vout"]) else m["startup_us"] * 1e-6),
     ("area", "Area", "µm²", False, "low", 4, None),
+    ("width", "Width", "µm", False, "low", 4, None),
+    ("height", "Height", "µm", False, "low", 4, None),
 ]
+METRIC_DESC = {
+    "ugb": "Worst-case loop unity-gain bandwidth over the class corners (I_min, I_max at the class C_L), Tian probe, tt 27 °C.",
+    "pm": "Minimum phase margin over all 0 dB crossings at the class corners, tt 27 °C.",
+    "gm": "Worst gain margin. The bench reports 35 dB when the loop phase never reaches −180°, so 35 dB means ≥ 35 dB.",
+    "pm_pvt": "Worst PM over the 17 PVT points (5 corners × 3 temperatures + 2 supply extremes).",
+    "pm_mc": "Worst PM over the Monte-Carlo samples (global + mismatch); invalid PM values < −180° excluded.",
+    "iq": "Quiescent current at I_min (all current from V_IN and V_REF minus the load).",
+    "zeta": "Second-order equivalent damping from the small-step overshoot; the bench sets ζ = 1.0 whenever the overshoot is ≤ 1 %.",
+    "dropout": "V_IN − V_OUT where V_OUT leaves regulation, at I_max. The bench floors it at 15 mV, so 15 mV means ≤ 15 mV.",
+    "psrr_1k": "Supply rejection at 1 kHz, I_max, sign restored from the PSRR curve (negative = ripple amplified; the repo publishes abs()).",
+    "psrr_100k": "Supply rejection at 100 kHz, I_max, sign restored from the PSRR curve (negative = ripple amplified).",
+    "psrr_dc": "Supply rejection at the lowest simulated frequency (10 Hz), I_max, sign from the curve.",
+    "psrr_worst": "Minimum PSRR over frequency, I_max, sign from the curve (negative = ripple amplified).",
+    "settle": "Settling of the I_min→I_max step to max(2 mV, 0.5 %); omitted when it equals the observation window (did not settle).",
+    "startup": "Time to 98 % of the final value after a 10 µs ramp; omitted when the start-up trace does not end within 3 % of V_reg.",
+    "fom": "C_L·ΔV_droop·I_q/ΔI² (transient figure of merit).",
+    "area": "Layout bounding-box area (same layout at every stage).",
+}
 MKEYS = [x[0] for x in METRICS]
 
 
@@ -297,11 +384,14 @@ def stage_result(V, d, area, key):
     for k, *_rest, fn in METRICS:
         if fn is None:
             continue
-        v = fn(m)
+        v = fn(m, V["char"], d["card"])
         out[k] = r5(float(v)) if isnum(v) else None
     out["pm_pvt"] = r5(pvt_worst(V["pvt"]))
     out["pm_mc"] = r5(mc_worst(V["mc"]))
+    lay = d.get("layout") or {}
     out["area"] = area
+    out["width"] = round(lay["width_um"], 2) if isnum(lay.get("width_um")) else None
+    out["height"] = round(lay["height_um"], 2) if isnum(lay.get("height_um")) else None
     res = {"metrics": out, "robust": bool(V["robust"])}
     if V["pvt"]:
         res["pvt"] = {"pass": sum(1 for p in V["pvt"] if p.get("pass")), "total": len(V["pvt"])}
@@ -324,11 +414,46 @@ def stage_result(V, d, area, key):
         notes.append(f"{len(inv)} Monte-Carlo sample(s) report an invalid PM ({', '.join(num(s['pm_min'], 1) + '°' for s in inv[:3])}; phase-unwrap artefact) and are excluded from the worst-case PM")
     if not m.get("iq"):
         notes.append("Iq is published as 0 and is omitted")
+    if isnum(m.get("startup_us")) and not startup_ok(V["char"], d["card"]["vout"]):
+        notes.append(f"start-up time omitted: the start-up trace ends at {num((((V['char'].get('curves') or {}).get('startup') or {}).get('vout') or [None])[-1], 3)} V, not at V_reg = {jsn(d['card']['vout'])} V")
+    if settle_capped(V["char"]):
+        notes.append(f"settling omitted: {num(m.get('settle_up_us_nom'), 2)} µs equals the {num(settle_window_us(V['char']), 0)} µs observation window (did not settle)")
+    if m.get("gm_min") == GM_CAP:
+        notes.append("GM 35 dB is the bench's cap (phase never reaches −180°), i.e. ≥ 35 dB")
+    if m.get("dropout_imax") == DROPOUT_FLOOR:
+        notes.append("dropout 15 mV is the bench floor, i.e. ≤ 15 mV")
     res["note"] = "; ".join(notes)
     return res
 
 
 # ----------------------------------------------------------------------------- detail document builders
+INV_SUFFIX = {"sub": "subthreshold", "wi": "weak", "mi": "moderate", "si": "strong"}
+
+
+def input_pair(d):
+    """polarity of the reused cell's input pair, from the device list (the card field `pin` is a builder default)"""
+    mods = {v.get("model", "") for v in (d.get("design") or {}).get("devs") or [] if str(v.get("role", "")).endswith("input_pair")}
+    if any(x.startswith("pfet") for x in mods):
+        return "PMOS"
+    if any(x.startswith("nfet") for x in mods):
+        return "NMOS"
+    return None
+
+
+def cell_inversion(c):
+    if c.get("ea"):
+        return c["ea"].get("inv")
+    if c.get("comp"):
+        return INV_SUFFIX.get(str(c["comp"]["id"]).rsplit("-", 1)[-1])
+    return None
+
+
+def pass_devices(d):
+    devs = (d.get("design") or {}).get("devs") or []
+    named = [v for v in devs if v.get("name") in ("pass", "arr_u0")]
+    return named, [v for v in devs if str(v.get("name", "")).startswith("pass") or "pass" in str(v.get("role", ""))]
+
+
 def knob_name(k):
     return {"ota": "error amplifier (opa-gen card)", "comp": "comparator (sa-gen cell)", "pin": "error-amp input pair",
             "inv": "inversion target set", "iq": "quiescent-current budget (EA + bias)", "U": "current units",
@@ -366,6 +491,10 @@ def key_results(d, V):
     lay = d.get("layout") or {}
     lt = ((ch.get("curves") or {}).get("load_tran") or {}).get("nom") or {}
     pm_pvt, pm_mc, inv = pvt_worst(V["pvt"]), mc_worst(V["mc"]), mc_invalid(V["mc"])
+    ps = psrr_signed(ch)
+    su_ok = startup_ok(ch, c["vout"])
+    sw = settle_window_us(ch)
+    settle_txt = (f"> {num(sw, 1)} µs (did not settle in the window)" if settle_capped(ch) else f"{num(m.get('settle_up_us_nom'), 1)} µs")
     mc_txt = f"MC {num(pm_mc, 1)}°" + (f" ({len(inv)} invalid sample{'s' if len(inv) > 1 else ''} {num(inv[0]['pm_min'], 1)}°)" if inv else "")
     items = [
         stat("Quiescent current", si(m.get("iq"), "A") if m.get("iq") else "—",
@@ -373,15 +502,17 @@ def key_results(d, V):
              f"{si(nom.get('iq_zero'), 'A')} @ I<sub>min</sub>/10 {DAG}"),
         stat("Current efficiency", f"{num(m['current_eff'] * 100, 2)} %" if m.get("current_eff") else "—", "at I<sub>max</sub>"),
         stat("Worst-case loop bandwidth", si(nom.get("ugb_min"), "Hz"), f"max {si(nom.get('ugb_max'), 'Hz')}"),
-        stat("Phase / gain margin", f"{num(nom.get('pm_min'), 1)}° / {num(nom.get('gm_min'), 1)} dB",
+        stat("Phase / gain margin", f"{num(nom.get('pm_min'), 1)}° / {'≥ ' if nom.get('gm_min') == GM_CAP else ''}{num(nom.get('gm_min'), 1)} dB",
              f"PVT {num(pm_pvt, 1)}° · {mc_txt} · light load {num(nom.get('pm_light'), 1)}°"),
         stat("DC loop gain (min)", f"{num(nom.get('a0_min'), 1)} dB"),
-        stat("Closed-loop damping", f"ζ {num(nom.get('zeta_min'), 2)}", f"small-step overshoot {num(nom.get('os_max'), 1)} % (worst class corner)"),
-        stat("Dropout @ I<sub>max</sub>", f"{num(m['dropout_imax'] * 1e3, 0)} mV" if m.get("dropout_imax") is not None else "—",
+        stat("Closed-loop damping", f"ζ {num(nom.get('zeta_min'), 2)}", f"small-step overshoot {num(nom.get('os_max'), 1)} % (worst class corner)"
+             + (" — ζ = 1.0 is the bench's value for overshoot ≤ 1 %" if nom.get("zeta_min") == 1.0 else "")),
+        stat("Dropout @ I<sub>max</sub>", (f"{'≤ ' if m['dropout_imax'] == DROPOUT_FLOOR else ''}{num(m['dropout_imax'] * 1e3, 0)} mV") if m.get("dropout_imax") is not None else "—",
              f"@ I<sub>min</sub>: {num(m['dropout_imin'] * 1e3, 0) + ' mV' if m.get('dropout_imin') is not None else '—'} {DAG} (1 % output drop)"),
         stat("Line regulation", ppm(m.get("line_reg_imax")), f"@ I<sub>min</sub>: {ppm(m.get('line_reg_imin'))} {DAG}"),
         stat("Load regulation", f"{num(m.get('load_reg_mv'), 3)} mV", f"{si(abs(m['load_reg']), 'Ω') if isnum(m.get('load_reg')) else '—'} over the class"),
-        stat("PSRR @ 1 kHz", f"{num(m.get('psrr_1k_imax'), 1)} dB", f"DC {num(m.get('psrr_dc_imax'), 0)} dB · worst {num(m.get('psrr_worst_imax'), 0)} dB"),
+        stat("PSRR @ 1 kHz", f"{num(ps['psrr_1k_imax'], 1)} dB", f"DC {num(ps['psrr_dc_imax'], 0)} dB · worst {num(ps['psrr_worst_imax'], 0)} dB"
+             + (" — negative = supply ripple amplified (sign from the PSRR curve; the old site showed abs())" if any(isnum(v) and v < 0 for v in ps.values()) else "")),
     ]
     if noise_placeholder(ch):
         items.append(stat("Output noise 10 Hz–100 kHz", f"{DDAG} placeholder",
@@ -391,10 +522,11 @@ def key_results(d, V):
         items.append(stat("Output noise 10 Hz–100 kHz", f"{num(m.get('noise_int_10_100k_uv'), 1)} µVrms", f"{si(m.get('noise_1k'), 'V/√Hz')} @ 1 kHz"))
     items += [
         stat("Load step droop / overshoot", f"{num(m.get('undershoot_mv_nom'), 0)} / {num(m.get('overshoot_mv_nom'), 0)} mV",
-             f"I<sub>min</sub>↔I<sub>max</sub>, 1 µs edge, C<sub>L</sub> {si(lt.get('cl', META.get('cl_nom')), 'F')} · settle {num(m.get('settle_up_us_nom'), 1)} µs"),
+             f"I<sub>min</sub>↔I<sub>max</sub>, 1 µs edge, C<sub>L</sub> {si(lt.get('cl', META.get('cl_nom')), 'F')} · settle {settle_txt}"),
         stat("FoM (T<sub>R</sub>·I<sub>q</sub>/ΔI)", si(m["fom_ps"] * 1e-12, "s") if isnum(m.get("fom_ps")) else "—", "C<sub>L</sub>·ΔV/ΔI · I<sub>q</sub>/ΔI"),
-        stat("Start-up (98 %)", f"{num(m['startup_us'], 1)} µs" if m.get("startup_us") is not None else "—",
-             f"overshoot {num(m.get('startup_overshoot_mv'), 0)} mV {DAG} · 10 µs V<sub>IN</sub> ramp"),
+        stat("Start-up (98 %)", (f"{num(m['startup_us'], 1)} µs" if su_ok else f"{DDAG} {num(m['startup_us'], 1)} µs") if m.get("startup_us") is not None else "—",
+             f"overshoot {num(m.get('startup_overshoot_mv'), 0)} mV {DAG} · 10 µs V<sub>IN</sub> ramp"
+             + ("" if su_ok else f" — {DDAG} not a start-up time: the trace ends at {num(((((ch.get('curves') or {}).get('startup') or {}).get('vout')) or [None])[-1], 3)} V, not at V<sub>reg</sub> = {jsn(c['vout'])} V")),
         stat("Usable V<sub>OUT</sub> range", f"{num(m['vout_range_lo_imax'], 2)}–{num(m['vout_range_hi_imax'], 2)} V {DAG}" if m.get("vout_range_lo_imax") is not None else "—",
              f"same sizing, V<sub>REF</sub> swept, I<sub>max</sub>, 1 % tracking — {DAG} published as the V<sub>REF</sub> sweep's start/stop, not a measured limit"),
     ]
@@ -409,17 +541,20 @@ def spec_checks(d, V):
     o_pvt, o_mc = V["pvt"], V["mc"]
     pm_pvt, pm_mc = pvt_worst(o_pvt), mc_worst(o_mc)
     n_pt = sum(1 for p in o_pvt if p.get("pass"))
+    n_mc35 = sum(1 for x in mc_valid(o_mc) if x["pm_min"] >= META["pm_target"])
     iq = m.get("iq")
     rows = [
         [f"I<sub>q</sub> ≤ budget ({TIER[c['tier']]} class budget, of I<sub>max</sub>)", f"{si(iq, 'A')} ≤ {si(c.get('iq_budget'), 'A')}",
          status(isnum(iq) and isnum(c.get("iq_budget")) and iq <= c["iq_budget"] * 1.0001)],
-        [f"PM ≥ {META['pm_nom']}° / GM ≥ {META['gm_nom']} dB at the class corners (tt, 27 °C)", f"{num(nom.get('pm_min'), 1)}° / {num(nom.get('gm_min'), 1)} dB",
+        [f"PM ≥ {META['pm_nom']}° / GM ≥ {META['gm_nom']} dB at the class corners (tt, 27 °C)", f"{num(nom.get('pm_min'), 1)}° / {'≥ ' if nom.get('gm_min') == GM_CAP else ''}{num(nom.get('gm_min'), 1)} dB",
          status(isnum(nom.get("pm_min")) and isnum(nom.get("gm_min")) and nom["pm_min"] >= META["pm_nom"] and nom["gm_min"] >= META["gm_nom"])],
         [f"PM ≥ {META['pm_target']}° / GM ≥ {META['gm_robust']} dB at all PVT points ({len(o_pvt)})",
          f"worst {num(pm_pvt, 1)}°" + (f" · {n_pt}/{len(o_pvt)} points meet PM ≥ {META['pm_target']}° (repo flag shown)" if n_pt < len(o_pvt) else ""),
          status(bool(V["pvt_pass"]))],
         [f"PM ≥ {META['pm_target']}° / GM ≥ {META['gm_robust']} dB in all Monte-Carlo samples ({len(o_mc)})",
-         f"worst {num(pm_mc, 1)}°" + (f" · {len(mc_invalid(o_mc))} invalid sample(s)" if mc_invalid(o_mc) else ""), status(bool(V["mc_pass"]))],
+         f"worst {num(pm_mc, 1)}°" + (f" · {len(mc_invalid(o_mc))} invalid sample(s)" if mc_invalid(o_mc) else "")
+         + (f" · {n_mc35}/{len(o_mc)} samples ≥ {META['pm_target']}° (repo MC flag uses ≥ {PM_ROBUST_MC:g}°, shown)" if n_mc35 < len(o_mc) else ""),
+         status(bool(V["mc_pass"]))],
         ["Closed-loop step rings down, overshoot ≤ 25 % (ζ ≥ 0.4) at all class corners",
          f"max overshoot {num(nom.get('os_max'), 1)} % · ζ<sub>min</sub> {num(nom.get('zeta_min'), 2)}", status(nom.get("ring_ok") is True)],
     ]
@@ -443,7 +578,22 @@ def spec_checks(d, V):
 def design_point(d, dbn):
     c, o, D = d["card"], d.get("opt") or {}, d.get("design") or {}
     kn = o.get("knobs") or {}
-    rows = [[knob_name("comp" if (k == "ota" and c.get("comp") and not c.get("ea")) else k), knob_val(k, v, c)] for k, v in kn.items()]
+    named, passes = pass_devices(d)
+    caps, ress = D.get("caps") or [], D.get("ress") or []
+    rows = []
+    for k, v in kn.items():
+        name = knob_name("comp" if (k == "ota" and c.get("comp") and not c.get("ea")) else k)
+        val = knob_val(k, v, c)
+        if k == "inv":
+            val = f"{val} {DAG} <small>(builder default on every card; reused cell: {cell_inversion(c) or '—'})</small>"
+        elif k in ("gp", "Lp") and not named:
+            alt = ", ".join(f"{x['name']} {jsn(x['gmid']) if k == 'gp' else jsn(x['L'])}{'' if k == 'gp' else ' µm'}" for x in passes) or "—"
+            val = f"{val} {DAG} <small>(builder default — no device named pass; pass cells: {alt})</small>"
+        elif k == "cc" and len(caps) > 1:
+            val = f"{val} {DAG} <small>(sum of {', '.join(x['name'] + ' ' + si(x.get('Cact'), 'F') for x in caps)})</small>"
+        elif k == "rz" and len(ress) > 1:
+            val = f"{val} {DAG} <small>(sum of {', '.join(x['name'] + ' ' + si(x.get('Ract'), 'Ω') for x in ress)})</small>"
+        rows.append([name, val])
     if D:
         rows.append(["reference current I<sub>ref</sub>", si(D.get("iref"), "A")])
     txt = (f"Chosen from {o.get('n_points', 0):,} simulated candidates of this V<sub>IN</sub>/V<sub>OUT</sub>/class target "
@@ -471,7 +621,7 @@ def ea_panel(c):
         f"The OTA is the opa-gen design card {opa_link(ea['id'])} ({ea.get('name')}, {ea.get('inv')}), used unchanged: its netlist in every "
         f"simulation here, its GDS as a sub-cell of the layout and its own LVS reference. Card figures: I<sub>DD</sub> {si(ea.get('idd'), 'A')}, "
         f"A<sub>0</sub> {num(ea.get('a0_db'), 1)} dB, UGB {si(ea.get('ugb'), 'Hz')} (at the opa-gen design load). "
-        f"<small>(The link opens the hub's op-amp tab filtered by this cell id.)</small>")])
+        f"<small>(The link opens the {OPA_VARIANT.replace('p', ' pF')}-load opa-gen card on the hub, the variant whose sizes and figures match.)</small>")])
 
 
 def device_rows(d, V):
@@ -559,7 +709,8 @@ def schematic_tab(d, V_pre, V_full):
     if tl:
         who = (f"the schematic of the opa-gen OTA cell {opa_link(c['ea']['id'])}" if c.get("ea") else
                f"the schematic of the sa-gen comparator cell {sa_link(c['comp']['id'])}" if c.get("comp") else "the schematic of the reused sub-cell")
-        blocks.append({"type": "image", "title": "Error-amplifier sub-cell — transistor level", "src": f"{base}/schematic_tl.svg", "max_height": 900,
+        blocks.append({"type": "image", "title": "Error-amplifier sub-cell — transistor level" if not (c.get("comp") and not c.get("ea")) else "Comparator sub-cell (sa-gen) — transistor level",
+                       "src": f"{base}/schematic_tl.svg", "max_height": 900,
                        "caption": f"The triangle above expanded: {who} as published on its design card (the cell is used unchanged). "
                                   "<small>The old site's post-layout file `schematic_tl_sizing.svg` is byte-identical to this one.</small>"})
     for st, V, title in (("pre", V_pre, "Device table (operating point at I<sub>max</sub>, tt 27 °C)"), ("full", V_full, "Device table (drawn sizes)")):
@@ -661,7 +812,8 @@ def sim_section(d, V):
     if (P.get("psrr_imax") or {}).get("f"):
         blocks.append(chart("PSRR", [line(P["psrr_imax"]["f"], P["psrr_imax"]["db"], "I_max"), line(P["psrr_imin"]["f"], P["psrr_imin"]["db"], "I_min")],
                             {"xaxis": XLOG, "yaxis": {"title": {"text": "PSRR (dB)"}}, "hovermode": "x unified", "legend": LEG},
-                            caption=f"@1 kHz {num(m.get('psrr_1k_imax'), 1)} dB · @100 kHz {num(m.get('psrr_100k_imax'), 1)} dB (I<sub>max</sub>)"))
+                            caption=f"@1 kHz {num(psrr_signed(ch)['psrr_1k_imax'], 1)} dB · @100 kHz {num(psrr_signed(ch)['psrr_100k_imax'], 1)} dB (I<sub>max</sub>; "
+                                    "negative = supply ripple amplified — the old site printed abs() of these values)"))
     # noise
     N = C.get("noise") or {}
     if N.get("f") and N.get("vn"):
@@ -700,8 +852,9 @@ def sim_section(d, V):
         blocks.append(chart("Start-up (V<sub>IN</sub>, V<sub>REF</sub>, I<sub>ref</sub> ramp in 10 µs, I<sub>max</sub>)",
                             [line(SU["t"], SU["vin"], "V_IN", line={"width": 1.2}), line(SU["t"], SU["vout"], "V_OUT")],
                             {"xaxis": TIME, "yaxis": {"title": {"text": "V"}}, "hovermode": "x unified", "legend": LEG},
-                            caption=f"98 % in {num(m.get('startup_us'), 1)} µs · overshoot {num(m.get('startup_overshoot_mv'), 0)} mV {DAG} "
-                                    "<small>(= 0.4 × load-step overshoot in the repo's builder)</small>"))
+                            caption=(f"98 % in {num(m.get('startup_us'), 1)} µs" if startup_ok(ch, c["vout"]) else
+                                     f"{DDAG} reported “98 % in {num(m.get('startup_us'), 1)} µs”, but the trace ends at {num(SU['vout'][-1], 3)} V instead of V<sub>reg</sub> = {jsn(c['vout'])} V, so it is not a start-up time")
+                                    + f" · overshoot {num(m.get('startup_overshoot_mv'), 0)} mV {DAG} <small>(= 0.4 × load-step overshoot in the repo's builder)</small>"))
     # output range
     VR = C.get("vref") or {}
     if VR.get("vref"):
@@ -745,7 +898,11 @@ def robust_section(d, V):
     temps = list(dict.fromkeys(p["temp"] for p in nomV))
     cols = [{"key": "c", "label": "Corner", "type": "text"}] + [{"key": f"t{i}", "label": f"{t} °C", "type": "text", "md": True, "align": "r"} for i, t in enumerate(temps)]
     rows = [[cn] + [pvt_cell(next((p for p in nomV if p["corner"] == cn and p["temp"] == t), None), vout0) for t in temps] for cn in corners]
-    blocks = [table(f"PVT corners (V<sub>IN</sub> = {jsn(vin0)} V) — worst PM over the 4 class corners", cols, rows, csv=False, search=False)]
+    ncorn = len((V["char"] or {}).get("stab") or []) or 2
+    cl0 = (((V["char"] or {}).get("stab") or [{}])[0]).get("cl")
+    blocks = [table(f"PVT corners (V<sub>IN</sub> = {jsn(vin0)} V) — worst PM over the {ncorn} class corners (I<sub>min</sub>, I<sub>max</sub> at C<sub>L</sub> {si(cl0, 'F')})",
+                    cols, rows, csv=False, search=False,
+                    caption="The old site's title said “4 class corners”; the published loop-gain data has the two load corners at one C<sub>L</sub>.")]
     if ext:
         blocks.append(table("Supply extremes", [{"key": "c", "label": "Corner", "type": "text"}, {"key": "t", "label": "Temp", "type": "text"},
                                                 {"key": "v", "label": "V<sub>IN</sub>", "unit": "V", "digits": 3},
@@ -933,9 +1090,10 @@ def detail_doc(d, dbn):
         ov.append(design_point(d, dbn))
         sim = [sim_section(d, V) for V in (Vp, Vf) if V]
         rob = [robust_section(d, V) for V in (Vp, Vf) if V]
-    tabs = [{"label": "Overview", "blocks": ov}, {"label": "Schematic", "blocks": schematic_tab(d, Vp, Vf)},
-            {"label": "Simulation", "blocks": sim}, {"label": "Robustness", "blocks": rob}, {"label": "Layout", "blocks": layout_section(d)}]
-    blocks.append({"type": "tabs", "tabs": tabs})
+    tabs = [{"label": "Overview", "key": "overview", "blocks": ov}, {"label": "Schematic", "key": "schematic", "blocks": schematic_tab(d, Vp, Vf)},
+            {"label": "Simulation", "key": "simulation", "blocks": sim}, {"label": "Robustness", "key": "robustness", "blocks": rob},
+            {"label": "Layout", "key": "layout", "blocks": layout_section(d)}]
+    blocks.append({"type": "tabs", "id": "sec", "tabs": tabs})     # deep link: #/ldo/<id>?t.sec=simulation (old #d/<key>/<Tab>)
     return {"blocks": blocks}
 
 
@@ -959,7 +1117,7 @@ for c in cards:
         skipped.append((c, d))
         continue
     lay = d.get("layout") or {}
-    area = r5(float(lay["area_um2"])) if lay.get("area_um2") else None
+    area = round(float(lay["area_um2"]), 1) if lay.get("area_um2") else None
     results = {}
     if Vp:
         results["pre"] = stage_result(Vp, d, area, key)
@@ -970,27 +1128,30 @@ for c in cards:
     tot_mos += pc.get("n_mos") or 0
     if c["vout"] not in vouts:
         vouts.append(c["vout"])
-    files = {k: f"{base}/{v}" for k, v in (("schematic", "schematic.svg"), ("gds", f"{key}.gds.gz"), ("netlist", "netlist.spice"),
+    files = {k: f"{base}/{v}" for k, v in (("gds", f"{key}.gds.gz"), ("netlist", "netlist.spice"),
                                             ("pex_netlist", "pex.spice"), ("lvs_netlist", "lvs_reference.spice"), ("data", "data.json"))
              if (DOCS / base / v).is_file()}
     sub = "error-amplifier (opa-gen OTA)" if c.get("ea") else "comparator (sa-gen)" if c.get("comp") else "sub-cell"
-    images = [{"label": lbl, "src": f"{base}/{fn}"} for lbl, fn in (("Sizing view (post-layout)", "schematic_sizing.svg"),
-                                                                    (f"Reused {sub} — transistor level", "schematic_tl.svg"))
+    images = [{"label": lbl, "src": f"{base}/{fn}"} for lbl, fn in (("Schematic — pre-PEX operating point", "schematic.svg"),
+                                                                    ("Sizing view — post-layout", "schematic_sizing.svg"),
+                                                                    (f"{'Comparator' if (c.get('comp') and not c.get('ea')) else 'Error-amplifier'} sub-cell ({'sa-gen' if (c.get('comp') and not c.get('ea')) else 'opa-gen'}) — transistor level", "schematic_tl.svg"))
               if (DOCS / base / fn).is_file()]
     downloads = [{"label": "KLayout LVS-extracted netlist", "file": f"{base}/extracted.cir"}] if (DOCS / base / "extracted.cir").is_file() else []
     kn = (d.get("opt") or {}).get("knobs") or {}
     D = d.get("design") or {}
     reuse = c.get("ea") or c.get("comp") or {}
-    params = {"Reused cell": f"{reuse.get('id')} ({'opa-gen' if c.get('ea') else 'sa-gen'})" if reuse.get("id") else None,
-              "Error-amp input pair": {"n": "NMOS", "p": "PMOS"}.get(c.get("pin")),
+    named, passes = pass_devices(d)
+    pdev = named or passes
+    caps, ress = D.get("caps") or [], D.get("ress") or []
+    params = {"Reused cell": f"{reuse.get('id')} ({'opa-gen ' + opa_id(reuse['id']) if c.get('ea') else 'sa-gen'})" if reuse.get("id") else None,
+              "Input pair (reused cell)": input_pair(d),
+              "Inversion (reused cell)": cell_inversion(c),
               "Iq budget": si(c.get("iq_budget"), "A") if c.get("iq_budget") else None,
-              "Inversion target": kn.get("inv"),
-              "Pass gm/Id at Imax": f"{jsn(kn['gp'])} V⁻¹" if isnum(kn.get("gp")) else None,
-              "Pass L": f"{jsn(kn['Lp'])} µm" if isnum(kn.get("Lp")) else None,
-              "Cc": si(kn.get("cc"), "F") if isnum(kn.get("cc")) else None,
-              "Rz": (si(kn["rz"], "Ω") if kn["rz"] else "none") if isnum(kn.get("rz")) else None,
+              "Pass device(s)": ", ".join(f"{x['name']} {x.get('model', '')} W {jsn(x['W'])} / L {jsn(x['L'])} µm, gm/Id target {jsn(x['gmid'])}" for x in pdev) or None,
+              **{f"{x['name']} (MIM)": si(x.get("Cact"), "F") for x in caps},
+              **{f"{x['name']} (poly R)": si(x.get("Ract"), "Ω") for x in ress},
               "Iref": si(D.get("iref"), "A") if isnum(D.get("iref")) else None,
-              "Loop break": f"{D['brk'][0]} → {D['brk'][1]}" if D.get("brk") else None,
+              f"Loop break {DAG}": f"{D['brk'][0]} → {D['brk'][1]} (builder constant on every card)" if D.get("brk") else None,
               "Testbench CL (class)": si(((((d.get("char") or {}).get("curves") or {}).get("load_tran") or {}).get("nom") or {}).get("cl"), "F") or None,
               "Extracted transistors": pc.get("n_mos"), "Parasitic capacitors (PEX)": pc.get("n_parasitic_c")}
     params = {k: v for k, v in params.items() if v not in (None, "", "—")}
@@ -999,13 +1160,21 @@ for c in cards:
     drc = (ver.get("drc") or {}).get("clean", s.get("drc"))
     lvs = (ver.get("lvs") or {}).get("match", s.get("lvs"))
     lo_hi = META["iclasses"][c["iclass"]]
+    cl_cls = ((((d.get("char") or {}).get("stab") or [{}])[0]).get("cl"))
     summary = (f"**{c['arch_name']}** · V<sub>IN</sub> {jsn(c['vin'])} V · V<sub>OUT</sub> {jsn(c['vout'])} V · I<sub>load</sub> {icls_label(c['iclass'])} · "
-               f"{TIER[c['tier']]} (I<sub>q</sub> ≤ {si(c.get('iq_budget'), 'A')}) · C<sub>L</sub> {si(META['cl_range'][0], 'F')}–{si(META['cl_range'][1], 'F')} "
-               f"(testbench range)" + (f" · reuses {cell_link(c)}" if cell_link(c) else ""))
+               f"{TIER[c['tier']]} (I<sub>q</sub> ≤ {si(c.get('iq_budget'), 'A')}) · C<sub>L</sub> {si(cl_cls, 'F')} (simulated for this class; the old "
+               f"header chip showed the global range {si(META['cl_range'][0], 'F')}–{si(META['cl_range'][1], 'F')})"
+               + (f" · reuses {cell_link(c)}" if cell_link(c) else "")
+               + ".")
+    uses = []
+    if c.get("ea"):
+        uses.append({"component": "opa", "design": opa_id(c["ea"]["id"]), "role": "error amplifier"})
+    if c.get("comp"):
+        uses.append({"component": "sa", "design": c["comp"]["id"], "role": "DLDO comparator"})
     details[key] = detail_doc(d, db_count.get(key, 0))
     designs.append({
         "id": key,
-        "title": f"{c['arch_short']} · {jsn(c['vin'])} → {jsn(c['vout'])} V · {icls_label(c['iclass'])}",
+        "title": f"{c['arch_short']} · {jsn(c['vin'])} → {jsn(c['vout'])} V · {icls_label(c['iclass'])}" + (f" · {reuse['id']}" if reuse.get("id") else ""),
         "summary": summary,
         "technology": TECH,
         "vdd": c["vin"],
@@ -1018,6 +1187,7 @@ for c in cards:
         "files": files,
         "images": images,
         "downloads": downloads,
+        "uses": uses,
         "detail": f"hub/designs/{key}.json",
     })
 
@@ -1051,10 +1221,10 @@ DBM = [  # key, label, unit, si, log, better
     ("do_max", "Minimum dropout @ I_max", "V", True, True, "low"),
     ("do_min", "Dropout @ I_min † (0.35 × @ I_max)", "V", True, True, "low"),
     ("linreg", "Line regulation |ΔV_OUT/ΔV_IN|", "mV/V", False, True, "low"),
-    ("psrr1k", "PSRR @ 1 kHz (I_max)", "dB", False, False, "high"),
-    ("psrr100k", "PSRR @ 100 kHz (I_max)", "dB", False, False, "high"),
+    ("psrr1k", "PSRR @ 1 kHz (I_max, signed)", "dB", False, False, "high"),
+    ("psrr100k", "PSRR @ 100 kHz (I_max, signed)", "dB", False, False, "high"),
     ("icap", "Current capability † (1.25 × I_max)", "A", True, True, "high"),
-    ("area", "Area", "µm²", False, True, "low"),
+    ("area", "Layout area", "µm²", False, True, "low"),
     ("vout", "Output voltage V_OUT", "V", False, False, None),
     ("verr", "Output error |V_OUT − V_REF|", "V", True, True, "low"),
 ]
@@ -1064,8 +1234,7 @@ cols = defaultdict(list)
 
 
 def add_row(**kw):
-    kw["arch_i"] = ARCH_ORDER.index(kw["arch"]) + 1 if kw.get("arch") in ARCH_ORDER else None
-    for k in ("stage", "src", "arch", "arch_i", "pol", "vin_c", "vdd", "cls", "pin", "design", "delivered", "label", "target", *[x[0] for x in DBM]):
+    for k in ("stage", "src", "arch", "pol", "vin_c", "vdd", "cls", "pin", "design", "delivered", "label", "target", *[x[0] for x in DBM]):
         cols[k].append(kw.get(k))
 
 
@@ -1077,54 +1246,64 @@ def absn(v):
     return abs(v) if isnum(v) else None
 
 
-def card_row(c, m, st, extra):
-    add_row(stage=st, src="delivered", arch=c["arch"], pol=c["tier"], vin_c=jsn(c["vin"]), vdd=c["vin"], cls=c["iclass"], pin=c.get("pin"),
-            design=c["key"], delivered=(st == "pre"), target=c["key"],
+def card_row(c, d, ch, st, extra):
+    m, ps = ch.get("metrics") or {}, psrr_signed(ch)
+    add_row(stage=st, src="delivered", arch=c["arch"], pol=c["tier"], vin_c=jsn(c["vin"]), vdd=c["vin"], cls=c["iclass"], pin=input_pair(d),
+            design=c["key"], delivered=True, target=c["key"],
             label=f"{c['arch_short']} {jsn(c['vin'])}→{jsn(c['vout'])} V, {icls_label(c['iclass'])} — {c['key']}",
             iq=pos(m.get("iq")), ugb=m.get("ugb_min"), pm=m.get("pm_min"), zeta=m.get("zeta_min"), a0=m.get("a0_min"),
             lreg=None if m.get("load_reg_mv") is None else abs(m["load_reg_mv"]) * 1e-3, lreg_r=absn(m.get("load_reg")),
             do_max=pos(m.get("dropout_imax")), do_min=pos(m.get("dropout_imin")),
             linreg=None if m.get("line_reg_imax") is None else abs(m["line_reg_imax"]) * 1e3,
-            psrr1k=m.get("psrr_1k_imax"), psrr100k=m.get("psrr_100k_imax"), icap=pos(m.get("imax_cap")), area=extra.get("area"),
+            psrr1k=ps["psrr_1k_imax"], psrr100k=ps["psrr_100k_imax"], icap=pos(m.get("imax_cap")), area=extra.get("area"),
             vout=c["vout"], verr=absn(m.get("verr_max")))
 
 
 card_by_key = {c["key"]: c for c in CARDS}
 dmap = {x["id"]: x for x in designs}
+viol = Counter()
 if DB:
     C = DB["cols"]
     archs, icl = DB["archs"], DB["iclasses"]
     for i in range(len(C["key"])):
         a = archs[C["arch"][i]]
         k = C["key"][i]
-        cc = card_by_key.get(k, {})
-        add_row(stage="pre", src="explored", arch=a, pol=a.split("_")[0], vin_c=jsn(C["vin"][i]), vdd=C["vin"][i], cls=icl[C["icls"][i]],
-                pin=C["pin"][i], design=None, delivered=False, target=k if k in dmap else None,
-                label=f"{ARCH_SHORT.get(a, a)} {jsn(C['vin'][i])}→{jsn(C['vout'][i])} V, {icls_label(icl[C['icls'][i]])} — candidate of {k}",
+        cl = icl[C["icls"][i]]
+        imax = META["iclasses"].get(cl, [None, None])[1]
+        if isnum(C["pm"][i]) and C["pm"][i] < 55:
+            viol["pm55"] += 1
+        if isnum(C["iq"][i]) and isnum(imax) and C["iq"][i] > 0.1 * imax:
+            viol["iq10"] += 1
+        if isnum(C["verr"][i]) and abs(C["verr"][i]) > 0.005 * C["vout"][i] * 1e3:
+            viol["verr"] += 1
+        add_row(stage="pre", src="explored", arch=a, pol=a.split("_")[0], vin_c=jsn(C["vin"][i]), vdd=C["vin"][i], cls=cl,
+                pin=None, design=None, delivered=False, target=k if k in dmap else None,
+                label=f"{ARCH_SHORT.get(a, a)} {jsn(C['vin'][i])}→{jsn(C['vout'][i])} V, {icls_label(cl)} — candidate of {k}",
                 iq=pos(C["iq"][i]), ugb=C["ugb"][i], pm=C["pm"][i], a0=C["a0"][i],
                 lreg=None if C["lreg"][i] is None else abs(C["lreg"][i]) * 1e-3, vout=C["vout"][i],
                 verr=None if C["verr"][i] is None else abs(C["verr"][i]) * 1e-3)
+    viol["pm_min"] = min((v for v in C["pm"] if isnum(v)), default=None)
 for x in designs:
     c = card_by_key[x["id"]]
     d = json.loads((DOCS / "designs" / x["id"] / "data.json").read_text())
     if d.get("char"):
-        card_row(c, d["char"]["metrics"], "pre", {"area": x["physical"]["area_um2"]})
+        card_row(c, d, d["char"], "pre", {"area": x["physical"]["area_um2"]})
     if (d.get("post") or {}).get("char"):
-        card_row(c, d["post"]["char"]["metrics"], "full", {"area": x["physical"]["area_um2"]})
+        card_row(c, d, d["post"]["char"], "full", {"area": x["physical"]["area_um2"]})
 explore = {"columns": {k: r5(v) for k, v in cols.items()}}
 wjson("data/explore.json", explore)
 n_explored_rows = sum(1 for s in cols["src"] if s == "explored")
+NR = len(cols["stage"])
 
 dims = []
 for k, lbl, unit, sio, lg, better in DBM:
     dd = {"key": k, "label": lbl, "unit": unit or None, "si": sio or None, "log": lg or None, "better": better}
     dims.append({a: b for a, b in dd.items() if b is not None})
-dims += [{"key": "arch_i", "label": "Architecture # (1–12 in legend order)"},
-         {"key": "arch", "label": "Architecture", "type": "cat", "labels": ARCH_SHORT, "order": ARCH_ORDER},
+dims += [{"key": "arch", "label": "Architecture", "type": "cat", "labels": ARCH_SHORT, "order": ARCH_ORDER},
          {"key": "pol", "label": "Polarity", "type": "cat", "labels": POL_LABEL, "order": ["pos", "neg"]},
          {"key": "vin_c", "label": "V_IN", "type": "cat", "labels": {jsn(v): f"{jsn(v)} V" for v in META["vins"]}, "order": [jsn(v) for v in META["vins"]]},
          {"key": "cls", "label": "Load class", "type": "cat", "labels": {k: icls_label(k) for k in ICLS}, "order": ICLS},
-         {"key": "pin", "label": "EA input pair", "type": "cat", "labels": {"n": "NMOS", "p": "PMOS"}, "order": ["n", "p"]},
+         {"key": "pin", "label": "Input pair (delivered cell)", "type": "cat", "order": ["NMOS", "PMOS"]},
          {"key": "src", "label": "Point", "type": "cat", "labels": {"explored": "explored candidate", "delivered": "delivered card"}, "order": ["explored", "delivered"]}]
 
 db_lede_pre = ("Every nominally feasible point found during design-space exploration (gm/Id sizing + ngspice operating point + Tian loop gain at the four "
@@ -1134,84 +1313,129 @@ db_lede_pre = ("Every nominally feasible point found during design-space explora
                "(|ΔV<sub>OUT</sub>| from I<sub>min</sub> to I<sub>max</sub> and the equivalent DC output resistance), minimum operable dropout (V<sub>IN</sub> − V<sub>OUT</sub> where "
                "V<sub>OUT</sub> is 1 % low, at I<sub>max</sub> and I<sub>min</sub>), line regulation (0.9–1.1 V<sub>IN</sub>), PSRR at 1 kHz / 100 kHz, current capability and "
                "closed-loop damping. Choose any two as axes.")
+db_correction = (f"**Correction to the old text above (checked against the published `db.json`).** The repo's builder keeps every explored point with a valid "
+                 f"PM ≥ 35°; it does not apply the criteria listed: {viol['pm55']:,} of {(DB or {}).get('n', 0):,} points have PM < 55° (lowest "
+                 f"{num(viol['pm_min'], 1)}°), {viol['iq10']:,} have I<sub>q</sub> > 10 % of I<sub>max</sub> and {viol['verr']:,} have |V<sub>OUT</sub> − V<sub>REF</sub>| > 0.5 %. "
+                 "Only I<sub>q</sub>, UGB (at I<sub>max</sub>), PM, T0, load regulation, V<sub>OUT</sub> and the output error vary per explored point. The other columns "
+                 "(ζ, R<sub>out</sub>, dropout, line regulation, PSRR, current capability, area, GM) are copies of the delivered card's values written onto every candidate "
+                 f"of the target, so the hub attributes them only to the delivered cards (the old explorer plotted the copies). {DAG} marks quantities the builder derives by "
+                 "formula. PSRR is signed (negative = supply ripple amplified; the old site showed abs()). UGB of delivered cards is the worst case over the class corners.") if DB else ""
 db_lede_full = ("The delivered analog design cards after layout: every point is one laid-out, DRC/LVS-clean design simulated on its Magic-extracted netlist "
                 "(devices as drawn plus parasitic capacitances) — loop gain at the class corners, closed-loop damping, dropout, line and load regulation, PSRR and "
                 "current capability, as on the schematic database. Choose any two metrics as axes; click a point to open its card.")
-db_honest = (f"**Hub note on the candidate points.** In the published `db.json` only I<sub>q</sub>, UGB (at I<sub>max</sub>), PM, T0, load regulation, V<sub>OUT</sub> and the "
-             "output error vary per explored point. The other columns (ζ, R<sub>out</sub>, dropout, line regulation, PSRR, current capability, area, GM) are copies of the "
-             "delivered card's values written onto every candidate of the target, so the hub attributes them only to the delivered cards (the old explorer plotted the "
-             f"copies). {DAG} marks quantities the repo's builder derives by formula. UGB of delivered cards is the worst case over the class corners.")
+old_vin, old_cls = jsn(META["vins"][-1]), ICLS[1] if len(ICLS) > 1 else ICLS[0]
 db_blocks = [
     S(mdb(db_lede_pre, title="Design database explorer"), "pre", "lede"),
     S(mdb(db_lede_full, title="Post-layout design database"), "full", "lede"),
-    S({"type": "stats", "items": [stat("explored design points", f"{(DB or {}).get('n_total', 0):,}"),
-                                  stat("nominally feasible (in the database)", f"{(DB or {}).get('n', 0):,}"),
-                                  stat("V_IN/V_OUT/load targets", f"{n_targets}"),
-                                  stat("analog architectures", f"{len((DB or {}).get('archs') or ARCH_ORDER)}"),
-                                  stat("“simulated candidates” (old Designs tile)", f"{n_cand:,}", f"Σ n_points / 2 over the cards; n_points is fixed at 8 by the builder {DAG}")]}, "pre", "dbstats"),
-    S({"type": "stats", "items": [stat("laid-out designs simulated post-layout", f"{n_sim_post:,}"),
-                                  stat("robust post-layout (PVT + MC)", f"{n_rob_post}"),
-                                  stat("analog architectures", f"{len(ARCH_ORDER)}")]}, "full", "dbstats"),
-    note(db_honest, "info"),
+    dict(stage="pre", **note(db_correction, "warn")) if db_correction else None,
+    S({"type": "stats", "title": "Database statistics", "items": [
+        stat("explored design points", f"{(DB or {}).get('n_total', 0):,}"),
+        stat("nominally feasible (in the database)", f"{(DB or {}).get('n', 0):,}"),
+        stat("V_IN/V_OUT/load targets", f"{n_targets}"),
+        stat("analog architectures", f"{len((DB or {}).get('archs') or ARCH_ORDER)}"),
+        stat("“simulated candidates” (old Designs tile)", f"{n_cand:,}", f"Σ n_points / 2 over the cards; n_points is fixed at 8 by the builder {DAG}")]}, "pre", "dbstats"),
+    S({"type": "stats", "title": "Database statistics", "items": [
+        stat("laid-out designs simulated post-layout", f"{n_sim_post:,}"),
+        stat("robust post-layout (PVT + MC)", f"{n_rob_post}"),
+        stat("analog architectures", f"{len(ARCH_ORDER)}")]}, "full", "dbstats"),
     {"type": "explorer", "title": "Design-space explorer", "src": "hub/data/explore.json", "dims": dims,
-     "x": "iq", "y": "lreg", "color": "arch", "filters": ["vin_c", "cls", "pol", "arch", "src", "pin"],
+     "x": "iq", "y": "lreg", "color": "arch", "symbol": "pol", "filters": ["vin_c", "cls", "pol", "arch", "src", "pin"], "cat_axes": True,
      "highlight": "delivered", "highlight_label": "Delivered cards", "design_key": "design", "label_key": "label",
      "hover": ["iq", "ugb", "pm", "zeta", "lreg", "do_max", "linreg", "psrr1k"], "height": 560,
-     "presets": [{"label": "Load regulation vs I_q (old default)", "x": "iq", "y": "lreg"},
-                 {"label": "I_q vs worst-case loop bandwidth", "x": "ugb", "y": "iq"},
-                 {"label": "PM vs UGB", "x": "ugb", "y": "pm"},
-                 {"label": "Distribution per architecture (y = load reg)", "x": "arch_i", "y": "lreg", "logx": False},
-                 {"label": "Distribution per architecture (y = I_q)", "x": "arch_i", "y": "iq", "logx": False},
-                 {"label": "Distribution per architecture (y = UGB)", "x": "arch_i", "y": "ugb", "logx": False},
-                 {"label": "Per load class", "x": "iq", "y": "ugb", "facet": "cls"},
-                 {"label": "Dropout vs I_q", "x": "iq", "y": "do_max"},
-                 {"label": "PSRR 1 kHz vs I_q", "x": "iq", "y": "psrr1k"}],
+     "presets": [{"label": "Old default: load regulation vs I_q · V_IN 3.3 V · 10–100 nA", "x": "iq", "y": "lreg",
+                  "show": {"vin_c": [old_vin], "cls": [old_cls]},
+                  "desc": f"The old explorer opened at V<sub>IN</sub> = {old_vin} V and load class {icls_label(old_cls)}."},
+                 {"label": "Load regulation vs I_q (all)", "x": "iq", "y": "lreg", "show": {}},
+                 {"label": "I_q vs loop bandwidth", "x": "ugb", "y": "iq", "show": {}},
+                 {"label": "PM vs UGB", "x": "ugb", "y": "pm", "show": {}},
+                 {"label": "Distribution per architecture (y = load reg)", "x": "arch", "y": "lreg", "logx": False, "show": {}},
+                 {"label": "Distribution per architecture (y = I_q)", "x": "arch", "y": "iq", "logx": False, "show": {}},
+                 {"label": "Distribution per architecture (y = UGB)", "x": "arch", "y": "ugb", "logx": False, "show": {}},
+                 {"label": "Per load class", "x": "iq", "y": "ugb", "facet": "cls", "show": {}},
+                 {"label": "Dropout vs I_q", "x": "iq", "y": "do_max", "show": {}},
+                 {"label": "PSRR 1 kHz vs I_q", "x": "iq", "y": "psrr1k", "show": {}}],
+     "preset_default": 0,
      "caption": "Pre-PEX stage: explored candidates (dots) + delivered cards (rings, click to open). Full post-PEX stage: the delivered designs simulated on their "
-                "extracted netlists. Old controls: V<sub>IN</sub> / V<sub>OUT</sub> / I<sub>load</sub> filters → chips (V<sub>OUT</sub> is fixed per V<sub>IN</sub>; the global "
-                "V<sub>DD</sub> option also applies); x / y axis selectors → X / Y (all 16 old metrics); “distribution per architecture” box plots → the "
-                "*Distribution per architecture* presets (strip plot over the architecture number 1–12, colours = architectures; pick any Y)."},
+                "extracted netlists (every point is a ringed design). Old controls: V<sub>IN</sub> / V<sub>OUT</sub> / I<sub>load</sub> single-select filters → chips "
+                "(V<sub>OUT</sub> is fixed per V<sub>IN</sub>; the global V<sub>DD</sub> option also applies); x / y axis selectors → X / Y (all 16 old metrics, plus "
+                "Architecture as a categorical axis); the old “distribution per architecture” box plots → the box-plot section below and the *Distribution per "
+                "architecture* strip-plot presets. Symbols mark polarity."},
 ]
-# best value per architecture (old "Best <y> vs V_OUT": V_OUT is fixed per V_IN, so the hub shows the best value per load class, one panel per V_IN)
-best_tabs = []
+
+
+def best_vals(k, st, a, v, cl):
+    vals = [cols[k][i] for i in range(NR) if cols["stage"][i] == st and cols["arch"][i] == a and cols["vdd"][i] == v and cols["cls"][i] == cl
+            and isnum(cols[k][i]) and (st == "full" or (k in PER_POINT and cols["src"][i] == "explored") or (k not in PER_POINT and cols["src"][i] == "delivered"))]
+    return (max(vals) if k in BEST_MAX else min(vals)) if vals else None
+
+
+# box plots per architecture (old "<y> — distribution per architecture (selection)")
+dist_tabs = []
 vins = list(META["vins"])
+VCOL = ["#2563eb", "#d97706", "#16a34a", "#9333ea"]
+for k, lbl, unit, sio, lg, better in DBM:
+    if k == "vout":
+        continue
+    tb = []
+    for st in ("pre", "full"):
+        tr = []
+        for vi, v in enumerate(vins):
+            for a in ARCH_ORDER:
+                ys = [cols[k][i] for i in range(NR) if cols["stage"][i] == st and cols["arch"][i] == a and cols["vdd"][i] == v and isnum(cols[k][i])
+                      and (st == "full" or (k in PER_POINT and cols["src"][i] == "explored") or (k not in PER_POINT and cols["src"][i] == "delivered"))]
+                if ys:
+                    tr.append({"type": "box", "y": ys, "x0": ARCH_SHORT.get(a, a), "name": f"V_IN {jsn(v)} V", "legendgroup": jsn(v), "offsetgroup": jsn(v),
+                               "showlegend": a == ARCH_ORDER[0] or not any(t.get("legendgroup") == jsn(v) for t in tr),
+                               "marker": {"color": VCOL[vi % len(VCOL)]}, "boxpoints": False, "meta": {"vdd": v}})
+        if not tr:
+            continue
+        rel = f"data/dist/{k}_{st}.json"
+        wjson(rel, {"data": r5(tr), "layout": {"boxmode": "group", "hovermode": "closest", "legend": LEG,
+                                               "xaxis": {"type": "category", "categoryorder": "array", "categoryarray": [ARCH_SHORT.get(a, a) for a in ARCH_ORDER], "tickangle": -30},
+                                               "yaxis": {"title": {"text": lbl + (f" ({unit})" if unit else "")}, "type": "log" if lg else "linear", "exponentformat": "SI"}}})
+        cap = ("explored candidates of every load class" if k in PER_POINT else "delivered cards only (the candidates carry copies of the card value)") if st == "pre" \
+            else "delivered designs simulated post-layout"
+        tb.append(S({"type": "chart", "title": f"{lbl} — distribution per architecture", "src": f"hub/{rel}", "height": 460,
+                     "caption": cap + "; one box per supply (the global V<sub>DD</sub> option hides the other). The old plot showed the current V<sub>IN</sub>/class selection; "
+                                      "use the explorer presets with the chips for a single class."}, st, f"dist_{k}"))
+    if tb:
+        dist_tabs.append({"label": lbl, "key": k, "blocks": tb})
+db_blocks.append(sec("Distribution per architecture", [{"type": "tabs", "id": "dist", "style": "select", "label": "Metric", "tabs": dist_tabs, "default": 5}]))
+
+# best value per architecture (old "Best <y> vs V_OUT": V_OUT is fixed per V_IN → best value per load class, one chart per supply)
+best_tabs = []
 for k, lbl, unit, sio, lg, better in DBM:
     if k == "vout":
         continue
     tab_blocks = []
     for st in ("pre", "full"):
-        tr = []
-        for vi, v in enumerate(vins):
+        for v in vins:
+            tr = []
             for ai, a in enumerate(ARCH_ORDER):
-                ys = []
-                for cl in ICLS:
-                    vals = [cols[k][i] for i in range(len(cols[k])) if cols["stage"][i] == st and cols["arch"][i] == a and cols["vdd"][i] == v and cols["cls"][i] == cl
-                            and isnum(cols[k][i]) and (st == "full" or (k in PER_POINT and cols["src"][i] == "explored") or (k not in PER_POINT and cols["src"][i] == "delivered"))]
-                    ys.append((max(vals) if k in BEST_MAX else min(vals)) if vals else None)
+                ys = [best_vals(k, st, a, v, cl) for cl in ICLS]
                 if any(y is not None for y in ys):
-                    tr.append({"type": "scatter", "mode": "lines+markers", "name": ARCH_SHORT.get(a, a), "legendgroup": a, "showlegend": vi == 0,
-                               "x": [icls_short(cl) for cl in ICLS], "y": ys, "xaxis": "x" if vi == 0 else "x2", "yaxis": "y" if vi == 0 else "y2",
-                               "line": {"color": PAL[ai % len(PAL)]}, "marker": {"color": PAL[ai % len(PAL)]}, "meta": {"vdd": v},
+                    tr.append({"type": "scatter", "mode": "lines+markers", "name": ARCH_SHORT.get(a, a), "x": [icls_short(cl) for cl in ICLS], "y": ys,
                                "hovertemplate": f"{ARCH_SHORT.get(a, a)} · V_IN {jsn(v)} V<br>%{{x}}: %{{y}}<extra></extra>"})
-        if not tr:
-            continue
-        ytitle = f"best {lbl}" + (f" ({unit})" if unit else "")
-        lay = {"xaxis": {"domain": [0, 0.47], "title": {"text": f"load class (V_IN = {jsn(vins[0])} V → V_OUT = {'/'.join(jsn(o) for o in META['vouts'][jsn(vins[0])])} V)"}, "type": "category"},
-               "xaxis2": {"domain": [0.53, 1], "anchor": "y2", "title": {"text": f"load class (V_IN = {jsn(vins[-1])} V → V_OUT = {'/'.join(jsn(o) for o in META['vouts'][jsn(vins[-1])])} V)"}, "type": "category"},
-               "yaxis": {"title": {"text": ytitle}, "type": "log" if lg else "linear", "exponentformat": "SI"},
-               "yaxis2": {"anchor": "x2", "type": "log" if lg else "linear", "exponentformat": "SI", "matches": "y"},
-               "hovermode": "closest", "legend": {"orientation": "h", "y": -0.32}}
-        cap = ("best over all feasible explored points of each architecture" + ("" if k in PER_POINT else " — for this quantity only the delivered card carries a value, so it is the card's value")) if st == "pre" \
-            else "the delivered design of each architecture, simulated post-layout"
-        tab_blocks.append(S(chart(f"Best {lbl} per architecture and load class", tr, lay, caption=cap + (" (max)" if k in BEST_MAX else " (min)"), height=480), st, f"best_{k}"))
+            if not tr:
+                continue
+            cap = ("best over the feasible explored points" + ("" if k in PER_POINT else " — only the delivered card carries this quantity, so it is the card's value")) if st == "pre" \
+                else "the delivered design, simulated post-layout"
+            tab_blocks.append(S(chart(f"V<sub>IN</sub> = {jsn(v)} V → V<sub>OUT</sub> = {'/'.join(jsn(o) for o in META['vouts'][jsn(v)])} V", tr,
+                                      {"xaxis": {"title": {"text": "load class"}, "type": "category"},
+                                       "yaxis": {"title": {"text": f"best {lbl}" + (f" ({unit})" if unit else "")}, "type": "log" if lg else "linear", "exponentformat": "SI"},
+                                       "hovermode": "closest", "legend": LEG},
+                                      caption=cap + (" (max)" if k in BEST_MAX else " (min)"), height=440, vdd=v), st, f"best_{k}_{jsn(v)}"))
     if tab_blocks:
-        best_tabs.append({"label": lbl, "blocks": tab_blocks})
-db_blocks.append(sec("Best value per architecture", [{"type": "tabs", "style": "select", "label": "Metric", "tabs": best_tabs}],
+        best_tabs.append({"label": lbl, "key": k, "blocks": [sec("", tab_blocks, cols=2)]})
+db_blocks.append(sec("Best value per architecture", [{"type": "tabs", "id": "metric", "style": "select", "label": "Metric", "tabs": best_tabs}],
                      intro="Old chart “Best <y> vs V<sub>OUT</sub>” (best over all feasible points of each architecture at the selected V<sub>IN</sub> and class). "
-                           "Each V<sub>IN</sub> has a single V<sub>OUT</sub>, so the hub plots the best value against the load class for both supplies at once "
+                           "Each V<sub>IN</sub> has a single V<sub>OUT</sub>, so the hub plots the best value against the load class, one chart per supply "
                            "(every old selection is one point here); pick the metric below."))
 # database table
-tcols = [{"key": "arch", "label": "Architecture", "type": "text"}, {"key": "vv", "label": "V_IN→V_OUT", "type": "text"},
-         {"key": "load", "label": "Load", "type": "text"}, {"key": "iq", "label": "I_q", "unit": "A", "si": True, "better": "low"},
+tcols = [{"key": "arch", "label": "Architecture", "type": "text"}, {"key": "pol", "label": "Polarity", "type": "text"},
+         {"key": "vv", "label": "V_IN→V_OUT", "type": "text"}, {"key": "load", "label": "Load", "type": "text"},
+         {"key": "pt", "label": "Point", "type": "text"},
+         {"key": "iq", "label": "I_q", "unit": "A", "si": True, "better": "low"},
          {"key": "ugb", "label": "UGB", "unit": "Hz", "si": True, "better": "high"}, {"key": "pm", "label": "PM", "unit": "°", "digits": 3, "better": "high"},
          {"key": "zeta", "label": "ζ", "digits": 2}, {"key": "lreg", "label": "Load reg", "unit": "V", "si": True, "better": "low"},
          {"key": "lreg_r", "label": "R_out", "unit": "Ω", "si": True, "better": "low"}, {"key": "do_max", "label": "Dropout", "unit": "V", "si": True, "better": "low"},
@@ -1219,18 +1443,20 @@ tcols = [{"key": "arch", "label": "Architecture", "type": "text"}, {"key": "vv",
          {"key": "area", "label": "Area", "unit": "µm²", "digits": 4, "better": "low"}, {"key": "target", "label": "Target card", "type": "design"},
          {"key": "vdd", "label": "V_DD", "unit": "V"}, {"key": "stage", "label": "Stage", "type": "text"}]
 trows = []
-for i in range(len(cols["stage"])):
-    if cols["src"][i] == "delivered" and cols["stage"][i] == "pre":
-        continue     # the old table lists database points (schematic) or the post-layout designs only
-    trows.append([ARCH_SHORT.get(cols["arch"][i], cols["arch"][i]), f"{cols['vin_c'][i]}→{jsn(cols['vout'][i])} V", icls_label(cols["cls"][i]),
+for i in range(NR):
+    trows.append([ARCH_SHORT.get(cols["arch"][i], cols["arch"][i]), POL_LABEL.get(cols["pol"][i], cols["pol"][i]),
+                  f"{cols['vin_c'][i]}→{jsn(cols['vout'][i])} V", icls_label(cols["cls"][i]),
+                  "delivered card" if cols["src"][i] == "delivered" else "explored candidate",
                   cols["iq"][i], cols["ugb"][i], cols["pm"][i], cols["zeta"][i], cols["lreg"][i], cols["lreg_r"][i], cols["do_max"][i], cols["linreg"][i],
                   cols["psrr1k"][i], cols["area"][i], cols["target"][i], cols["vdd"][i], cols["stage"][i]])
 wjson("data/db_table.json", {"columns": tcols, "rows": r5(trows)})
 db_blocks.append({"type": "table", "title": "Database table", "src": "hub/data/db_table.json", "stage_column": "stage", "sort": {"key": "iq", "dir": "asc"},
-                  "page_size": 300, "caption": "Pre-PEX stage: every nominally feasible explored point (columns copied from the delivered card are left empty, see the note above); "
-                                               "Full post-PEX stage: the delivered designs on their extracted netlists. Follows the global V<sub>DD</sub> option; "
-                                               "click a header to sort; CSV export of the filtered rows."})
-wjson("pages/db.json", {"blocks": db_blocks})
+                  "page_size": 300,
+                  "caption": "Pre-PEX stage: every nominally feasible explored point plus the delivered cards (*Point* column); candidate columns that the repo copies from "
+                             "the delivered card are left empty (see the correction note). Full post-PEX stage: the delivered designs on their extracted netlists. "
+                             "Follows the global V<sub>DD</sub> option. The table does not follow the explorer's chips (renderer limitation): type in the filter box to "
+                             "select like the old table, e.g. `3.3→1.8 10–100 nA` or `Pos Miller delivered`. Click a header to sort; CSV export of the filtered rows."})
+wjson("pages/db.json", {"blocks": [b for b in db_blocks if b]})
 
 # --- Methodology (verbatim from index.html)
 FLOW = [
@@ -1301,6 +1527,10 @@ iq_vals = [c["m"].get("iq") for c in CARDS if isnum(c["m"].get("iq")) and c["m"]
 lede_check = (f"Hub check against the published data: {n_cards} cards, {len(ICLS)} load classes, {len(META['vins'])} supplies, {len(ARCH_ORDER)} topologies; "
               f"I<sub>q</sub> spans {si(min(iq_vals), 'A')} – {si(max(iq_vals), 'A')}." if iq_vals else "")
 by_cls = Counter((c["vin"], c["vout"], c["iclass"]) for c in CARDS)
+cl_by_cls = {}
+for x in designs:
+    dd = json.loads((DOCS / "designs" / x["id"] / "data.json").read_text())
+    cl_by_cls.setdefault(card_by_key[x["id"]]["iclass"], (((dd.get("char") or {}).get("stab") or [{}])[0]).get("cl"))
 cls_rows = []
 for v in META["vins"]:
     for o in META["vouts"][jsn(v)]:
@@ -1309,9 +1539,11 @@ for v in META["vins"]:
             if n:
                 cls_rows.append([f"V<sub>DD</sub> = {jsn(v)} V → V<sub>reg</sub> = {jsn(o)} V", f"I<sub>load</sub> {icls_label(k)}", n,
                                  sum(1 for c in CARDS if c["vin"] == v and c["vout"] == o and c["iclass"] == k and c["tier"] == "pos"),
-                                 sum(1 for c in CARDS if c["vin"] == v and c["vout"] == o and c["iclass"] == k and c["tier"] == "neg"), v])
+                                 sum(1 for c in CARDS if c["vin"] == v and c["vout"] == o and c["iclass"] == k and c["tier"] == "neg"), cl_by_cls.get(k), v])
 skip_rows = [[c["key"], (d or {}).get("diag", {}).get("explanation", "") if d else "no data.json", "; ".join(f"{a}: {b}" for a, b in ((d or {}).get("diag") or {}).get("reasons", []))]
              for c, d in skipped]
+n_su_bad = sum(1 for x in designs for st, r in x["results"].items() if "start-up time omitted" in (r.get("note") or ""))
+n_stage_rows = sum(len(x["results"]) for x in designs)
 flag_mismatch, bad_pm = [], []
 for x in designs:
     for st, r in x["results"].items():
@@ -1321,11 +1553,11 @@ for x in designs:
             bad_pm.append(f"{x['id']} {st}")
 about_blocks = [
     sec("Deliverable LDO design cards", [mdb(lede), note(lede_check, "muted") if lede_check else None,
-                                         S({"type": "stats", "items": [stat("design targets", f"{n_cards}"), stat("with a feasible design", f"{n_sol}"),
+                                         S({"type": "stats", "title": "Library statistics", "items": [stat("design targets", f"{n_cards}"), stat("with a feasible design", f"{n_sol}"),
                                                                        stat("robust over PVT + Monte-Carlo", f"{n_rob}"), stat("fully characterised", f"{n_sim}"),
                                                                        stat("layouts DRC + LVS clean", f"{n_lay}"),
                                                                        stat("simulated candidates", f"{n_cand:,}", f"Σ n_points / 2; n_points fixed at 8 per card by the builder {DAG}")]}, "pre", "herostats"),
-                                         S({"type": "stats", "items": [stat("design targets", f"{n_cards}"), stat("with a feasible design", f"{n_sol}"),
+                                         S({"type": "stats", "title": "Library statistics", "items": [stat("design targets", f"{n_cards}"), stat("with a feasible design", f"{n_sol}"),
                                                                        stat("robust post-layout (PVT + Monte-Carlo)", f"{n_rob_post}"), stat("characterised post-layout", f"{n_sim_post}"),
                                                                        stat("layouts DRC + LVS clean", f"{n_lay}"), stat("extracted parasitic capacitors", f"{tot_parc:,}")]}, "full", "herostats")]),
     sec("Coverage matrix legend (old site)", [mdb(
@@ -1333,15 +1565,16 @@ about_blocks = [
         "**none** no feasible design. The value is the quiescent current. Click a cell to open the design."),
         note("On the hub the matrix (Designs view) colours cells green when the design meets the generator's robustness flag at the selected stage and amber when it "
              "does not; the old **Polarity** selector is the *Polarity* filter chip row (or the *Architecture* chips, whose ids carry the pos_/neg_ prefix); the old "
-             "**Cell Metric** modes are the *Cell metric* presets: Overview (UGB · PM) / Overview (I<sub>q</sub> · area) / Bandwidth / PSRR / Layout area / "
-             "I<sub>q</sub> & dropout / Robustness. The old *Noise & PSRR* mode shows only PSRR because the published noise is a placeholder "
-             f"({DDAG}); a hub cell holds two values, so the old 5-value Overview line is split into two presets.", "info")]),
+             "**Cell Metric** modes are the *Cell metric* presets: Overview (UGB · PM · I<sub>q</sub> · area) / Bandwidth (UGB · PM · A0) / PSRR / Layout area "
+             "(area · W · H) / I<sub>q</sub> & dropout, plus Robustness. Noise is left out of the Overview and *Noise & PSRR* presets because the published noise is a "
+             f"placeholder ({DDAG}). The old card grid's voltage / load-class grouping is the Cards view grouping (Vreg · load current).", "info")]),
     sec("Design cards per voltage and load class", [table("", [
         {"key": "v", "label": "Voltage class", "type": "text", "md": True}, {"key": "l", "label": "Load class", "type": "text", "md": True},
         {"key": "n", "label": "design cards", "digits": 3}, {"key": "p", "label": "positive (VSS-ref)", "digits": 3}, {"key": "q", "label": "negative (VDD-ref)", "digits": 3},
-        {"key": "vdd", "label": "V_DD", "unit": "V"}], cls_rows, csv=False, search=False,
-        caption=f"External testbench C<sub>L</sub> ({si(META['cl_range'][0], 'F')}–{si(META['cl_range'][1], 'F')}). The old Designs view grouped its cards by these classes; "
-                "on the hub use the matrix or the axis filters.")]),
+        {"key": "cl", "label": "C_L simulated", "unit": "F", "si": True}, {"key": "vdd", "label": "V_DD", "unit": "V"}], cls_rows, csv=False, search=False,
+        caption=f"The old header said “external testbench C<sub>L</sub> ({si(META['cl_range'][0], 'F')}–{si(META['cl_range'][1], 'F')})”, the global range of the "
+                "generator's meta data; the published benches simulate one C<sub>L</sub> per class (column *C_L simulated*). The old Designs view grouped its cards by "
+                "these classes; on the hub the Cards view groups them the same way.")]),
     sec("Data notes (hub port)", [mdb("\n".join([
         f"- **Placeholder {DDAG}:** output noise. Every card publishes 35 µVrms (10 Hz–100 kHz) and 180 nV/√Hz @ 1 kHz, the repo bench's defaults when the noise "
         "analysis returns no spectrum (no card has a spectrum). Not exported as a metric; shown labelled on the design pages.",
@@ -1353,7 +1586,15 @@ about_blocks = [
         "- **Builder constants:** PVT records carry GM = 12 dB, ζ = 0.68, ring_ok = true for every corner; the schematic view's nominal all_sat = true / ring_ok = true; "
         "candidate counts 8 / 8 / 2; floorplan tiers = 2, the interdigitated / mirrored pair texts and routed terminals = 4 × devices. The hub omits them from results "
         "and labels them where the old page showed them.",
-        "- **Dropout floor:** the dropout bench reports max(15 mV, measured), so many cards show exactly 15 mV.",
+        "- **Bench bounds:** the dropout bench reports max(15 mV, measured), so 15 mV means ≤ 15 mV; GM is capped at 35 dB when the phase never reaches −180° "
+        "(≥ 35 dB); ζ = 1.0 whenever the small-step overshoot is ≤ 1 %; a settling time equal to the observation window means “did not settle” and is omitted from "
+        "results. The metric tool-tips say so and the design pages print the bounds (≤ / ≥ / >).",
+        "- **PSRR sign:** the repo's builder publishes abs(PSRR). The hub restores the sign from each design's PSRR curve (negative = supply ripple amplified) for "
+        "results, tiles, the explorer and the database page; the old site showed the unsigned values.",
+        f"- **Start-up time:** the 98 %-of-final time is omitted from results when the start-up trace does not end within 3 % of V<sub>reg</sub> "
+        f"({n_su_bad} of {n_stage_rows} design/stage traces); the design pages mark those values {DDAG}.",
+        "- **Input pair / parameters:** the card field `pin` (always NMOS) and the knob `inv` (always subthreshold) are builder defaults; the hub derives the input pair "
+        "from the device list and the inversion from the reused cell, lists each capacitor and resistor separately, and takes the DLDO pass-cell sizes from the devices.",
         f"- **Robustness:** `robust` is the repo's flag (PVT sweep all-stable and worst Monte-Carlo PM ≥ {PM_ROBUST_MC:g}°). The PVT count on the hub is the number of "
         f"corners with the repo's per-point pass flag (PM ≥ {META.get('pm_target')}°), the MC count the samples with PM ≥ {PM_ROBUST_MC:g}°."
         + (f" {len(flag_mismatch)} design/stage combination(s) are flagged robust with fewer passing corners ({', '.join(flag_mismatch[:6])}{' …' if len(flag_mismatch) > 6 else ''}); "
@@ -1365,7 +1606,8 @@ about_blocks = [
         "values when a post-layout field is missing.",
         "- **Load transient C<sub>L</sub>:** the old Key-results tile and caption printed the global nominal 100 pF; the hub prints the class's testbench C<sub>L</sub> used in the "
         "simulation (from the transient record).",
-        "- **Reused-cell links** point to the hub's op-amp / sense-amp tabs (filtered by the cell id) instead of the retired per-repo sites.",
+        f"- **Reused cells:** links and the design-level `uses` point to the exact hub designs: opa-gen cards as `{OPA_VARIANT}-<cell>` (the 2 pF-load variant, whose "
+        "sizes, card figures and schematic match the LDO's sub-cell) and sa-gen comparators by id.",
     ]))]),
 ]
 if skip_rows:
@@ -1393,16 +1635,13 @@ comp = {
     "title": "GF180 Low-Power LDO Generator",
     "summary": (f"{len(designs)} low-quiescent-current LDO design cards: {len(arch_base)} topologies (Miller OTA, source-follower buffered, adaptive-bias, "
                 "Ahuja cascode-compensated, folded FVF, hybrid PI digital-assisted) in positive VSS-referenced and negative VDD-referenced flavours, "
-                f"{' and '.join(f'{jsn(v)} V → {jsn(META['vouts'][jsn(v)][0])} V' for v in META['vins'])}, across {len(ICLS)} load classes from "
+                f"{' and '.join(jsn(v) + ' V → ' + jsn(META['vouts'][jsn(v)][0]) + ' V' for v in META['vins'])}, across {len(ICLS)} load classes from "
                 f"{icls_short(ICLS[0])} to {icls_short(ICLS[-1])}. Error amps / comparators are reused unchanged from the op-amp and sense-amp libraries; "
                 f"17-point PVT, {META.get('n_mc', 50)}-run Monte Carlo, gLayout DRC/LVS and whole-cell Magic PEX."),
     "technology": TECH,
     "generated": generated,
-    "stats": [{"label": "with a feasible design", "value": f"{n_sol}"},
-              {"label": "characterised post-layout", "value": f"{n_sim_post}"},
-              {"label": "explored design points", "value": f"{(DB or {}).get('n_total', 0):,}"},
-              {"label": "extracted parasitic capacitors", "value": f"{tot_parc:,}"}],
-    "metrics": [{k2: v2 for k2, v2 in dict(key=k, label=l, unit=u or None, si=s_ or None, better=b, digits=dg if dg != 3 else None).items() if v2 is not None}
+    "stats": [{"label": "explored design points (DSE)", "value": f"{(DB or {}).get('n_total', 0):,}"}],   # stage/VDD-neutral only
+    "metrics": [{k2: v2 for k2, v2 in dict(key=k, label=l, unit=u or None, si=s_ or None, better=b, digits=dg if dg != 3 else None, desc=METRIC_DESC.get(k)).items() if v2 is not None}
                 for k, l, u, s_, b, dg, _ in METRICS],
     "axes": {
         "topology": {"label": "Architecture", "values": [{"id": a, "label": ARCH_SHORT.get(a, a)} for a in ARCH_ORDER]},
@@ -1411,14 +1650,16 @@ comp = {
         "class": {"label": "Load current", "values": [{"id": k, "label": icls_short(k)} for k in ICLS]},
     },
     "matrix": {"rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "pm"],
-               "presets": [{"label": "Overview (UGB · PM)", "metrics": ["ugb", "pm"]},
-                           {"label": "Overview (Iq · area)", "metrics": ["iq", "area"]},
-                           {"label": "Bandwidth (UGB & DC loop gain)", "metrics": ["ugb", "a0"]},
-                           {"label": "PSRR 1 kHz & 100 kHz (noise: placeholder, not exported)", "metrics": ["psrr_1k", "psrr_100k"]},
-                           {"label": "Layout area", "metrics": ["area"]},
+               "presets": [{"label": "Overview (UGB · PM · Iq · area; noise is a placeholder)", "metrics": ["ugb", "pm", "iq", "area"]},
+                           {"label": "Bandwidth (UGB & PM · A0)", "metrics": ["ugb", "pm", "a0"]},
+                           {"label": "Noise & PSRR → PSRR 1 kHz / 100 kHz (noise not exported)", "metrics": ["psrr_1k", "psrr_100k"]},
+                           {"label": "Layout area (µm², W × H)", "metrics": ["area", "width", "height"]},
                            {"label": "Quiescent Iq & dropout", "metrics": ["iq", "dropout"]},
                            {"label": "Robustness (worst PVT / MC PM)", "metrics": ["pm_pvt", "pm_mc"]}]},
-    "card_metrics": ["ugb", "area", "iq", "a0", "pm", "pm_pvt", "pm_mc", "psrr_1k", "dropout", "load_reg", "droop"],
+    "card_metrics": ["ugb", "area", "width", "height", "iq", "a0", "pm", "pm_pvt", "pm_mc", "psrr_1k", "dropout", "load_reg", "droop"],
+    "table_metrics": ["iq", "ugb", "pm", "pm_pvt", "pm_mc", "a0", "dropout", "line_reg", "load_reg", "psrr_1k", "droop", "fom", "area"],
+    "cards_group_by": ["vout", "class"],
+    "builds_on": [{"id": "opa", "role": "error amplifier (analog LDOs)"}, {"id": "sa", "role": "clocked comparator (hybrid PI DLDOs)"}],
     "pages": [{"id": "db", "title": "Database explorer", "src": "hub/pages/db.json"},
               {"id": "method", "title": "Methodology", "src": "hub/pages/method.json"},
               {"id": "about", "title": "About & data notes", "src": "hub/pages/about.json"}],
