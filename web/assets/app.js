@@ -623,7 +623,7 @@ function thumbOf(c, d) {
 }
 function badgesOf(d, r) {
   const p = d.physical || {};
-  const b = (ok, name) => (ok === undefined || ok === null ? '' : `<span class="badge ${ok ? 'good' : 'bad'}">${name} ${ok ? '✓' : '✗'}</span>`);
+  const b = (ok, name) => (ok === undefined || ok === null ? '' : ok === 'partial' ? `<span class="badge warn" title="only part of the layout extracted">${name} partial</span>` : `<span class="badge ${ok ? 'good' : 'bad'}">${name} ${ok ? '✓' : '✗'}</span>`);
   const st = d.na ? `<span class="badge" title="${esc(d.na)}">not applicable</span>` : r ? `<span class="badge ${r.fallback ? 'warn' : 'acc'}">${STAGE_LABEL[r.st]}</span>` : `<span class="badge">no ${STAGE_LABEL[S.stage]}</span>`;
   const vi = r ? vinfo(d, r) : {};
   const tg = (st) => (st && st !== r?.st ? ` (${STAGE_SHORT[st]})` : '');
@@ -742,7 +742,7 @@ async function renderDetail(main, c) {
     (anyOf('robust') ? extraRow('Robust (generator criterion)', (x) => (x.robust === true ? '✓' : x.robust === false ? '✗' : '—')) : '');
   const notes = STAGES.filter((s) => d.results?.[s]?.note).map((s) => `<div><b>${STAGE_LABEL[s]}:</b> ${Blocks.inline(d.results[s].note)}</div>`).join('');
   const p = d.physical || {};
-  const phys = [['DRC', p.drc], ['LVS', p.lvs], ['PEX', p.pex]].map(([n, v]) => `<span class="badge ${v === true ? 'good' : v === false ? 'bad' : ''}">${n} ${v === true ? '✓' : v === false ? '✗' : 'n/a'}</span>`).join('');
+  const phys = [['DRC', p.drc], ['LVS', p.lvs], ['PEX', p.pex]].map(([n, v]) => `<span class="badge ${v === true ? 'good' : v === false ? 'bad' : v === 'partial' ? 'warn' : ''}">${n} ${v === true ? '✓' : v === false ? '✗' : v === 'partial' ? 'partial' : 'n/a'}</span>`).join('');
   const dims = [p.area_um2 != null ? `area ${num(p.area_um2, 4)} µm²` : '', p.width_um != null ? `${num(p.width_um, 4)} × ${num(p.height_um, 4)} µm` : ''].filter(Boolean).join(' · ');
   const params = Object.entries(d.params || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
   const dls = [...Object.entries(FILE_LABEL).filter(([k]) => f[k]).map(([k, l]) => ({ label: l, file: f[k] })), ...(d.downloads || [])];

@@ -340,8 +340,9 @@ def validate(ex: Export, rep: Report, exclude=()) -> Refs:
                     rep.err(f"{tag}: results.{st}.{cnt} must be {{pass, total}}")
         phys = d.get("physical") or {}
         for k in ("drc", "lvs", "pex"):
-            if k in phys and phys[k] not in (True, False, None):
-                rep.err(f"{tag}: physical.{k} must be true/false/null")
+            ok = (True, False, None, "partial") if k == "pex" else (True, False, None)
+            if k in phys and phys[k] not in ok:
+                rep.err(f"{tag}: physical.{k} must be true/false/null{' or \"partial\"' if k == 'pex' else ''}")
         files = d.get("files") or {}
         if "layout" in files:
             rep.err(f"{tag}: files.layout is not supported in aicdb-hub/2 — give files.gds (thumbnail is rendered)")
