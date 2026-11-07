@@ -57,6 +57,10 @@ jobs:
             if [ -z "$sha" ]; then echo "::warning title=Source unreachable::${repo}@${branch} (check HUB_SOURCES_TOKEN has access)"; sha=missing; fi
             echo "${id} ${repo} ${branch} ${sha}" | tee -a sources.lock
           done
+          if ! grep -qv ' missing$' sources.lock; then
+            echo "::error title=No source reachable::HUB_SOURCES_TOKEN cannot read any repo in sources.json; refusing to deploy an empty site"
+            exit 1
+          fi
           fp=$( (git rev-parse HEAD; cat sources.lock) | sha256sum | cut -c1-16)
           echo "fingerprint=${fp}" >> "$GITHUB_OUTPUT"
           live=$(curl -fsS "https://aicdb.github.io/hub-gemini4/data/build.json" 2>/dev/null | jq -r '.fingerprint // ""' || true)
