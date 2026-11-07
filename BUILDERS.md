@@ -98,7 +98,8 @@ docs/
   "axes": {                                     // categorical dimensions, values in display order
     "topology": { "label": "Architecture", "values": [ { "id": "nmos_5t", "label": "5-T NMOS" } ] }
   },
-  "matrix": { "rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "a0"] },
+  "matrix": { "rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "a0"],   // cell = metrics[0] big, metrics[1] small
+              "presets": [ { "label": "Noise & PSRR", "metrics": ["noise", "psrr"] } ] },   // optional; users can also pick any metric
   "card_metrics": ["a0", "ugb", "power", "area"],
   "families": [ … ],                            // optional sub-tabs (§4.3)
   "pages": [ … ],                               // extra pages next to "Designs" (§4.2)

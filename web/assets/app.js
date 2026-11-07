@@ -5,7 +5,7 @@ const STAGES = ['pre', 'partial', 'full'];
 const STAGE_LABEL = { pre: 'Pre-PEX', partial: 'Partial post-PEX', full: 'Full post-PEX' };
 const STAGE_SHORT = { pre: 'pre', partial: 'part', full: 'full' };
 const GLOBAL_KEYS = ['tech', 'stage', 'fb', 'vdd', 'ver', 'q'];
-const DEFAULTS = { tech: '', stage: 'full', fb: '1', vdd: '', ver: '', q: '', view: 'matrix', fam: '', sort: '', fig: '', page: '' };
+const DEFAULTS = { tech: '', stage: 'full', fb: '1', vdd: '', ver: '', q: '', view: 'matrix', fam: '', sort: '', fig: '', page: '', mm: '' };
 const PAGE = 60;
 
 let CAT = null;                 // data/catalog.json
@@ -56,7 +56,7 @@ function parseHash() {
 }
 function hashFor(st) {
   const qp = new URLSearchParams();
-  for (const k of [...GLOBAL_KEYS, 'view', 'fam', 'sort', 'fig', 'page']) if (st[k] !== undefined && st[k] !== DEFAULTS[k]) qp.set(k, st[k]);
+  for (const k of [...GLOBAL_KEYS, 'view', 'fam', 'sort', 'fig', 'page', 'mm']) if (st[k] !== undefined && st[k] !== DEFAULTS[k]) qp.set(k, st[k]);
   for (const [k, v] of Object.entries(st.f || {})) if (v) qp.set(`f.${k}`, v);
   const path = [st.tab, st.design].filter(Boolean).map(encodeURIComponent).join('/');
   const q = qp.toString();
@@ -70,7 +70,7 @@ function go(patch, { keepLocal = true } = {}) {
 }
 const tabHref = (tab, design = '', page = '') => {
   const st = { ...S, tab, design, page };
-  if (tab !== S.tab) { st.fam = ''; st.sort = ''; st.f = {}; }
+  if (tab !== S.tab) { st.fam = ''; st.sort = ''; st.f = {}; st.mm = ''; }
   st.fig = '';
   return hashFor(st);
 };
@@ -283,7 +283,11 @@ function viewCfg(c) {
   const f = c._fam[S.fam] || {};
   const card = f.card_metrics || c.card_metrics;
   const mx = f.matrix || c.matrix || { rows: Object.keys(c.axes).slice(0, 1), cols: [], metrics: card.slice(0, 2) };
-  return { card, mx: { rows: mx.rows || [], cols: mx.cols || [], metrics: mx.metrics?.length ? mx.metrics : card.slice(0, 2) } };
+  let metrics = mx.metrics?.length ? mx.metrics : card.slice(0, 2);
+  const presets = mx.presets || [];
+  if (S.mm.startsWith('p:') && presets[+S.mm.slice(2)]) metrics = presets[+S.mm.slice(2)].metrics;
+  else if (S.mm.startsWith('m:') && c._metric[S.mm.slice(2)]) metrics = [S.mm.slice(2), ...metrics.filter((k) => k !== S.mm.slice(2))].slice(0, 2);
+  return { card, presets, mx: { rows: mx.rows || [], cols: mx.cols || [], metrics } };
 }
 function axisLabel(c, ak, v) { return c._axisLabel[ak]?.[v]?.label ?? v ?? '—'; }
 function axisIdx(c, ak, v) { return c._axisLabel[ak]?.[v]?.i ?? 1e9; }
@@ -352,7 +356,7 @@ async function renderComponent(main) {
       <div class="toolbar">
         <div class="seg" id="viewseg">${[['matrix', 'Matrix'], ['cards', 'Cards'], ['table', 'Table']].map(([v, l]) => `<button data-v="${v}" class="${S.view === v ? 'on' : ''}">${l}</button>`).join('')}</div>
         <span class="subtle">${withStage.length} of ${list.length} have ${S.fb === '1' ? `${STAGE_LABEL[S.stage]} or earlier` : STAGE_LABEL[S.stage]} results</span>
-        ${S.view !== 'matrix' ? `<label class="subtle">Sort <select id="sortsel">${sortOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === S.sort ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : '<span></span>'}
+        ${S.view !== 'matrix' ? `<label class="subtle">Sort <select id="sortsel">${sortOpts.map(([v, l]) => `<option value="${esc(v)}" ${v === S.sort ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>` : `<label class="subtle">Cell metric <select id="mmsel"><option value="">Default</option>${viewCfg(c).presets.map((p, i) => `<option value="p:${i}" ${S.mm === `p:${i}` ? 'selected' : ''}>${esc(p.label)}</option>`).join('')}${c.metrics.filter((m) => famDesigns.some((d) => STAGES.some((st) => d.results?.[st]?.metrics?.[m.key] != null))).map((m) => `<option value="m:${esc(m.key)}" ${S.mm === `m:${m.key}` ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label>`}
       </div>
       <div id="view"></div>
     </div></div>`;
@@ -366,10 +370,11 @@ async function renderComponent(main) {
     return;
   }
 
-  main.querySelectorAll('[data-fam]').forEach((b) => b.onclick = () => go({ fam: b.dataset.fam, f: {}, sort: '' }));
+  main.querySelectorAll('[data-fam]').forEach((b) => b.onclick = () => go({ fam: b.dataset.fam, f: {}, sort: '', mm: '' }));
   main.querySelectorAll('[data-ax]').forEach((b) => b.onclick = () => go({ f: { ...S.f, [b.dataset.ax]: b.dataset.v } }));
   $('#viewseg').onclick = (e) => { const b = e.target.closest('button'); if (b) { limit = PAGE; go({ view: b.dataset.v }); } };
   const ss = $('#sortsel'); if (ss) ss.onchange = () => go({ sort: ss.value });
+  const ms = $('#mmsel'); if (ms) ms.onchange = () => go({ mm: ms.value });
 
   const view = $('#view');
   if (!list.length) { view.innerHTML = `<div class="empty-state">No designs match the current options.</div>`; return; }
