@@ -232,6 +232,6 @@ How to slim down, by impact:
 After your first successful hub publish:
 ```bash
 git rm .github/workflows/pages.yml && git commit -m "Publish via aicdb hub" && git push
-gh api -X DELETE repos/AL-255/<repo>/pages      # disables the old site
+gh api -X DELETE repos/aicdb/<repo>/pages      # disables the old site
 ```
 Keep `docs/` building as before: it is the hub's input.

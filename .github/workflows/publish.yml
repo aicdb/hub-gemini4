@@ -53,8 +53,8 @@ jobs:
           : > sources.lock
           for row in $(jq -r '.components[] | "\(.id)|\(.repo)|\(.branch // "main")"' sources.json); do
             IFS='|' read -r id repo branch <<< "$row"
-            sha=$(git ls-remote "https://x-access-token:${TOKEN}@github.com/${repo}.git" "refs/heads/${branch}" | cut -f1)
-            if [ -z "$sha" ]; then echo "::warning title=Source unreachable::${repo}@${branch}"; sha=missing; fi
+            sha=$(git ls-remote "https://x-access-token:${TOKEN}@github.com/${repo}.git" "refs/heads/${branch}" 2>/dev/null | cut -f1 || true)
+            if [ -z "$sha" ]; then echo "::warning title=Source unreachable::${repo}@${branch} (check HUB_SOURCES_TOKEN has access)"; sha=missing; fi
             echo "${id} ${repo} ${branch} ${sha}" | tee -a sources.lock
           done
           fp=$( (git rev-parse HEAD; cat sources.lock) | sha256sum | cut -c1-16)

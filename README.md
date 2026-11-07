@@ -41,7 +41,7 @@ Read **[BUILDERS.md](BUILDERS.md)**. In short: export `docs/hub/component.json`,
 ## Maintainer setup
 
 1. **Secret `HUB_SOURCES_TOKEN`:** a fine-grained PAT with *Contents: read-only* on the
-   `AL-255/*-gen-gemini4` repos (they are private). Set it with
+   `aicdb/*-gen-gemini4` repos (they are private). Set it with
    `gh secret set HUB_SOURCES_TOKEN -R aicdb/hub-gemini4`.
 2. Settings → Pages → Source: **GitHub Actions** (already set).
 3. **Adding a generator:** append it to `sources.json`. Add a technology label there too if

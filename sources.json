@@ -15,14 +15,14 @@
     "**/.DS_Store"
   ],
   "components": [
-    { "id": "switch", "repo": "AL-255/switch-gen-gemini4", "branch": "main", "dir": "docs" },
-    { "id": "sa",     "repo": "AL-255/sa-gen-gemini4",     "branch": "main", "dir": "docs" },
-    { "id": "ls",     "repo": "AL-255/ls-gen-gemini4",     "branch": "main", "dir": "docs" },
-    { "id": "opa",    "repo": "AL-255/opa-gen-gemini4",    "branch": "main", "dir": "docs" },
-    { "id": "aux",    "repo": "AL-255/aux-gen-gemini4",    "branch": "main", "dir": "docs" },
-    { "id": "ldo",    "repo": "AL-255/ldo-gen-gemini4",    "branch": "main", "dir": "docs" },
-    { "id": "ecg",    "repo": "AL-255/ecg-gen-gemini4",    "branch": "main", "dir": "docs" },
-    { "id": "sar",    "repo": "AL-255/sar-gen-gemini4",    "branch": "main", "dir": "docs" },
-    { "id": "sdm",    "repo": "AL-255/sdm-gen-gemini4",    "branch": "main", "dir": "docs" }
+    { "id": "switch", "repo": "aicdb/switch-gen-gemini4", "branch": "main", "dir": "docs" },
+    { "id": "sa",     "repo": "aicdb/sa-gen-gemini4",     "branch": "main", "dir": "docs" },
+    { "id": "ls",     "repo": "aicdb/ls-gen-gemini4",     "branch": "main", "dir": "docs" },
+    { "id": "opa",    "repo": "aicdb/opa-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "aux",    "repo": "aicdb/aux-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "ldo",    "repo": "aicdb/ldo-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "ecg",    "repo": "aicdb/ecg-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "sar",    "repo": "aicdb/sar-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "sdm",    "repo": "aicdb/sdm-gen-gemini4",    "branch": "main", "dir": "docs" }
   ]
 }
