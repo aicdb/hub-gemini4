@@ -359,7 +359,9 @@ colour group (best y in ~24 x bins, direction from the y dim's `better`); set th
 `pareto_include_highlight: true`; restrict the candidates with `pareto_on: {column: [allowed
 values]}` (e.g. only feasible points). `fixed_axes: true` keeps the axis ranges over all points
 (stable when filtering); `filters_default: {catKey: [visible values]}` sets the initial chips;
-`presets[].desc` (markdown) is shown when that preset is selected.
+`presets[].desc` (markdown) is shown when that preset is selected. `table: {columns: [dim keys or
+column objects], title?, page_size?}` adds a linked table under the plot that lists exactly the
+points currently shown (it follows the chips, ranges, stage and V<sub>DD</sub>), with CSV export.
 
 Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`,
 `symbols: {value: "star"}` — any Plotly marker symbol name; colours may be theme tokens such as `"theme:ink"`),

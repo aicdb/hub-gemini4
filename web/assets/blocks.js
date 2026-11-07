@@ -544,7 +544,7 @@
         if (d.type === 'cat') return `<div class="frow"><span class="lbl">${esc(d.label || k)}</span><div class="chips">${catVals(k).map((v) => `<button class="chip ${st.f[k]?.has(String(v)) ? '' : 'on'}" data-f="${esc(k)}" data-v="${esc(v)}">${esc(label(k, v))}</button>`).join('')}</div></div>`;
         return `<div class="frow"><span class="lbl">${esc(d.label || k)}${d.unit ? ` (${esc(d.unit)})` : ''}</span><div class="chips"><input type="number" step="any" placeholder="min" data-r="${esc(k)}" data-e="0"> – <input type="number" step="any" placeholder="max" data-r="${esc(k)}" data-e="1"></div></div>`;
       }).join('')}</div>
-      <div class="subtle ex-count"></div><div class="ex-plots"></div>${caption(b)}`;
+      <div class="subtle ex-count"></div><div class="ex-plots"></div>${b.table ? '<div class="ex-table"></div>' : ''}${caption(b)}`;
     const plots = el.querySelector('.ex-plots');
     const keyOf = (k, i) => C[k]?.[i];
     const pass = (i) => {
@@ -666,6 +666,14 @@
         });
         await P.newPlot(div, traces, layout, { responsive: true, displaylogo: false, displayModeBar: multi ? false : 'hover' });
         if (b.design_key) div.on('plotly_click', (ev) => { const id = ev.points?.[0]?.customdata; const href = id != null ? ctx.designHref(String(id)) : null; if (href) location.hash = href; });
+      }
+      // optional linked table: exactly the points currently shown (follows chips, ranges, stage, VDD)
+      const tb = el.querySelector('.ex-table');
+      if (tb) {
+        const tcols = (b.table.columns || []).map((c) => (typeof c === 'string' ? Object.assign({ key: c }, D[c] ? { label: D[c].label, unit: D[c].unit, si: D[c].si, digits: D[c].digits, better: D[c].better } : {}) : c));
+        const trows = idx.map((i) => { const r = {}; for (const c of tcols) r[c.key] = D[c.key]?.type === 'cat' ? label(c.key, C[c.key]?.[i]) : C[c.key]?.[i]; if (b.design_key && C[b.design_key]?.[i] != null) r._design = C[b.design_key][i]; return r; });
+        tb.innerHTML = '';
+        await R.table(tb, Object.assign({ title: b.table.title || `Points shown (${trows.length.toLocaleString('en-US')})`, max_height: 480, csv_name: b.table.csv_name || 'explorer-selection' }, b.table, { columns: tcols, rows: trows, src: undefined }), Object.assign({}, ctx, { vdd: '' }));
       }
     };
     el.querySelector('.ex-controls').onchange = (e) => {
