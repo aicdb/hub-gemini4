@@ -3,15 +3,18 @@
 One GitHub Pages site for every analog generator repo: **<https://aicdb.github.io/hub-gemini4/>**
 
 - One tab per component type (switches, sense amps, level shifters, op-amps, aux blocks, LDOs,
-  ECG AFEs, SAR ADCs, ΣΔ ADCs). Each tab has a coverage matrix, a card grid and a sortable
-  table with CSV export, plus a detail page per design.
-- A shared options bar applies to all tabs: **technology**, **simulation stage** (pre-PEX /
-  partial post-PEX / full post-PEX, with optional fallback to an earlier stage),
+  ECG AFEs, SAR ADCs, ΣΔ ADCs). Each tab has:
+  - **Designs:** coverage matrix with a cell-metric selector, cards, and a sortable table
+    with CSV export.
+  - **Generator pages:** design-space explorers, methodology, comparisons and databases.
+  - **A detail page per design** with every analysis section.
+- A shared options bar applies to all tabs and pages: **technology**, **simulation stage**
+  (pre-PEX / partial post-PEX / full post-PEX, with optional fallback to an earlier stage),
   **V<sub>DD</sub>**, **verification** (DRC+LVS / PVT-robust) and a search box that spans
   all components.
-- Layouts are rendered **live from the GDS** in the browser (`web/assets/gdsview.js`), so
-  repos don't need to publish pre-rendered layout images.
-- Each repo's own report stays reachable as "Full generator report" at `c/<id>/`.
+- The hub hosts only what it displays. Layouts are shown as thumbnails rendered from the GDS
+  at build time; GDS files, netlists and evidence JSON link to the raw file in the
+  **private** source repository, pinned to the exported commit.
 
 ## How it works
 
@@ -20,18 +23,23 @@ sources.json ──► publish.yml ──► sparse clone docs/ of each source r
                                     │
                                     ▼
                      tools/hubkit.py build
-                       • docs/hub/component.json from the repo  (preferred)
-                       • else adapters/<id>.py converts the repo's existing docs (bootstrap)
-                       • validate → copy docs/ to c/<id>/ → data/components/<id>.json
-                       • web/ → site root, data/catalog.json, data/build.json
+                       • docs/hub/component.json from the repo (preferred)
+                       • else adapters/<id>.py converts the repo's docs/ (bootstrap)
+                       • validate component, pages, design detail docs and all blocks
+                       • copy only referenced (hosted) files to c/<id>/
+                       • render GDS thumbnails (tools/gdsthumb.py, cached)
+                       • web/ → site root, data/catalog.json, data/components/<id>.json
                                     │
                                     ▼
                              GitHub Pages deploy
 ```
 
 Triggers: push to `main`, manual or `repository_dispatch` (`source-updated`), and a 6-hourly
-schedule. The scheduled run skips the build if neither the hub nor any source repo has a new
-commit.
+schedule. The scheduled run skips the build if neither the hub nor any source repo changed.
+
+The renderer for pages and detail docs is `web/assets/blocks.js`, which supports sections,
+markdown, tables, Plotly charts, the design-space explorer, figures, layouts, downloads and
+tabs. The full vocabulary is specified in [BUILDERS.md](BUILDERS.md).
 
 ## For repo builders
 
@@ -50,9 +58,7 @@ Read **[BUILDERS.md](BUILDERS.md)**. In short: export `docs/hub/component.json`,
 ## Local build
 
 ```bash
+pip install gdstk pillow           # for layout thumbnails (cached in ~/.cache/aicdb-hub/thumbs)
 # all sources checked out next to this repo (../opa-gen-gemini4, …)
-python3 tools/hubkit.py build --root .. --out _site --link --serve 8000
+python3 tools/hubkit.py build --root .. --out _site --serve 8000
 ```
-
-`--link` symlinks the sources instead of copying them, which is fast and meant for local
-use only. Requires Python ≥ 3.9 and nothing else.

@@ -248,7 +248,8 @@ async function renderOverview(main) {
         <h1>${esc(CAT.site?.title || 'Analog Hub')}</h1>
         <p>One catalog for every generator. Each tab is a component type. The options in the bar above
         (technology, simulation stage, supply, verification) apply to every tab, so you can compare
-        e.g. only <b>full post-PEX</b> results at <b>1.8 V</b> across all blocks. Every design links back to its generator's full report.</p>
+        e.g. only <b>full post-PEX</b> results at <b>1.8 V</b> across all blocks. Each tab also carries the generator's design-space
+        explorer, methodology and analysis pages; layouts are previewed from the GDS and link to the raw files in the (private) source repositories.</p>
       </div>
       <div class="stats">
         <div class="stat"><b>${CAT.components.length}</b><span>component types</span></div>
