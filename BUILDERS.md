@@ -107,6 +107,8 @@ docs/
 }
 ```
 
+- **Metric description:** optional `desc` (plain text: definition, test condition) is
+  shown as a tooltip wherever the metric appears.
 - **Metric formatting:** `si: true` means the value is in base SI units (Hz, W, A, F, Ω, s,
   V, V/s …) and the hub picks the prefix. Otherwise the value is printed with `unit`,
   rounded to `digits` significant digits (default 3). `better` (`high`/`low`) drives

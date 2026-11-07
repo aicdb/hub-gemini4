@@ -528,15 +528,17 @@
           traces.push(mk(normal, 'points', { color: normal.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: fv === null || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
         } else traces.push(mk(normal, 'points', { color: COLORWAY[0] }));
         if (hi.length) traces.push(mk(hi, b.highlight_label || 'Delivered designs', { size: 10, opacity: 1, color: 'rgba(0,0,0,0)', line: { width: 2, color: themeColors().ink } }));
+        let frontN = 0;
         if (st.pareto && fi.length) {
           const fr = pareto(fi).sort((a, c) => C[st.x][a] - C[st.x][c]);
+          frontN = fr.length;
           traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Pareto front', x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: '#e11d48', width: 2, shape: 'hv' }, marker: { size: 5, color: '#e11d48' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: fv === null || fv === facets[0] });
         }
         const div = document.createElement('div');
         div.className = 'chart';
         plots.appendChild(div);
         const layout = deepMerge(baseLayout(facets.length > 1 ? 300 : (+b.height || 520)), {
-          title: fv !== null ? { text: esc(label(st.facet, fv)), font: { size: 13 } } : undefined,
+          title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${fi.length.toLocaleString('en-US')} pts${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 } } : undefined,
           xaxis: { title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR },
           yaxis: { title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR },
           margin: facets.length > 1 ? { l: 55, r: 10, t: 34, b: 45 } : undefined,

@@ -487,7 +487,7 @@ function renderTable(view, c, list) {
   const used = c.metrics.filter((m) => list.some((d) => { const r = resolve(d); return r && r.r.metrics[m.key] != null; }));
   const [sk, sd] = (S.sort || ':').split(':');
   const head = `<tr><th class="l">Design</th><th>V<sub>DD</sub></th>${axes.map((a) => `<th class="l">${esc(c.axes[a].label)}</th>`).join('')}<th class="l">Stage</th>
-    ${used.map((m) => `<th data-k="${esc(m.key)}" class="${sk === m.key ? 'sorted' : ''}" title="click to sort">${esc(m.label)}${m.unit && !m.si ? ` (${esc(m.unit)})` : m.si ? ` (${esc(m.unit)})` : ''}${sk === m.key ? (sd === 'asc' ? ' ↑' : ' ↓') : ''}</th>`).join('')}
+    ${used.map((m) => `<th data-k="${esc(m.key)}" class="${sk === m.key ? 'sorted' : ''}" title="${esc(m.desc ? `${m.desc} — click to sort` : 'click to sort')}">${esc(m.label)}${m.unit && !m.si ? ` (${esc(m.unit)})` : m.si ? ` (${esc(m.unit)})` : ''}${sk === m.key ? (sd === 'asc' ? ' ↑' : ' ↓') : ''}</th>`).join('')}
     <th>PVT</th><th class="l">DRC/LVS</th></tr>`;
   const rows = list.map((d) => {
     const r = resolve(d);
@@ -538,7 +538,7 @@ async function renderDetail(main, c) {
   const metricsWith = c.metrics.filter((m) => STAGES.some((s) => d.results?.[s]?.metrics?.[m.key] != null));
   const stageHead = STAGES.map((s) => `<th class="${s === S.stage ? 'cur' : ''}">${STAGE_LABEL[s]}</th>`).join('');
   const preM = d.results?.pre?.metrics || {};
-  const mrows = metricsWith.map((m) => `<tr><td>${esc(m.label)}</td>${STAGES.map((s) => {
+  const mrows = metricsWith.map((m) => `<tr><td${m.desc ? ` title="${esc(m.desc)}"` : ''}>${esc(m.label)}${m.desc ? ' <span class="subtle">ⓘ</span>' : ''}</td>${STAGES.map((s) => {
     const v = d.results?.[s]?.metrics?.[m.key];
     let delta = '';
     if (s !== 'pre' && v != null && preM[m.key] != null && preM[m.key] !== 0 && v !== preM[m.key]) {
