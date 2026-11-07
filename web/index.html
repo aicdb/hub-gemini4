@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AICDB Analog Hub</title>
+  <meta name="description" content="Unified catalog of automatically generated, layout-verified analog building blocks: switches, sense amplifiers, level shifters, op-amps, LDOs, ADCs and more.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23225bb2'/%3E%3Cpath d='M5 18c3-9 6-9 9 0s6 9 9 0' stroke='white' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/style.css">
+  <script>try{var t=localStorage.getItem('hub-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
+  <script defer src="assets/gdsview.js"></script>
+  <script defer src="assets/app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="bar">
+      <a class="brand" href="#/">∿ <span>AICDB</span> Analog Hub</a>
+      <nav class="tabs" id="tabs" aria-label="Component types"></nav>
+      <button class="iconbtn" id="theme" title="Toggle light / dark theme" aria-label="Toggle theme">◐</button>
+    </div>
+    <div class="globals">
+      <div class="bar" id="globals" aria-label="Options shared by all tabs">
+        <label class="opt"><span class="lbl">Technology</span><select id="g-tech"></select></label>
+        <div class="opt"><span class="lbl">Simulation</span><div class="seg" id="g-stage" role="group"></div>
+          <label class="check" title="When a design has no result at the selected stage, show its nearest earlier stage (marked)"><input type="checkbox" id="g-fb"> fill from earlier stage</label>
+        </div>
+        <div class="opt"><span class="lbl">V<sub>DD</sub></span><div class="seg" id="g-vdd" role="group"></div><select id="g-vdd2" class="other" title="Less common supplies (e.g. level-shifter output domains)" hidden></select></div>
+        <div class="opt"><span class="lbl">Verified</span><div class="seg" id="g-ver" role="group"></div></div>
+        <label class="opt"><input type="search" id="g-q" placeholder="Search designs…" aria-label="Search designs"></label>
+      </div>
+    </div>
+  </header>
+  <main id="main"><div class="empty-state">Loading…</div></main>
+  <footer id="foot"></footer>
+</body>
+</html>

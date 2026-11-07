@@ -1,0 +1,28 @@
+{
+  "site": {
+    "title": "AICDB Analog IP Hub",
+    "subtitle": "Automatically generated, layout-verified analog building blocks",
+    "repo": "aicdb/hub-gemini4"
+  },
+  "budget_mb": 1000,
+  "component_budget_mb": 100,
+  "technologies": {
+    "gf180mcuD": "GF180MCU-D (180 nm, 5LM)"
+  },
+  "exclude": [
+    "**/*.gds",
+    "**/.nojekyll",
+    "**/.DS_Store"
+  ],
+  "components": [
+    { "id": "switch", "repo": "AL-255/switch-gen-gemini4", "branch": "main", "dir": "docs" },
+    { "id": "sa",     "repo": "AL-255/sa-gen-gemini4",     "branch": "main", "dir": "docs" },
+    { "id": "ls",     "repo": "AL-255/ls-gen-gemini4",     "branch": "main", "dir": "docs" },
+    { "id": "opa",    "repo": "AL-255/opa-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "aux",    "repo": "AL-255/aux-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "ldo",    "repo": "AL-255/ldo-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "ecg",    "repo": "AL-255/ecg-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "sar",    "repo": "AL-255/sar-gen-gemini4",    "branch": "main", "dir": "docs" },
+    { "id": "sdm",    "repo": "AL-255/sdm-gen-gemini4",    "branch": "main", "dir": "docs" }
+  ]
+}

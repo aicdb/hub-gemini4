@@ -1,0 +1,58 @@
+# AICDB Analog Hub
+
+One GitHub Pages site for every analog generator repo: **<https://aicdb.github.io/hub-gemini4/>**
+
+- One tab per component type (switches, sense amps, level shifters, op-amps, aux blocks, LDOs,
+  ECG AFEs, SAR ADCs, ΣΔ ADCs). Each tab has a coverage matrix, a card grid and a sortable
+  table with CSV export, plus a detail page per design.
+- A shared options bar applies to all tabs: **technology**, **simulation stage** (pre-PEX /
+  partial post-PEX / full post-PEX, with optional fallback to an earlier stage),
+  **V<sub>DD</sub>**, **verification** (DRC+LVS / PVT-robust) and a search box that spans
+  all components.
+- Layouts are rendered **live from the GDS** in the browser (`web/assets/gdsview.js`), so
+  repos don't need to publish pre-rendered layout images.
+- Each repo's own report stays reachable as "Full generator report" at `c/<id>/`.
+
+## How it works
+
+```
+sources.json ──► publish.yml ──► sparse clone docs/ of each source repo (HUB_SOURCES_TOKEN)
+                                    │
+                                    ▼
+                     tools/hubkit.py build
+                       • docs/hub/component.json from the repo  (preferred)
+                       • else adapters/<id>.py converts the repo's existing docs (bootstrap)
+                       • validate → copy docs/ to c/<id>/ → data/components/<id>.json
+                       • web/ → site root, data/catalog.json, data/build.json
+                                    │
+                                    ▼
+                             GitHub Pages deploy
+```
+
+Triggers: push to `main`, manual or `repository_dispatch` (`source-updated`), and a 6-hourly
+schedule. The scheduled run skips the build if neither the hub nor any source repo has a new
+commit.
+
+## For repo builders
+
+Read **[BUILDERS.md](BUILDERS.md)**. In short: export `docs/hub/component.json`, run
+`hubkit.py validate` and `preview`, push, then `gh workflow run publish.yml -R aicdb/hub-gemini4`.
+
+## Maintainer setup
+
+1. **Secret `HUB_SOURCES_TOKEN`:** a fine-grained PAT with *Contents: read-only* on the
+   `AL-255/*-gen-gemini4` repos (they are private). Set it with
+   `gh secret set HUB_SOURCES_TOKEN -R aicdb/hub-gemini4`.
+2. Settings → Pages → Source: **GitHub Actions** (already set).
+3. **Adding a generator:** append it to `sources.json`. Add a technology label there too if
+   it uses a new PDK.
+
+## Local build
+
+```bash
+# all sources checked out next to this repo (../opa-gen-gemini4, …)
+python3 tools/hubkit.py build --root .. --out _site --link --serve 8000
+```
+
+`--link` symlinks the sources instead of copying them, which is fast and meant for local
+use only. Requires Python ≥ 3.9 and nothing else.

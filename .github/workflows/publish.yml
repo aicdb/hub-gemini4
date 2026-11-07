@@ -1,0 +1,121 @@
+name: Publish hub
+
+# Rebuilds the hub from every source repo listed in sources.json and deploys it to Pages.
+#   - push to main (hub code changed)          -> always rebuild
+#   - workflow_dispatch / repository_dispatch  -> always rebuild (repo builders: `gh workflow run publish.yml -R aicdb/hub-gemini4`)
+#   - schedule (every 6 h)                     -> rebuild only if a source repo or the hub has a new commit
+#
+# The source repos are private: the secret HUB_SOURCES_TOKEN must hold a token with read access
+# (Contents: read) to all of them. See README.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild even if nothing changed"
+        type: boolean
+        default: true
+  repository_dispatch:
+    types: [source-updated]
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve source commits
+        id: plan
+        env:
+          TOKEN: ${{ secrets.HUB_SOURCES_TOKEN }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "::error title=Missing secret::HUB_SOURCES_TOKEN is not set (needs read access to the private source repos, see README.md)"
+            exit 1
+          fi
+          : > sources.lock
+          for row in $(jq -r '.components[] | "\(.id)|\(.repo)|\(.branch // "main")"' sources.json); do
+            IFS='|' read -r id repo branch <<< "$row"
+            sha=$(git ls-remote "https://x-access-token:${TOKEN}@github.com/${repo}.git" "refs/heads/${branch}" | cut -f1)
+            if [ -z "$sha" ]; then echo "::warning title=Source unreachable::${repo}@${branch}"; sha=missing; fi
+            echo "${id} ${repo} ${branch} ${sha}" | tee -a sources.lock
+          done
+          fp=$( (git rev-parse HEAD; cat sources.lock) | sha256sum | cut -c1-16)
+          echo "fingerprint=${fp}" >> "$GITHUB_OUTPUT"
+          live=$(curl -fsS "https://aicdb.github.io/hub-gemini4/data/build.json" 2>/dev/null | jq -r '.fingerprint // ""' || true)
+          echo "live fingerprint: '${live}'  new: '${fp}'"
+          if [ "${EVENT}" = "schedule" ] && [ "${live}" = "${fp}" ]; then
+            echo "Nothing changed since the last deploy; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch docs/ of every source (sparse, shallow)
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          TOKEN: ${{ secrets.HUB_SOURCES_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p src
+          while read -r id repo branch sha; do
+            [ "$sha" = missing ] && continue
+            name="${repo##*/}"
+            dir=$(jq -r --arg id "$id" '.components[] | select(.id==$id) | .dir // "docs"' sources.json)
+            git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$branch" \
+              "https://x-access-token:${TOKEN}@github.com/${repo}.git" "src/${name}"
+            git -C "src/${name}" sparse-checkout set "$dir"
+            echo "${id}: $(git -C "src/${name}" rev-parse --short HEAD), $(du -sh "src/${name}/${dir}" | cut -f1)"
+          done < sources.lock
+
+      - name: Build site
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          HUB_FINGERPRINT: ${{ steps.plan.outputs.fingerprint }}
+        run: |
+          python3 tools/hubkit.py build --root src --out _site
+          du -sh _site
+          {
+            echo "### Hub build"
+            echo '```'
+            cat _site/data/build.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+        if: steps.plan.outputs.skip != 'true'
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.plan.outputs.skip != 'true'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: 1200000
