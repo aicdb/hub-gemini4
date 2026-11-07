@@ -208,7 +208,8 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 | `downloads` | `items[]: {label, file \| src \| url, note?}` | link list; `file` → raw file in the repo, `src` → hosted, `url` → external |
 | `tabs` | `tabs[]: {label, blocks[], vdd?, tech?}`, `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
 
-**Table columns:** `{key, label, unit, si, digits, type, group, better, md, align, title}`.
+**Table columns:** `{key, label, unit, si, digits, type, group, better, md, align, title, wrap}`
+(`wrap: true` lets long text wrap instead of staying on one line).
 - `type`: `text`, `num` (default for numbers), `status` (true ✓ / false ✗, coloured),
   `design` (a design id rendered as a link to its page), `link` (cell `{v, href}`).
 - `group` adds a grouped header row. `md: true` renders cell text as inline markdown.

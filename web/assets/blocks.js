@@ -320,7 +320,7 @@
       else if (c.type === 'status' || typeof v === 'boolean') inner = v === true ? '✓' : v === false ? '✗' : esc(v ?? '—');
       else if (typeof v === 'number') inner = fmt(v, c);
       else inner = c.md ? inline(v ?? '') : esc(v ?? '—');
-      const cls = [align(c), s.s ? `s-${s.s}` : (c.type === 'status' || typeof v === 'boolean') ? (v === true ? 's-good' : v === false ? 's-bad' : '') : ''].filter(Boolean).join(' ');
+      const cls = [align(c), c.wrap ? 'wrap' : '', s.s ? `s-${s.s}` : (c.type === 'status' || typeof v === 'boolean') ? (v === true ? 's-good' : v === false ? 's-bad' : '') : ''].filter(Boolean).join(' ');
       return `<td${cls ? ` class="${cls}"` : ''}${s.title ? ` title="${esc(s.title)}"` : ''}>${inner}</td>`;
     };
     const drawHead = () => {

@@ -316,3 +316,4 @@ table.blist tbody tr:not(.click) { cursor: default; }
 .cards > .cgroup { grid-column: 1 / -1; font-size: 14px; margin: 10px 0 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
 .cards > .cgroup:first-child { margin-top: 0; }
 .cards > .cgroup .n { font-size: 11px; color: var(--muted); font-weight: 500; }
+table.blist td.wrap { white-space: normal; min-width: 160px; max-width: 460px; }
