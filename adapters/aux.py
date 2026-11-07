@@ -4,17 +4,19 @@
 usage: aux.py DOCS_DIR OUT_DIR
 
 Reads only DOCS_DIR (the repo's published docs/: data/index.json, data/dse.json, data/gmid.json,
-cards/<id>/detail.json) and writes OUT_DIR/component.json plus hosted documents under OUT_DIR
-(referenced as "hub/<path>"):
+cards/<id>/detail.json) and writes a collection (BUILDERS.md §4.3) under OUT_DIR (paths "hub/<path>"):
 
-  designs/<id>.json        one detail document per card (every section of the retired card page)
-  pages/overview.json      hero prose, all-family master table, coverage summary, downloads
-  pages/explore.json       design-space explorer (per family) + generator Pareto overlays / facet grids
-  pages/method.json        methodology prose, gm/Id LUT charts, topology catalogue
-  data/dse_<fam>.json      columnar explorer data;  data/dse_fig/*.json static Plotly figures
+  component.json                 manifest {"id": "aux", "group": "Aux blocks", "components": [...]}
+  <fam>/component.json           one component per block family, id "aux-<fam>" (own top-level tab)
+  <fam>/pages/overview.json      family intro, retired per-family comparison table, coverage, data slices
+  <fam>/pages/explore.json       family design-space explorer + generator Pareto overlay / facet grid
+  <fam>/data/...                 explorer columns, static figures, per-family slices of the data files
+  designs/<id>.json              one detail document per card (every section of the retired card page)
+  pages/method.json              shared: methodology prose, gm/Id LUT charts, topology catalogue
+  pages/collection.json          shared: retired hero, all-family master table and coverage, downloads
 
-Ten unrelated block families -> hub families (sub-tabs), each with its own matrix (topology x target,
-supply as outer column group), presets and card metrics. Stdlib only.
+Each family has its own metrics, matrix (topology x target, supply as outer column group), presets and
+card metrics. Stdlib only.
 
 Honesty rules applied (see the inventory / report):
   * pre = metrics_pre, full = metrics_post (whole-cell Magic C-only extraction, noted per design).
@@ -210,33 +212,11 @@ def stage(c, st, ft):
 
 
 fams = meta["families"]
-fam_by = {f["tag"]: f for f in fams}
 topo_by = {t["tag"]: (f, t) for f in fams for t in f["topologies"]}
-topo_vals, target_vals, flavor_vals, families = [], [], [], []
 slug = lambda s: "".join(ch if ch.isalnum() else "_" for ch in s.lower()).strip("_")
-seen_fl = set()
-for f in fams:
-    ft = f["tag"]
-    topo_vals += [{"id": t["tag"], "label": t["short_name"]} for t in f["topologies"]]
-    target_vals += [{"id": f"{ft}.{t['tag']}", "label": t["label"]} for t in f["targets"]]
-    for t in f["topologies"]:
-        fid = slug(t["device_flavor"])
-        if fid not in seen_fl:
-            seen_fl.add(fid)
-            flavor_vals.append({"id": fid, "label": t["device_flavor"]})
-    fields, mx, presets, cm = FAM[ft]
-    summ = f"{f.get('summary', '').replace('`', '')} Primary metric on the retired site: {f['primary_metric_label']} ({f['primary_metric_unit']})."
-    if ft == "clk_div":
-        summ += " Note: f_min is the lowest swept input (0.25 GHz) for every card, so the locking range is bounded by the sweep."
-    if ft in ("ro", "cml_ro", "dco_vco", "cml_dco_vco", "clk_div"):
-        summ += " Phase noise / jitter / FoM are analytic estimates and are shown on the design pages only."
-    families.append({
-        "id": ft, "label": f"{f['icon']} {f['name']}", "summary": summ,
-        "matrix": {"rows": ["topology", "flavor"], "cols": ["target"], "metrics": mx,
-                   "presets": [{"label": f"Retired-site headline: {' / '.join(MLABEL[k] for k in mx)}", "metrics": mx}] +
-                              [{"label": lab, "metrics": ms} for lab, ms in presets]},
-        "card_metrics": cm,
-    })
+NAMES = {"ro": "Ring osc", "tcap": "Tunable caps", "tres": "Tunable res", "cm_idac": "Mirrors/IDACs", "dco_vco": "DCOs & VCOs",
+         "cml_ro": "CML osc", "clk_div": "Clock dividers", "vref_2t": "2T Vref", "cml_dco_vco": "CML DCO/VCO", "bm_iref": "Beta-mult Iref"}
+EST_FAMS = ("ro", "cml_ro", "dco_vco", "cml_dco_vco", "clk_div")
 
 fam_order = {f["tag"]: i for i, f in enumerate(fams)}
 topo_order = {t["tag"]: i for f in fams for i, t in enumerate(f["topologies"])}
@@ -244,11 +224,9 @@ tgt_order = {(f["tag"], t["tag"]): i for f in fams for i, t in enumerate(f["targ
 cards.sort(key=lambda c: (fam_order.get(c["family"], 99), topo_order.get(c["topo"], 99), c["vdd"],
                           tgt_order.get((c["family"], c["target_tag"]), 99), c["card_id"]))
 
-designs, details = [], {}
-for c in cards:
+
+def design_record(c, d):
     cid, ft = c["card_id"], c["family"]
-    dpath = docs / "cards" / cid / "detail.json"
-    d = json.loads(dpath.read_text()) if dpath.is_file() else None
     results = {}
     s = stage(c, "pre", ft)
     if s:
@@ -283,9 +261,8 @@ for c in cards:
         "id": cid,
         "title": f"{c['topo_name']} · {c['vdd']} V · {c['target_label']}",
         "summary": (d or {}).get("topo_summary") or "",
-        "family": ft,
         "vdd": c["vdd"],
-        "axes": {"topology": c["topo"], "target": f"{ft}.{c['target_tag']}", "flavor": slug(fl)},
+        "axes": {"topology": c["topo"], "target": c["target_tag"], "flavor": slug(fl)},
         "tags": [t for t in (c.get("family_name"), c.get("device_flavor"), c.get("circuit_style"),
                              "Spec ✓ (generator status pass)" if c.get("status") == "pass" else f"status: {c.get('status')}") if t],
         "physical": {"drc": None if c.get("drc_ok") is None else bool(c["drc_ok"]),
@@ -300,37 +277,63 @@ for c in cards:
     if d:
         write_json(out / "designs" / f"{cid}.json", aux_detail.build(d, files, sch_design))
         rec["detail"] = f"hub/designs/{cid}.json"
-        details[cid] = d
-    designs.append(rec)
+    return rec
 
-pages = aux_pages.build_all(docs, out, meta, cards, dse, gmid, details, MLABEL)
 
-cnt = meta.get("counts", {})
-comp = {
-    "schema": "aicdb-hub/2",
-    "id": "aux",
-    "name": "Aux blocks",
-    "title": meta.get("title", "GF180MCU-D Low-Power Auxiliary Structure Generator"),
-    "summary": "Ten low-power and RF auxiliary block families (ring, CML and tunable oscillators, DCOs/VCOs, clock dividers, tunable "
-               "capacitor and resistor banks, current mirrors & IDACs, 2T voltage references and beta-multiplier current references) "
-               "across 70 topologies at 1.8 V and 3.3 V: gm/ID sizing, 15-corner PVT, 30-run Monte Carlo, gLayout DRC/LVS and Magic PEX "
-               "with post-layout re-simulation of every cell.",
-    "technology": "gf180mcuD",
-    "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "stats": [{"label": "topologies", "value": str(cnt.get("topologies_covered", len(topo_vals)))},
-              {"label": "DSE points", "value": f"{cnt.get('total_dse_points', 0):,}"},
-              {"label": "PVT corners / card", "value": "15"}, {"label": "MC runs / card", "value": "30"}],
-    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=si or None, better=b, digits=dg).items() if v is not None}
-                for k, l, u, si, b, dg in METRICS],
-    "axes": {
-        "topology": {"label": "Topology", "values": topo_vals},
-        "flavor": {"label": "Device flavor", "values": flavor_vals},
-        "target": {"label": "Target band", "values": target_vals},
-    },
-    "matrix": {"rows": ["topology"], "cols": ["target"], "metrics": ["power", "area"]},
-    "card_metrics": ["power", "area"],
-    "families": families,
-    "pages": pages,
-    "designs": designs,
-}
-write_json(out / "component.json", comp, 6)
+details = {}
+for c in cards:
+    dpath = docs / "cards" / c["card_id"] / "detail.json"
+    if dpath.is_file():
+        details[c["card_id"]] = json.loads(dpath.read_text())
+
+shared_pages = aux_pages.build_shared(docs, out, meta, cards, gmid)
+generated = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+manifest = []
+for f in fams:
+    ft = f["tag"]
+    fcards = [c for c in cards if c["family"] == ft]
+    if not fcards:
+        continue
+    fields, mx, presets, cm = FAM[ft]
+    used = {k for k, _, _ in fields} | {"mc_cv", "area"}
+    summ = f"{f.get('summary', '').replace('`', '')} Primary metric on the retired site: {f['primary_metric_label']} ({f['primary_metric_unit']})."
+    if ft == "clk_div":
+        summ += " Note: f_min is the lowest swept input (0.25 GHz) for every card, so the locking range is bounded by the sweep."
+    if ft in EST_FAMS:
+        summ += " Phase noise / jitter / FoM are analytic estimates and are shown on the design pages only."
+    flavors = []
+    for t in f["topologies"]:
+        v = {"id": slug(t["device_flavor"]), "label": t["device_flavor"]}
+        if v not in flavors:
+            flavors.append(v)
+    fd = (dse.get("families") or {}).get(ft) or {}
+    pages = aux_pages.build_family(docs, out, meta, f, fcards, fd, dse, details) + shared_pages
+    comp = {
+        "schema": "aicdb-hub/2",
+        "id": f"aux-{ft}",
+        "name": NAMES.get(ft, f["short_name"])[:14],
+        "title": f"{f['icon']} {f['name']}",
+        "summary": summ,
+        "technology": "gf180mcuD",
+        "generated": generated,
+        "stats": [{"label": "topologies", "value": str(len(f["topologies"]))},
+                  {"label": "DSE candidates", "value": f"{len(fd.get('points') or []):,}"},
+                  {"label": "PVT corners / card", "value": "15"}, {"label": "MC runs / card", "value": "30"}],
+        "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=si or None, better=b, digits=dg).items() if v is not None}
+                    for k, l, u, si, b, dg in METRICS if k in used],
+        "axes": {
+            "topology": {"label": "Topology", "values": [{"id": t["tag"], "label": t["short_name"]} for t in f["topologies"]]},
+            "flavor": {"label": "Device flavor", "values": flavors},
+            "target": {"label": "Target band", "values": [{"id": t["tag"], "label": t["label"]} for t in f["targets"]]},
+        },
+        "matrix": {"rows": ["topology", "flavor"], "cols": ["target"], "metrics": mx,
+                   "presets": [{"label": f"Retired-site headline: {' / '.join(MLABEL[k] for k in mx)}", "metrics": mx}] +
+                              [{"label": lab, "metrics": ms} for lab, ms in presets]},
+        "card_metrics": cm,
+        "pages": pages,
+        "designs": [design_record(c, details.get(c["card_id"])) for c in fcards],
+    }
+    write_json(out / ft / "component.json", comp, 6)
+    manifest.append(f"hub/{ft}/component.json")
+
+write_json(out / "component.json", {"schema": "aicdb-hub/2", "id": "aux", "group": "Aux blocks", "components": manifest})

@@ -282,9 +282,9 @@ function hierarchyHtml() {
   [...nodes.keys()].forEach((k) => level(k));
   const L = Math.max(...lvl.values());
   const rows = Array.from({ length: L + 1 }, (_, i) => [...nodes.keys()].filter((k) => lvl.get(k) === i));
-  const W = 1100, rowH = 118, boxH = 58, top = 24;
+  const W = 1100, rowH = 118, boxH = 58, top = 24, gutter = 96;
   const pos = new Map();
-  const place = (row, i) => { const n = row.length; const gap = W / n; row.forEach((k, j) => pos.set(k, { x: gap * (j + 0.5), y: top + (L - i) * rowH, w: Math.min(176, gap - 14) })); };
+  const place = (row, i) => { const n = row.length; const gap = (W - gutter) / n; row.forEach((k, j) => pos.set(k, { x: gutter + gap * (j + 0.5), y: top + (L - i) * rowH, w: Math.min(190, gap - 16) })); };
   place(rows[0], 0);
   for (let i = 1; i <= L; i++) {   // barycentric order: put users above the blocks they build on
     rows[i].sort((a, b) => { const bx = (k) => { const d = deps(k).filter((x) => pos.has(x)); return d.length ? d.reduce((s2, x) => s2 + pos.get(x).x, 0) / d.length : W / 2; }; return bx(a) - bx(b); });
@@ -303,12 +303,12 @@ function hierarchyHtml() {
   }).join('');
   const nBoxes = [...nodes.values()].map((n) => {
     const p = pos.get(n.key);
-    const sub = n.sub ? `${n.sub.length} generators` : `${byId[n.ids[0]].title.replace(/^GF180[^ ]* /, '').slice(0, 30)}`;
-    return `<a href="${n.href}" class="h-node"><title>${esc(n.label)}${n.sub ? `: ${n.sub.join(', ')}` : ''}</title>
+    const sub = n.sub ? ` · ${n.sub.length} generators` : '';
+    return `<a href="${n.href}" class="h-node"><title>${esc(n.label)}${n.sub ? `: ${n.sub.join(', ')}` : ` — ${esc(byId[n.ids[0]].title)}`}</title>
       <rect x="${p.x - p.w / 2}" y="${p.y}" width="${p.w}" height="${boxH}" rx="9"/>
       <rect class="h-bar" x="${p.x - p.w / 2}" y="${p.y}" width="5" height="${boxH}" rx="2"/>
       <text x="${p.x}" y="${p.y + 22}" class="h-name">${esc(n.label)}</text>
-      <text x="${p.x}" y="${p.y + 40}" class="h-sub">${count(n)} designs · ${esc(sub)}</text></a>`;
+      <text x="${p.x}" y="${p.y + 40}" class="h-sub">${count(n).toLocaleString('en-US')} designs${esc(sub)}</text></a>`;
   }).join('');
   const lvlNames = rows.map((_, i) => (i === 0 ? 'cells' : i === L ? 'systems' : 'sub-systems'));
   const lvlLabels = rows.map((_, i) => `<text class="h-lvl" x="6" y="${top + (L - i) * rowH + boxH / 2 + 4}">${lvlNames[i]}</text>`).join('');
