@@ -297,10 +297,20 @@
     let rows = (data.rows || []).map((r) => (Array.isArray(r) ? Object.fromEntries(cols.map((c, i) => [c.key, r[i]])) : r));
     if (ctx.vdd && b.vdd_filter !== false && cols.some((c) => c.key === 'vdd')) rows = rows.filter((r) => cellV(r.vdd) == null || String(cellV(r.vdd)) === ctx.vdd);
     if (ctx.tech && cols.some((c) => c.key === 'tech')) rows = rows.filter((r) => !cellV(r.tech) || cellV(r.tech) === ctx.tech);
-    if (b.stage_column && cols.some((c) => c.key === b.stage_column)) {
-      const avail = [...new Set(rows.map((r) => cellV(r[b.stage_column])))];
+    let stageNote = '';
+    if (b.stage_column && b.stage_group) {
+      // per entity (e.g. design id): keep the row with the best available stage <= selected
+      const best = new Map();
+      for (const r of rows) { const g = cellV(r[b.stage_group]); const sv = cellV(r[b.stage_column]); if (g == null || !sv) continue; if (!best.has(g)) best.set(g, new Set()); best.get(g).add(sv); }
+      const pickFor = new Map([...best].map(([g, set]) => [g, pickStage([...set], ctx)]));
+      const fbN = [...pickFor.values()].filter((p) => p && p !== ctx.stage).length;
+      rows = rows.filter((r) => { const g = cellV(r[b.stage_group]); const sv = cellV(r[b.stage_column]); return g == null || !sv || sv === pickFor.get(g); });
+      stageNote = `best available stage ≤ ${STAGE_LABEL[ctx.stage]}${fbN ? ` (${fbN} from an earlier stage)` : ''}`;
+    } else if (b.stage_column) {
+      const avail = [...new Set(rows.map((r) => cellV(r[b.stage_column])))].filter(Boolean);
       const st = pickStage(avail, ctx);
-      rows = rows.filter((r) => cellV(r[b.stage_column]) === st);
+      rows = rows.filter((r) => !cellV(r[b.stage_column]) || cellV(r[b.stage_column]) === st);
+      stageNote = st ? `${STAGE_LABEL[st]}${st !== ctx.stage ? ' (fallback)' : ''}` : 'no rows at this stage';
     }
     const groups = cols.some((c) => c.group);
     const searchable = b.search ?? rows.length > 15;
@@ -354,7 +364,7 @@
         const href = x._design ? ctx.designHref(String(x._design)) : x._href ? esc(x._href) : null;
         return `<tr${href ? ` class="click" data-href="${href}"` : ''}${x._s ? ` data-s="${esc(x._s)}"` : ''}>${cols.map((c) => cellHtml(c, x[c.key])).join('')}</tr>`;
       }).join('');
-      const cnt = el.querySelector('.tcount'); if (cnt) cnt.textContent = `${r.length} row${r.length === 1 ? '' : 's'}`;
+      const cnt = el.querySelector('.tcount'); if (cnt) cnt.textContent = `${r.length} row${r.length === 1 ? '' : 's'}${stageNote ? ` · ${stageNote}` : ''}`;
       el.querySelector('.tmore').innerHTML = r.length > limit ? `<button class="plain more-btn">Show ${Math.min(r.length - limit, 1000)} more of ${r.length - limit}</button>` : '';
       const mb = el.querySelector('.tmore button'); if (mb) mb.onclick = () => { limit += 1000; draw(); };
     };
@@ -394,6 +404,7 @@
       font: { family: 'Inter, system-ui, sans-serif', size: 12, color: t.ink },
       xaxis: ax, yaxis: ax, xaxis2: ax, yaxis2: ax, xaxis3: ax, yaxis3: ax, xaxis4: ax, yaxis4: ax,
       legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom', font: { size: 11 } }, hoverlabel: { font: { size: 11 } },
+      modebar: { orientation: 'v', bgcolor: 'rgba(0,0,0,0)' },   // vertical, so it never covers the top legend
     };
   }
   function filterTraces(traces, ctx) {
@@ -602,7 +613,7 @@
     if (pr) pr.onclick = (e) => {
       const c = e.target.closest('[data-p]'); if (!c) return;
       const p = b.presets[+c.dataset.p];
-      Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: p.pareto ?? st.pareto });
+      Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: p.pareto ?? false });
       if (p.show) {
         for (const k of Object.keys(st.f)) st.f[k] = new Set();
         for (const [k, vals] of Object.entries(p.show)) if (st.f[k]) st.f[k] = new Set(catVals(k).map(String).filter((v) => !vals.map(String).includes(v)));

@@ -270,7 +270,10 @@ Pages and detail documents are lists of blocks. Every block accepts these common
   Escape markdown characters with a backslash (`\_`); underscores inside link URLs are safe.
 - `rows` may be arrays in column order instead of objects.
 - A column named `vdd` (or `tech`) makes the table follow the global filter.
-- `stage_column: "stage"` makes it follow the global simulation stage.
+- `stage_column: "stage"` makes it follow the global simulation stage (rows without a stage
+  are always shown). Add `stage_group: "<column>"` (e.g. the design-id column) to keep, per
+  entity, the row of its best available stage ≤ the selected one. This mixes e.g. full and
+  partial extractions in one table, with the stage column telling which is which.
 
 **Charts** are plain Plotly (v2.35) figures. Write traces exactly as you would for
 `Plotly.newPlot`:
