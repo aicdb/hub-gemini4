@@ -25,7 +25,8 @@
   function num(v, digits = 3) {
     if (typeof v !== 'number' || !isFinite(v)) return String(v);
     const a = Math.abs(v);
-    if (a >= 1e4 && Number.isInteger(Math.round(v))) return Math.round(v).toLocaleString('en-US');
+    if (Number.isInteger(v) && a < 1e15) return v.toLocaleString('en-US');
+    if (a >= 1e4) return Math.round(v).toLocaleString('en-US');
     if (a === 0) return '0';
     return String(+v.toPrecision(digits));
   }
@@ -48,16 +49,21 @@
 
   /* ------------------------------------------------------------ markdown (safe subset) */
   const ALLOWED_TAGS = /&lt;(\/?)(sub|sup|br|b|i|em|strong|code|u|small|kbd)\s*\/?&gt;/g;
+  function emph(t) {
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|[^\w])__([^_]+)__(?!\w)/g, '$1<strong>$2</strong>');
+    return t.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>').replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<em>$2</em>');
+  }
   function inline(s) {
     let t = esc(s);
-    const codes = [];
-    t = t.replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return `\u0000${codes.length - 1}\u0000`; });
+    const tok = [];
+    const put = (html) => { tok.push(html); return `\u0000${tok.length - 1}\u0000`; };
+    t = t.replace(/\\([\\`*_[\]()#+\-.!|{}~])/g, (_, c) => put(c));             // backslash escapes
+    t = t.replace(/`([^`]+)`/g, (_, c) => put(`<code>${c}</code>`));
     t = t.replace(ALLOWED_TAGS, '<$1$2>');
-    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, u) => `<img alt="${alt}" src="${safeUrl(u)}" style="max-width:100%">`);
-    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, txt, u) => `<a href="${safeUrl(u)}"${/^https?:/.test(u) ? ' target="_blank" rel="noopener"' : ''}>${txt}</a>`);
-    t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/__([^_]+)__/g, '<strong>$1</strong>');
-    t = t.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>').replace(/(^|[^_\w])_([^_\s][^_]*?)_(?!\w)/g, '$1<em>$2</em>');
-    t = t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[+i]}</code>`);
+    t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, u) => put(`<img alt="${alt}" src="${safeUrl(u)}" style="max-width:100%">`));
+    t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, txt, u) => put(`<a href="${safeUrl(u)}"${/^https?:/.test(u) ? ' target="_blank" rel="noopener"' : ''}>${emph(txt)}</a>`));
+    t = emph(t);
+    for (let k = 0; k < 3 && t.includes('\u0000'); k++) t = t.replace(/\u0000(\d+)\u0000/g, (_, i) => tok[+i]);
     return t;
   }
   function safeUrl(u) {
@@ -266,14 +272,18 @@
       ? `<label class="tabsel">${esc(b.label || 'Show')} <select>${tabs.map((t, i) => `<option value="${i}">${esc(String(t.label).replace(/<[^>]+>/g, ''))}</option>`).join('')}</select></label>`
       : `<div class="subtabs tabs-bar">${tabs.map((t, i) => `<button class="chip ${i ? '' : 'on'}" data-i="${i}">${inline(t.label)}</button>`).join('')}</div>`}<div class="tab-view"></div>${caption(b)}`;
     const view = el.querySelector('.tab-view');
+    let first = true;
     const show = async (i) => {
       view.innerHTML = '';
       el.querySelectorAll('.tabs-bar .chip').forEach((c) => c.classList.toggle('on', +c.dataset.i === i));
+      if (b.id && ctx.tabSet && !first) ctx.tabSet(b.id, i);
+      first = false;
       if (tabs[i]) await render(view, tabs[i].blocks, ctx);
     };
     if (sel) el.querySelector('select').onchange = (e) => show(+e.target.value);
     else el.querySelector('.tabs-bar').onclick = (e) => { const c = e.target.closest('[data-i]'); if (c) show(+c.dataset.i); };
-    const start = Math.max(0, Math.min(tabs.length - 1, +b.default || 0));
+    const saved = b.id && ctx.tabGet ? ctx.tabGet(b.id) : null;
+    const start = Math.max(0, Math.min(tabs.length - 1, saved != null ? +saved : +b.default || 0));
     if (sel) el.querySelector('select').value = String(start);
     await show(start);
   };
@@ -339,7 +349,7 @@
       drawHead();
       const r = current();
       tbody.innerHTML = r.slice(0, limit).map((x) => {
-        const href = x._design ? ctx.designHref(String(x._design)) : null;
+        const href = x._design ? ctx.designHref(String(x._design)) : x._href ? esc(x._href) : null;
         return `<tr${href ? ` class="click" data-href="${href}"` : ''}${x._s ? ` data-s="${esc(x._s)}"` : ''}>${cols.map((c) => cellHtml(c, x[c.key])).join('')}</tr>`;
       }).join('');
       const cnt = el.querySelector('.tcount'); if (cnt) cnt.textContent = `${r.length} row${r.length === 1 ? '' : 's'}`;
@@ -347,7 +357,7 @@
       const mb = el.querySelector('.tmore button'); if (mb) mb.onclick = () => { limit += 1000; draw(); };
     };
     thead.onclick = (e) => { const th = e.target.closest('th[data-k]'); if (!th) return; const k = th.dataset.k; if (sortK === k) sortD = sortD === 'asc' ? 'desc' : 'asc'; else { sortK = k; const c = cols.find((x) => x.key === k); sortD = c?.better === 'high' ? 'desc' : 'asc'; } draw(); };
-    tbody.onclick = (e) => { if (e.target.closest('a')) return; const tr = e.target.closest('tr[data-href]'); if (tr) location.hash = tr.dataset.href; };
+    tbody.onclick = (e) => { if (e.target.closest('a')) return; const tr = e.target.closest('tr[data-href]'); if (!tr) return; const h = tr.dataset.href; if (/^https?:/.test(h)) window.open(h, '_blank', 'noopener'); else location.hash = ctx.keepGlobals ? ctx.keepGlobals(h) : h; };
     const si = el.querySelector('.tsearch'); if (si) si.oninput = () => { q = si.value.trim(); draw(); };
     const cb = el.querySelector('.tcsv'); if (cb) cb.onclick = () => {
       const qq = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
@@ -441,10 +451,11 @@
     let stageNote = '';
     if (C.stage) {
       const pick = pickStage([...new Set(C.stage)], ctx);
-      for (let i = 0; i < N; i++) if (C.stage[i] !== pick) base[i] = 0;
+      for (let i = 0; i < N; i++) if (C.stage[i] != null && C.stage[i] !== pick) base[i] = 0;
       stageNote = pick ? ` · ${STAGE_LABEL[pick]}${pick !== ctx.stage ? ' (fallback)' : ''}` : ' · no data at this stage';
     }
     const label = (k, v) => (D[k]?.labels?.[v] ?? v);
+    const catLabels = (k) => catVals(k).map((v) => label(k, v));
     const catVals = (k) => {
       const order = D[k]?.order || Object.keys(D[k]?.labels || {});
       const seen = [...new Set(C[k] || [])].filter((v) => v != null);
@@ -477,7 +488,7 @@
       for (const [k, [lo, hi]] of Object.entries(st.r)) { const v = keyOf(k, i); if (v == null || (lo != null && v < lo) || (hi != null && v > hi)) return false; }
       const x = keyOf(st.x, i), y = keyOf(st.y, i);
       if (x == null || y == null) return false;
-      if ((st.logx && !(x > 0)) || (st.logy && !(y > 0))) return false;
+      if ((st.logx && D[st.x]?.type !== 'cat' && !(x > 0)) || (st.logy && D[st.y]?.type !== 'cat' && !(y > 0))) return false;
       return true;
     };
     const axisTitle = (k) => { const d = D[k] || {}; return `${d.label || k}${d.unit ? ` (${d.unit})` : ''}`; };
@@ -496,7 +507,7 @@
       const total = base.reduce((a, v) => a + v, 0);
       el.querySelector('.ex-count').textContent = `${idx.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} points${stageNote}${b.design_key ? ' · click a highlighted point to open the design' : ''}`;
       const facets = st.facet ? catVals(st.facet).filter((v) => idx.some((i) => C[st.facet][i] === v)) : [null];
-      const xr = idx.map((i) => C[st.x][i]), yr = idx.map((i) => C[st.y][i]);
+      const xr = D[st.x]?.type === 'cat' ? [] : idx.map((i) => C[st.x][i]), yr = D[st.y]?.type === 'cat' ? [] : idx.map((i) => C[st.y][i]);
       const rng = (arr, log) => { if (!arr.length || typeof arr[0] !== 'number') return undefined; let lo = Math.min(...arr), hi = Math.max(...arr); if (log) { lo = Math.log10(lo); hi = Math.log10(hi); } const p = (hi - lo) * 0.04 || 1; return [lo - p, hi + p]; };
       const xR = rng(xr, st.logx), yR = rng(yr, st.logy);
       plots.innerHTML = '';
@@ -509,7 +520,7 @@
           const sy = st.symbol ? sub.map((i) => SYMBOLS[catVals(st.symbol).indexOf(C[st.symbol][i]) % SYMBOLS.length]) : undefined;
           return {
             type: sub.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', name,
-            x: sub.map((i) => C[st.x][i]), y: sub.map((i) => C[st.y][i]),
+            x: sub.map((i) => (D[st.x]?.type === 'cat' ? label(st.x, C[st.x][i]) : C[st.x][i])), y: sub.map((i) => (D[st.y]?.type === 'cat' ? label(st.y, C[st.y][i]) : C[st.y][i])),
             text: sub.map(hoverText), hovertemplate: '%{text}<extra></extra>',
             customdata: b.design_key ? sub.map((i) => C[b.design_key][i]) : undefined,
             marker: Object.assign({ size: sub.length > 3000 ? 4 : 6, opacity: 0.75, symbol: sy }, extraMarker),
@@ -518,18 +529,18 @@
           };
         };
         const isHi = (i) => (b.highlight ? !!C[b.highlight]?.[i] : false);
-        const normal = fi.filter((i) => !isHi(i)), hi = fi.filter(isHi);
+        const normal = fi, hi = fi.filter(isHi);
         if (colorD && colorD.type === 'cat') {
           catVals(st.color).forEach((v, ci) => {
             const sub = normal.filter((i) => C[st.color][i] === v);
-            if (sub.length) traces.push(mk(sub, String(label(st.color, v)), { color: COLORWAY[ci % COLORWAY.length] }));
+            if (sub.length) traces.push(mk(sub, String(label(st.color, v)), { color: colorD.colors?.[v] || COLORWAY[ci % COLORWAY.length] }));
           });
         } else if (colorD) {
           traces.push(mk(normal, 'points', { color: normal.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: fv === null || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
         } else traces.push(mk(normal, 'points', { color: COLORWAY[0] }));
-        if (hi.length) traces.push(mk(hi, b.highlight_label || 'Delivered designs', { size: 10, opacity: 1, color: 'rgba(0,0,0,0)', line: { width: 2, color: themeColors().ink } }));
+        if (hi.length) traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 11, opacity: 1, color: 'rgba(0,0,0,0)', symbol: 'circle-open', line: { width: 2, color: themeColors().ink } }), { type: 'scatter' }));
         let frontN = 0;
-        if (st.pareto && fi.length) {
+        if (st.pareto && fi.length && D[st.x]?.type !== 'cat' && D[st.y]?.type !== 'cat') {
           const fr = pareto(fi).sort((a, c) => C[st.x][a] - C[st.x][c]);
           frontN = fr.length;
           traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Pareto front', x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: '#e11d48', width: 2, shape: 'hv' }, marker: { size: 5, color: '#e11d48' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: fv === null || fv === facets[0] });
@@ -539,8 +550,8 @@
         plots.appendChild(div);
         const layout = deepMerge(baseLayout(facets.length > 1 ? 300 : (+b.height || 520)), {
           title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${fi.length.toLocaleString('en-US')} pts${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 } } : undefined,
-          xaxis: { title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR },
-          yaxis: { title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR },
+          xaxis: D[st.x]?.type === 'cat' ? { title: { text: axisTitle(st.x) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.x) } : { title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR },
+          yaxis: D[st.y]?.type === 'cat' ? { title: { text: axisTitle(st.y) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.y) } : { title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR },
           margin: facets.length > 1 ? { l: 55, r: 10, t: 34, b: 45 } : undefined,
           showlegend: facets.length === 1 || fv === facets[0],
         });
@@ -573,11 +584,17 @@
       const c = e.target.closest('[data-p]'); if (!c) return;
       const p = b.presets[+c.dataset.p];
       Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: p.pareto ?? st.pareto });
+      if (p.show) {
+        for (const k of Object.keys(st.f)) st.f[k] = new Set();
+        for (const [k, vals] of Object.entries(p.show)) if (st.f[k]) st.f[k] = new Set(catVals(k).map(String).filter((v) => !vals.map(String).includes(v)));
+        el.querySelectorAll('.ex-filters [data-f]').forEach((c) => c.classList.toggle('on', !st.f[c.dataset.f]?.has(c.dataset.v)));
+      }
       for (const k of ['x', 'y', 'color', 'symbol', 'facet']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.value = st[k]; }
       for (const k of ['logx', 'logy', 'pareto']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.checked = st[k]; }
       pr.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
       draw();
     };
+    if (b.preset_default != null && pr) { const c0 = pr.querySelector(`[data-p="${+b.preset_default}"]`); if (c0) { c0.click(); return; } }
     await draw();
   };
 

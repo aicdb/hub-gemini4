@@ -46,9 +46,10 @@ function parseHash() {
   const [path, query = ''] = h.split('?');
   const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
   const qp = new URLSearchParams(query);
-  const st = { ...DEFAULTS, tab: parts[0] || '', design: parts.slice(1).join('/') || '', f: {} };
+  const st = { ...DEFAULTS, tab: parts[0] || '', design: parts.slice(1).join('/') || '', f: {}, tabs: {} };
   for (const [k, v] of qp) {
     if (k.startsWith('f.')) st.f[k.slice(2)] = v;
+    else if (k.startsWith('t.')) st.tabs[k.slice(2)] = v;
     else st[k] = v;
   }
   if (!STAGES.includes(st.stage)) st.stage = DEFAULTS.stage;
@@ -58,6 +59,7 @@ function hashFor(st) {
   const qp = new URLSearchParams();
   for (const k of [...GLOBAL_KEYS, 'view', 'fam', 'sort', 'fig', 'page', 'mm']) if (st[k] !== undefined && st[k] !== DEFAULTS[k]) qp.set(k, st[k]);
   for (const [k, v] of Object.entries(st.f || {})) if (v) qp.set(`f.${k}`, v);
+  for (const [k, v] of Object.entries(st.tabs || {})) if (v !== undefined && v !== '') qp.set(`t.${k}`, v);
   const path = [st.tab, st.design].filter(Boolean).map(encodeURIComponent).join('/');
   const q = qp.toString();
   return `#/${path}${q ? `?${q}` : ''}`;
@@ -71,7 +73,7 @@ function go(patch, { keepLocal = true } = {}) {
 const tabHref = (tab, design = '', page = '') => {
   const st = { ...S, tab, design, page };
   if (tab !== S.tab) { st.fam = ''; st.sort = ''; st.f = {}; st.mm = ''; }
-  st.fig = '';
+  st.fig = ''; st.tabs = {};
   return hashFor(st);
 };
 
@@ -109,6 +111,21 @@ function loadPlotly() {
   });
   return plotlyP;
 }
+/** add the current global options to an internal "#/comp/…" link that has none */
+function keepGlobals(h) {
+  if (!/^#\//.test(h)) return h;
+  const [path, q = ''] = h.split('?');
+  const qp = new URLSearchParams(q);
+  for (const k of GLOBAL_KEYS) if (!qp.has(k) && S[k] !== undefined && S[k] !== DEFAULTS[k] && k !== 'q') qp.set(k, S[k]);
+  const out = qp.toString();
+  return `${path}${out ? `?${out}` : ''}`;
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('a[href^="#/"]');
+  if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  const h = keepGlobals(a.getAttribute('href'));
+  if (h !== a.getAttribute('href')) { e.preventDefault(); location.hash = h; }
+});
 const repoUrl = (c, f) => (c.repo_raw && f ? c.repo_raw + f.split('/').map(encodeURIComponent).join('/') : '#');
 const thumbFor = (c, g, cell) => (g ? c.thumbs?.[`${g}|${cell || ''}`] || null : null);
 /** context handed to Blocks.render: global options + URL resolvers for this component */
@@ -122,6 +139,9 @@ function ctxFor(c) {
     json: (p) => { const u = asset(c, p); if (!JSON_CACHE.has(u)) JSON_CACHE.set(u, getJSON(u).catch((e) => { JSON_CACHE.delete(u); throw e; })); return JSON_CACHE.get(u); },
     designHref: (id) => (c._ids.has(id) ? tabHref(c.id, id) : null),
     plotly: loadPlotly,
+    tabGet: (id) => (S.tabs?.[id] !== undefined ? S.tabs[id] : null),
+    tabSet: (id, i) => { S.tabs = { ...(S.tabs || {}), [id]: String(i) }; history.replaceState(null, '', hashFor(S)); },
+    keepGlobals,
   };
 }
 
@@ -287,7 +307,7 @@ function viewCfg(c) {
   let metrics = mx.metrics?.length ? mx.metrics : card.slice(0, 2);
   const presets = mx.presets || [];
   if (S.mm.startsWith('p:') && presets[+S.mm.slice(2)]) metrics = presets[+S.mm.slice(2)].metrics;
-  else if (S.mm.startsWith('m:') && c._metric[S.mm.slice(2)]) metrics = [S.mm.slice(2), ...metrics.filter((k) => k !== S.mm.slice(2))].slice(0, 2);
+  else if (S.mm.startsWith('m:') && c._metric[S.mm.slice(2)]) metrics = [S.mm.slice(2), ...metrics.filter((k) => k !== S.mm.slice(2))].slice(0, Math.max(2, metrics.length));
   return { card, presets, mx: { rows: mx.rows || [], cols: mx.cols || [], metrics } };
 }
 function axisLabel(c, ak, v) { return c._axisLabel[ak]?.[v]?.label ?? v ?? '—'; }
@@ -420,7 +440,8 @@ function renderMatrix(view, c, list) {
     if (!cellMap.has(k)) cellMap.set(k, []);
     cellMap.get(k).push(d);
   }
-  const [m1, m2] = mx.metrics.map((k) => c._metric[k]);
+  const [m1, ...mRest] = mx.metrics.map((k) => c._metric[k]).filter(Boolean);
+  const m2 = mRest[0];
   const colLabel = (key) => (mx.cols.length ? key.split('\u0001').map((v, i) => esc(axisLabel(c, mx.cols[i], v))).join('<br>') : 'design');
   const rowLabel = (key) => {
     const parts = key.split('\u0001').map((v, i) => axisLabel(c, mx.rows[i], v));
@@ -438,12 +459,12 @@ function renderMatrix(view, c, list) {
     return `<td class="cell ${cellClass(d, r)}" data-id="${esc(d.id)}" title="${esc(tip)}">
       ${r?.fallback ? `<span class="fb">${STAGE_SHORT[r.st]}</span>` : ''}
       <div class="v1">${r ? fmt(met[m1?.key], m1) : 'no data'}</div>
-      ${m2 ? `<div class="v2">${r ? `${esc(m2.label)} ${fmt(met[m2.key], m2)}` : '&nbsp;'}</div>` : ''}
+      ${mRest.slice(0, 4).map((mm) => `<div class="v2">${r ? `${esc(mm.label)} ${fmt(met[mm.key], mm)}` : '&nbsp;'}</div>`).join('')}
       <div class="v2">${r?.r.pvt ? `PVT ${r.r.pvt.pass}/${r.r.pvt.total}` : ''}${physOk(d) ? `${r?.r.pvt ? ' · ' : ''}DRC/LVS ✓` : ''}${ds.length > 1 ? ` <span class="more">+${ds.length - 1}</span>` : ''}</div>
     </td>`;
   }).join('')).join('')}</tr>`).join('');
   view.innerHTML = `<div class="table-scroll"><table class="matrix"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table></div>
-    <div class="legend"><span>Cell: <b>${esc(m1?.label || '')}</b>${m2 ? ` / ${esc(m2.label)}` : ''} at <b>${STAGE_LABEL[S.stage]}</b></span>
+    <div class="legend"><span>Cell: <b>${esc(m1?.label || '')}</b>${mRest.slice(0, 4).map((mm) => ` / ${esc(mm.label)}`).join('')} at <b>${STAGE_LABEL[S.stage]}</b></span>
       <span><i style="background:var(--goodbg)"></i>meets generator criteria</span><span><i style="background:var(--warnbg)"></i>not robust over PVT/MC</span>
       <span><i style="background:var(--badbg)"></i>DRC/LVS failed</span><span><i style="background:var(--nonebg)"></i>no result at this stage</span>
       <span><b>PRE/PART</b> corner tag = value filled from an earlier stage</span></div>`;
@@ -468,11 +489,25 @@ function badgesOf(d, r) {
 }
 function renderCards(view, c, list) {
   const { card } = viewCfg(c);
+  const gk = c._fam[S.fam]?.cards_group_by || c.cards_group_by;   // optional axis key (or array of keys)
+  const gkeys = gk ? (Array.isArray(gk) ? gk : [gk]).filter((k) => c.axes[k]) : [];
+  const gval = (d) => gkeys.map((k) => d.axes[k] ?? '').join('\u0001');
+  if (gkeys.length) {
+    const order = (d) => gkeys.map((k) => axisIdx(c, k, d.axes[k]));
+    list = list.map((d, i) => [d, i]).sort((a, b) => { const x = order(a[0]), y = order(b[0]); for (let j = 0; j < x.length; j++) if (x[j] !== y[j]) return x[j] - y[j]; return a[1] - b[1]; }).map((x) => x[0]);
+  }
+  let lastG = null;
   const html = list.slice(0, limit).map((d) => {
+    let head = '';
+    if (gkeys.length && gval(d) !== lastG) {
+      lastG = gval(d);
+      const n = list.filter((x) => gval(x) === lastG).length;
+      head = `<h3 class="cgroup">${gkeys.map((k) => `<span class="subtle">${esc(c.axes[k].label)}:</span> ${esc(axisLabel(c, k, d.axes[k]))}`).join(' · ')} <span class="n">${n}</span></h3>`;
+    }
     const r = resolve(d);
     const t = thumbOf(c, d);
-    const kv = card.slice(0, 6).map((k) => { const m = c._metric[k]; return m ? `<div><span>${esc(m.label)}</span><b>${r ? fmt(r.r.metrics[k], m) : '—'}</b></div>` : ''; }).join('');
-    return `<a class="card" href="${tabHref(c.id, d.id)}">
+    const kv = card.slice(0, 12).map((k) => { const m = c._metric[k]; return m ? `<div><span>${esc(m.label)}</span><b>${r ? fmt(r.r.metrics[k], m) : '—'}</b></div>` : ''; }).join('');
+    return `${head}<a class="card" href="${tabHref(c.id, d.id)}">
       <div class="thumb">${t ? `<img loading="lazy" decoding="async" src="${t}" alt="">` : '<span class="ph">no preview</span>'}</div>
       <div class="body"><h3>${esc(d.title)}</h3><div class="id">${esc(d.id)}</div>
         <div class="kv"><div><span>V<sub>DD</sub></span><b>${fmtV(d.vdd)}</b></div>${kv}</div>
@@ -565,7 +600,9 @@ async function renderDetail(main, c) {
 
   main.innerHTML = `
     <div class="crumbs"><a href="${tabHref('')}">Hub</a> / <a href="${tabHref(c.id)}">${esc(c.name)}</a>${fam ? ` / <a href="${hashFor({ ...S, design: '', fam: fam.id, page: '' })}">${esc(fam.label)}</a>` : ''} / <span class="mono">${esc(d.id)}</span>
-      <span style="float:right">${prev ? `<a href="${tabHref(c.id, prev.id)}" title="${esc(prev.title)}">← prev</a>` : ''}${prev && next ? ' · ' : ''}${next ? `<a href="${tabHref(c.id, next.id)}" title="${esc(next.title)}">next →</a>` : ''}</span></div>
+      <span class="dnav">${prev ? `<a href="${tabHref(c.id, prev.id)}" title="${esc(prev.title)}">← prev</a>` : ''}
+        <select id="djump" title="Jump to another design">${c.designs.filter((x) => !d.family || x.family === d.family).map((x) => `<option value="${esc(x.id)}" ${x.id === d.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}</select>
+        ${next ? `<a href="${tabHref(c.id, next.id)}" title="${esc(next.title)}">next →</a>` : ''}</span></div>
     <section class="intro" style="grid-template-columns:1fr">
       <div>
         <div class="eyebrow">${esc(techLabel(d.technology))} · V<sub>DD</sub> ${fmtV(d.vdd)}${r ? ` · showing ${STAGE_LABEL[r.st]}${r.fallback ? ' (fallback)' : ''}` : ''}</div>
@@ -592,6 +629,7 @@ async function renderDetail(main, c) {
     </div>
     <div id="detail-sections"></div>`;
   window.scrollTo(0, 0);
+  $('#djump').onchange = (e) => { location.hash = tabHref(c.id, e.target.value); };
   if (figs.length) await Blocks.render($('#figs'), [{ type: 'gallery', title: 'Figures', items: figs, max_height: 620, default: +S.fig || 0 }], ctx);
   if (dls.length) await Blocks.render($('#dls'), [{ type: 'downloads', title: 'Files', items: dls, caption: 'Files marked **repo** are in the private source repository at the exported commit; access must be requested.' }], ctx);
   else $('#dls').remove();

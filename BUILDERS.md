@@ -98,9 +98,10 @@ docs/
   "axes": {                                     // categorical dimensions, values in display order
     "topology": { "label": "Architecture", "values": [ { "id": "nmos_5t", "label": "5-T NMOS" } ] }
   },
-  "matrix": { "rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "a0"],   // cell = metrics[0] big, metrics[1] small
+  "matrix": { "rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "a0"],   // cell = metrics[0] big, up to 4 more small
               "presets": [ { "label": "Noise & PSRR", "metrics": ["noise", "psrr"] } ] },   // optional; users can also pick any metric
-  "card_metrics": ["a0", "ugb", "power", "area"],
+  "card_metrics": ["a0", "ugb", "power", "area"],   // up to 12; the first is the headline
+  "cards_group_by": "class",                     // optional axis key (or list) to group the card grid
   "families": [ … ],                            // optional sub-tabs (§4.3)
   "pages": [ … ],                               // extra pages next to "Designs" (§4.2)
   "designs": [ … ]                              // §4.1
@@ -205,7 +206,7 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 | `layout` | `gds`, `cell` (optional sub-cell), `max_height` | rendered GDS thumbnail + link to the raw GDS in the repo |
 | `gallery` | `items[]: {label, src \| gds, cell?, caption?}`, `style`: tabs/grid, `cols`, `default` | several figures as tabs or a grid |
 | `downloads` | `items[]: {label, file \| src \| url, note?}` | link list; `file` → raw file in the repo, `src` → hosted, `url` → external |
-| `tabs` | `tabs[]: {label, blocks[], vdd?, tech?}`, `style`: tabs/select, `label`, `default` | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
+| `tabs` | `tabs[]: {label, blocks[], vdd?, tech?}`, `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
 
 **Table columns:** `{key, label, unit, si, digits, type, group, better, md, align, title}`.
 - `type`: `text`, `num` (default for numbers), `status` (true ✓ / false ✗, coloured),
@@ -213,8 +214,12 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 - `group` adds a grouped header row. `md: true` renders cell text as inline markdown.
 - A cell can be a plain value or `{v, s, title, t, href}`: `s` = good/warn/bad/muted colours
   the cell, `title` is a tooltip, `t` is display text for design links.
-- A row object can carry `_design` (the whole row links to that design) and `_s` (row
-  colour).
+- A row object can carry `_design` (the whole row links to that design), `_href` (the row
+  links to any `#/…` hub URL, e.g. a page with a tab preselected via `t.<tab id>=<index>`, or
+  an external URL), and `_s` (row colour).
+- Internal links (`#/<component>/<design>` in markdown or `_href`) keep the user's global
+  options automatically. Links to sibling components are fine: `[comparator](#/sa/san-lv-1v8-sub)`.
+  Escape markdown characters with a backslash (`\_`); underscores inside link URLs are safe.
 - `rows` may be arrays in column order instead of objects.
 - A column named `vdd` (or `tech`) makes the table follow the global filter.
 - `stage_column: "stage"` makes it follow the global simulation stage.
@@ -283,6 +288,12 @@ Everything visible on the old site must exist in the export. Typical mapping:
   "highlight": "delivered", "highlight_label": "Delivered cards", "design_key": "design",
   "presets": [ { "label": "Gain vs power", "x": "power", "y": "a0" }, { "label": "Per architecture", "facet": "arch" } ] }
 ```
+
+Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`),
+`log`, `better`, `unit`/`si`/`digits`. Explorer options: `cat_axes: true` lets categorical
+dims be chosen as X/Y (strip plot); `presets[]: {label, x, y, color, symbol, facet, logx,
+logy, pareto, show: {catKey: [visible values]}}`; `preset_default` (index applied on load).
+Rows with a null `stage` are shown at every stage.
 
 Users can switch X/Y/colour/symbol/facet, toggle log axes and a Pareto front, and filter
 by categorical chips and numeric ranges. Clicking a highlighted point opens the design.
