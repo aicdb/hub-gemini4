@@ -693,9 +693,11 @@
       const c = e.target.closest('[data-p]'); if (!c) return;
       const p = b.presets[+c.dataset.p];
       Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: pnorm(p.pareto) });
-      if (p.show) {
+      if (p.show || b.presets.some((x) => x.show)) {
+        // a preset with `show` sets the chips; once any preset does, presets without it restore the defaults
         for (const k of Object.keys(st.f)) st.f[k] = new Set();
-        for (const [k, vals] of Object.entries(p.show)) if (st.f[k]) st.f[k] = new Set(catVals(k).map(String).filter((v) => !vals.map(String).includes(v)));
+        applyShow(b.filters_default);
+        for (const [k, vals] of Object.entries(p.show || {})) if (st.f[k]) st.f[k] = new Set(catVals(k).map(String).filter((v) => !vals.map(String).includes(v)));
         el.querySelectorAll('.ex-filters [data-f]').forEach((c) => c.classList.toggle('on', !st.f[c.dataset.f]?.has(c.dataset.v)));
       }
       for (const k of ['x', 'y', 'color', 'symbol', 'facet', 'pareto']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.value = st[k]; }
