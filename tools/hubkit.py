@@ -204,6 +204,22 @@ def size_report(docs: Path, exclude, budget_mb: float, rep: Report, top: int = 5
     return mb
 
 
+def prune_excluded(comp: dict, exclude) -> int:
+    """Drop references to files the hub will not publish (e.g. pre-rendered layout SVGs)."""
+    n = 0
+    for d in comp.get("designs", []):
+        f = d.get("files") or {}
+        for k in [k for k, p in f.items() if isinstance(p, str) and _excluded(p, exclude)]:
+            del f[k]; n += 1
+        for key in ("images", "downloads"):
+            lst = d.get(key) or []
+            keep = [x for x in lst if not (isinstance(x, dict) and _excluded(str(x.get("path", "")), exclude))]
+            n += len(lst) - len(keep)
+            if key in d:
+                d[key] = keep
+    return n
+
+
 # ----------------------------------------------------------------------------- normalization
 def normalize(comp: dict, src: dict, cfg: dict, commit: str | None, origin: str) -> dict:
     """Fill defaults so the web app can stay simple."""
@@ -337,6 +353,9 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
             continue
         comp, origin = load_component(cid, docs, rep)
         if comp is not None:
+            dropped = prune_excluded(comp, exclude)
+            if dropped:
+                print(f"  {cid}: dropped {dropped} references to unpublished files (exclude patterns)")
             if comp.get("id") != cid:
                 rep.err(f'component.json id {comp.get("id")!r} != sources.json id {cid!r}')
             validate_component(comp, docs, rep, exclude)

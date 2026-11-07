@@ -218,6 +218,8 @@ uncompressed GDS) are never published.
 
 How to slim down, by impact:
 1. **Layout renders:** stop publishing `layout.svg`, `cap_layout.svg` and the like (§3.1).
+   The hub already excludes every `*layout*.svg` (`sources.json → exclude`), so they only
+   cost you repo size. Note that your classic report won't show them on the hub.
    The hub renders the `.gds.gz`. This alone removes ~355 MB across the repos (sdm 150 MB,
    sar 114 MB, opa 39 MB, aux 27 MB, ldo 19 MB).
 2. **Duplicates:** don't ship near-identical files (e.g. `schematic.svg` +
