@@ -400,7 +400,7 @@
     if (x && typeof x === 'object') { const o = {}; for (const [k, v] of Object.entries(x)) o[k] = themeify(v, t); return o; }
     return x;
   }
-  const COLORWAY = ['#d9423a', '#2563eb', '#16a34a', '#e8a33d', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#4f46e5', '#0d9488', '#9333ea', '#a16207', '#64748b', '#be185d'];
+  const COLORWAY = ['#d9423a', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#17becf', '#e377c2', '#8c564b', '#bcbd22', '#7f7f7f', '#393b79', '#637939', '#a55194', '#6b6ecf'];
   function deepMerge(base, over) {
     if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
     const out = Array.isArray(base) ? [...base] : Object.assign({}, base);
@@ -450,6 +450,7 @@
     const height = +b.height || +fig.layout?.height || 380;
     const layout = deepMerge(baseLayout(height), themeify(fig.layout || {}));
     layout.height = height;
+    for (const [k, ax] of Object.entries(layout)) if (/^[xy]axis\d*$/.test(k) && ax && ax.type === 'log' && ax.dtick === undefined && ax.tickvals === undefined) ax.dtick = 'D2';
     const traces = themeify(filterTraces(fig.data, ctx));
     if (!traces.length) { div.innerHTML = '<div class="note muted">No data for the current options.</div>'; return; }
     await plot(div, traces, layout, b, ctx);
@@ -458,6 +459,7 @@
   /* ------------------------------------------------------------ explorer (design-space) */
   const SYMBOLS = ['circle', 'x', 'diamond', 'square', 'triangle-up', 'cross', 'star', 'triangle-down', 'pentagon', 'hexagon'];
   R.explorer = async (el, b, ctx) => {
+    const pnorm = (v) => (v === true ? 'all' : v === false || v == null ? '' : String(v));
     const data = await ctx.json(b.src);
     const dims = (b.dims || data.dims || []).map((d) => Object.assign({ type: 'num' }, d));
     const D = Object.fromEntries(dims.map((d) => [d.key, d]));
@@ -469,10 +471,12 @@
     const num = dims.filter((d) => d.type !== 'cat'), cat = dims.filter((d) => d.type === 'cat');
     const st = {
       x: b.x || num[0]?.key, y: b.y || num[1]?.key, color: b.color ?? (cat[0]?.key || ''), symbol: b.symbol || '',
-      facet: b.facet_default || '', logx: D[b.x]?.log ?? false, logy: D[b.y]?.log ?? false, pareto: !!b.pareto_default,
+      facet: b.facet_default || '', logx: D[b.x]?.log ?? false, logy: D[b.y]?.log ?? false, pareto: pnorm(b.pareto_default),
       f: {}, r: {},
     };
     for (const k of b.filters || []) if (D[k]?.type === 'cat') st.f[k] = new Set();
+    const applyShow = (show) => { for (const [k, vals] of Object.entries(show || {})) if (st.f[k]) st.f[k] = new Set((C[k] ? [...new Set(C[k])] : []).filter((v) => v != null).map(String).filter((v) => !vals.map(String).includes(v))); };
+    applyShow(b.filters_default);
     // global options
     let base = new Uint8Array(N).fill(1);
     if (ctx.vdd && C.vdd) for (let i = 0; i < N; i++) if (C.vdd[i] != null && String(C.vdd[i]) !== ctx.vdd) base[i] = 0;
@@ -505,7 +509,7 @@
     };
     const opt = (list, cur, none) => (none ? `<option value="">${none}</option>` : '') + list.map((d) => `<option value="${esc(d.key)}" ${d.key === cur ? 'selected' : ''}>${esc(d.label || d.key)}${d.unit ? ` (${esc(d.unit)})` : ''}</option>`).join('');
     el.innerHTML = `${head(b)}${b.intro ? `<div class="md">${md(b.intro)}</div>` : ''}
-      ${b.presets?.length ? `<div class="subtabs ex-presets">${b.presets.map((p, i) => `<button class="chip" data-p="${i}">${inline(p.label)}</button>`).join('')}</div>` : ''}
+      ${b.presets?.length ? `<div class="subtabs ex-presets">${b.presets.map((p, i) => `<button class="chip" data-p="${i}">${inline(p.label)}</button>`).join('')}</div><div class="md ex-desc subtle"></div>` : ''}
       <div class="ex-controls">
         <label>X <select data-c="x">${opt(num.concat(b.cat_axes ? cat : []), st.x)}</select></label>
         <label class="check"><input type="checkbox" data-c="logx" ${st.logx ? 'checked' : ''}> log</label>
@@ -514,11 +518,11 @@
         <label>Color <select data-c="color">${opt(dims, st.color, 'none')}</select></label>
         ${cat.length ? `<label>Symbol <select data-c="symbol">${opt(cat, st.symbol, 'none')}</select></label>` : ''}
         ${cat.length ? `<label>Facet <select data-c="facet">${opt(cat, st.facet, 'none')}</select></label>` : ''}
-        <label class="check" title="Highlight the non-dominated (Pareto) points for the current axes"><input type="checkbox" data-c="pareto" ${st.pareto ? 'checked' : ''}> Pareto front</label>
+        <label title="Non-dominated (Pareto) points for the current axes (direction from each metric's 'better')">Pareto <select data-c="pareto"><option value="">off</option><option value="all" ${st.pareto === 'all' ? 'selected' : ''}>overall front</option><option value="color" ${st.pareto === 'color' ? 'selected' : ''}>front per colour group</option></select></label>
       </div>
       <div class="ex-filters">${(b.filters || []).map((k) => {
         const d = D[k]; if (!d) return '';
-        if (d.type === 'cat') return `<div class="frow"><span class="lbl">${esc(d.label || k)}</span><div class="chips">${catVals(k).map((v) => `<button class="chip on" data-f="${esc(k)}" data-v="${esc(v)}">${esc(label(k, v))}</button>`).join('')}</div></div>`;
+        if (d.type === 'cat') return `<div class="frow"><span class="lbl">${esc(d.label || k)}</span><div class="chips">${catVals(k).map((v) => `<button class="chip ${st.f[k]?.has(String(v)) ? '' : 'on'}" data-f="${esc(k)}" data-v="${esc(v)}">${esc(label(k, v))}</button>`).join('')}</div></div>`;
         return `<div class="frow"><span class="lbl">${esc(d.label || k)}${d.unit ? ` (${esc(d.unit)})` : ''}</span><div class="chips"><input type="number" step="any" placeholder="min" data-r="${esc(k)}" data-e="0"> – <input type="number" step="any" placeholder="max" data-r="${esc(k)}" data-e="1"></div></div>`;
       }).join('')}</div>
       <div class="subtle ex-count"></div><div class="ex-plots"></div>${caption(b)}`;
@@ -543,21 +547,42 @@
       for (const p of pts) if (p[1] < best) { front.push(p[2]); best = p[1]; }
       return front;
     };
+    const logTicks = (r) => (r && r[1] - r[0] >= 1.5 ? { dtick: 1, minor: { dtick: 'D1', showgrid: false } } : {});
     const draw = async () => {
       const P = await ctx.plotly();
       const idx = []; for (let i = 0; i < N; i++) if (pass(i)) idx.push(i);
       const total = base.reduce((a, v) => a + v, 0);
-      el.querySelector('.ex-count').textContent = `${idx.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} points${stageNote}${b.design_key ? ' · click a highlighted point to open the design' : ''}`;
+      el.querySelector('.ex-count').textContent = `${idx.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} points${stageNote}${b.design_key && b.highlight ? ' · click a ringed point to open the design' : b.design_key ? ' · click a point with a design to open it' : ''}`;
       const facets = st.facet ? catVals(st.facet).filter((v) => idx.some((i) => C[st.facet][i] === v)) : [null];
-      const xr = D[st.x]?.type === 'cat' ? [] : idx.map((i) => C[st.x][i]), yr = D[st.y]?.type === 'cat' ? [] : idx.map((i) => C[st.y][i]);
-      const rng = (arr, log) => { if (!arr.length || typeof arr[0] !== 'number') return undefined; let lo = Math.min(...arr), hi = Math.max(...arr); if (log) { lo = Math.log10(lo); hi = Math.log10(hi); } const p = (hi - lo) * 0.04 || 1; return [lo - p, hi + p]; };
+      const multi = facets.length > 1;
+      // axis ranges: shared across facets; with fixed_axes over every point of the block (stable when filtering)
+      const rIdx = b.fixed_axes ? [...Array(N).keys()].filter((i) => C[st.x]?.[i] != null && C[st.y]?.[i] != null) : idx;
+      const xr = D[st.x]?.type === 'cat' ? [] : rIdx.map((i) => C[st.x][i]).filter((v) => typeof v === 'number' && (!st.logx || v > 0));
+      const yr = D[st.y]?.type === 'cat' ? [] : rIdx.map((i) => C[st.y][i]).filter((v) => typeof v === 'number' && (!st.logy || v > 0));
+      const rng = (arr, log) => { if (!arr.length) return undefined; let lo = Infinity, hi = -Infinity; for (const v of arr) { if (v < lo) lo = v; if (v > hi) hi = v; } if (log) { lo = Math.log10(lo); hi = Math.log10(hi); } const p = (hi - lo) * 0.04 || 1; return [lo - p, hi + p]; };
       const xR = rng(xr, st.logx), yR = rng(yr, st.logy);
       plots.innerHTML = '';
-      plots.className = `ex-plots${facets.length > 1 ? ' facets' : ''}`;
+      plots.className = `ex-plots${multi ? ' facets' : ''}`;
+      const colorD = D[st.color];
+      const isHi = (i) => (b.highlight ? !!C[b.highlight]?.[i] : false);
+      const paretoOk = (i) => (b.pareto_include_highlight || !isHi(i)) && Object.entries(b.pareto_on || {}).every(([k, vals]) => vals.map(String).includes(String(C[k]?.[i])));
+      const ink = themeColors().ink, muted = themeColors().muted;
+      const colOf = (v, ci) => colorD?.colors?.[v] || COLORWAY[ci % COLORWAY.length];
+      // facet grids get one HTML legend instead of a Plotly legend per facet
+      if (multi) {
+        const sw = [];
+        if (colorD && colorD.type === 'cat') catVals(st.color).forEach((v, ci) => sw.push(`<span><i style="background:${colOf(v, ci)}"></i>${esc(label(st.color, v))}</span>`));
+        if (st.symbol) catVals(st.symbol).forEach((v, si) => sw.push(`<span><b class="sym">${['●', '✕', '◆', '■', '▲', '✚', '★', '▼', '⬟', '⬢'][si % 10]}</b>${esc(label(st.symbol, v))}</span>`));
+        if (b.highlight) sw.push(`<span><b class="sym">◯</b>${esc(b.highlight_label || 'Delivered designs')}</span>`);
+        if (st.pareto) sw.push(`<span><b class="sym">┈</b>${st.pareto === 'color' ? 'Pareto front per colour group' : 'Pareto front'}</span>`);
+        plots.insertAdjacentHTML('beforebegin', '');
+        const lg = document.createElement('div'); lg.className = 'ex-legend'; lg.innerHTML = sw.join('');
+        plots.appendChild(lg);
+      }
       for (const fv of facets) {
         const fi = fv === null ? idx : idx.filter((i) => C[st.facet][i] === fv);
         const traces = [];
-        const colorD = D[st.color];
+        const showL = !multi;
         const mk = (sub, name, extraMarker = {}) => {
           const sy = st.symbol ? sub.map((i) => SYMBOLS[catVals(st.symbol).indexOf(C[st.symbol][i]) % SYMBOLS.length]) : undefined;
           return {
@@ -566,38 +591,44 @@
             text: sub.map(hoverText), hovertemplate: '%{text}<extra></extra>',
             customdata: b.design_key ? sub.map((i) => C[b.design_key][i]) : undefined,
             marker: Object.assign({ size: sub.length > 3000 ? 4 : 6, opacity: 0.75, symbol: sy }, extraMarker),
-            showlegend: fv === null || fv === facets[0],
-            legendgroup: name,
+            showlegend: showL, legendgroup: name,
           };
         };
-        const isHi = (i) => (b.highlight ? !!C[b.highlight]?.[i] : false);
-        const normal = fi, hi = fi.filter(isHi);
         if (colorD && colorD.type === 'cat') {
           catVals(st.color).forEach((v, ci) => {
-            const sub = normal.filter((i) => C[st.color][i] === v);
-            if (sub.length) traces.push(mk(sub, String(label(st.color, v)), { color: colorD.colors?.[v] || COLORWAY[ci % COLORWAY.length] }));
+            const sub = fi.filter((i) => C[st.color][i] === v);
+            if (sub.length) traces.push(mk(sub, String(label(st.color, v)), { color: colOf(v, ci) }));
           });
         } else if (colorD) {
-          traces.push(mk(normal, 'points', { color: normal.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: fv === null || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
-        } else traces.push(mk(normal, 'points', { color: COLORWAY[0] }));
-        if (hi.length) { const ink = themeColors().ink; traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 12, opacity: 1, color: ink, symbol: 'circle-open', line: { width: 2, color: ink } }), { type: 'scatter' })); }
+          traces.push(mk(fi, 'points', { color: fi.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: !multi || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
+        } else traces.push(mk(fi, 'points', { color: COLORWAY[0] }));
+        // symbol legend entries (the point traces are split by colour, so symbols need their own key)
+        if (st.symbol && showL) catVals(st.symbol).forEach((v, si) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${D[st.symbol]?.label || st.symbol}: ${label(st.symbol, v)}`, marker: { symbol: SYMBOLS[si % SYMBOLS.length], color: muted, size: 8 }, hoverinfo: 'skip', legendgroup: `sym-${v}` }));
+        const hi = fi.filter(isHi);
+        if (hi.length) traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 12, opacity: 1, color: ink, symbol: 'circle-open', line: { width: 2, color: ink } }), { type: 'scatter' }));
         let frontN = 0;
         if (st.pareto && fi.length && D[st.x]?.type !== 'cat' && D[st.y]?.type !== 'cat') {
-          const fr = pareto(fi).sort((a, c) => C[st.x][a] - C[st.x][c]);
-          frontN = fr.length;
-          traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Pareto front', x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: themeColors().ink, width: 2, dash: 'dot', shape: 'hv' }, marker: { size: 5, color: themeColors().ink }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: fv === null || fv === facets[0] });
+          const cand = fi.filter(paretoOk);
+          const groups = st.pareto === 'color' && colorD?.type === 'cat' ? catVals(st.color).map((v, ci) => [v, cand.filter((i) => C[st.color][i] === v), colOf(v, ci)]) : [[null, cand, ink]];
+          for (const [gv, gi, gc] of groups) {
+            if (!gi.length) continue;
+            const fr = pareto(gi).sort((a, c) => C[st.x][a] - C[st.x][c]);
+            frontN += fr.length;
+            traces.push({ type: 'scatter', mode: 'lines', name: gv === null ? 'Pareto front' : `front: ${label(st.color, gv)}`, x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: gc, width: 2, dash: gv === null ? 'dot' : 'solid', shape: 'hv' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: showL && gv === null, legendgroup: gv === null ? 'pareto' : String(label(st.color, gv)) });
+          }
         }
         const div = document.createElement('div');
         div.className = 'chart';
         plots.appendChild(div);
-        const layout = deepMerge(baseLayout(facets.length > 1 ? 300 : (+b.height || 520)), {
-          title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${fi.length.toLocaleString('en-US')} pts${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 } } : undefined,
-          xaxis: D[st.x]?.type === 'cat' ? { title: { text: axisTitle(st.x) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.x) } : { title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR },
-          yaxis: D[st.y]?.type === 'cat' ? { title: { text: axisTitle(st.y) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.y) } : { title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR },
-          margin: facets.length > 1 ? { l: 55, r: 10, t: 34, b: 45 } : undefined,
-          showlegend: facets.length === 1 || fv === facets[0],
+        const xa = D[st.x]?.type === 'cat' ? { title: { text: axisTitle(st.x) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.x) } : Object.assign({ title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR }, st.logx ? logTicks(xR) : {});
+        const ya = D[st.y]?.type === 'cat' ? { title: { text: axisTitle(st.y) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.y) } : Object.assign({ title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR }, st.logy ? logTicks(yR) : {});
+        const layout = deepMerge(baseLayout(multi ? 300 : (+b.height || 520)), {
+          title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${fi.length.toLocaleString('en-US')} pts${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 }, y: 0.98 } : undefined,
+          xaxis: xa, yaxis: ya,
+          margin: multi ? { l: 55, r: 10, t: 34, b: 45 } : undefined,
+          showlegend: showL,
         });
-        await P.newPlot(div, traces, layout, { responsive: true, displaylogo: false });
+        await P.newPlot(div, traces, layout, { responsive: true, displaylogo: false, displayModeBar: multi ? false : 'hover' });
         if (b.design_key) div.on('plotly_click', (ev) => { const id = ev.points?.[0]?.customdata; const href = id != null ? ctx.designHref(String(id)) : null; if (href) location.hash = href; });
       }
     };
@@ -625,15 +656,16 @@
     if (pr) pr.onclick = (e) => {
       const c = e.target.closest('[data-p]'); if (!c) return;
       const p = b.presets[+c.dataset.p];
-      Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: p.pareto ?? false });
+      Object.assign(st, { x: p.x ?? st.x, y: p.y ?? st.y, color: p.color ?? st.color, facet: p.facet ?? '', symbol: p.symbol ?? st.symbol, logx: p.logx ?? !!D[p.x ?? st.x]?.log, logy: p.logy ?? !!D[p.y ?? st.y]?.log, pareto: pnorm(p.pareto) });
       if (p.show) {
         for (const k of Object.keys(st.f)) st.f[k] = new Set();
         for (const [k, vals] of Object.entries(p.show)) if (st.f[k]) st.f[k] = new Set(catVals(k).map(String).filter((v) => !vals.map(String).includes(v)));
         el.querySelectorAll('.ex-filters [data-f]').forEach((c) => c.classList.toggle('on', !st.f[c.dataset.f]?.has(c.dataset.v)));
       }
-      for (const k of ['x', 'y', 'color', 'symbol', 'facet']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.value = st[k]; }
-      for (const k of ['logx', 'logy', 'pareto']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.checked = st[k]; }
+      for (const k of ['x', 'y', 'color', 'symbol', 'facet', 'pareto']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.value = st[k]; }
+      for (const k of ['logx', 'logy']) { const s = el.querySelector(`[data-c=${k}]`); if (s) s.checked = st[k]; }
       pr.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+      const dsc = el.querySelector('.ex-desc'); if (dsc) dsc.innerHTML = p.desc ? md(p.desc) : '';
       draw();
     };
     if (b.preset_default != null && pr) { const c0 = pr.querySelector(`[data-p="${+b.preset_default}"]`); if (c0) { c0.click(); return; } }

@@ -103,6 +103,7 @@ docs/
               "status": { "metric": "range", "good": 95, "warn": 50 } },   // optional: colour cells by thresholds (direction from metric.better)
   "card_metrics": ["a0", "ugb", "power", "area"],   // up to 12; the first is the headline
   "vdd_labels": { "1.8": "V<sub>DD</sub> = 1.8 V · V<sub>CM</sub> = 0.9 V" },   // optional matrix supply-group headers
+  "table_metrics": ["a0", "ugb", "pm", "power", "area"],   // optional default columns of the Designs table (users can show all)
   "cards_group_by": "class",                     // optional axis key (or list) to group the card grid
   "builds_on": [ { "id": "opa", "role": "core OTA" }, { "id": "switch", "role": "chopper switches" } ],  // §4.5
   "families": [ … ],                            // optional sub-tabs (§4.4)
@@ -345,6 +346,13 @@ Everything visible on the old site must exist in the export. Typical mapping:
   "presets": [ { "label": "Gain vs power", "x": "power", "y": "a0" }, { "label": "Per architecture", "facet": "arch" } ] }
 ```
 
+Pareto: users choose off / overall front / front per colour group; set the initial mode with
+`pareto_default: "all" | "color"`. Fronts exclude the highlighted (delivered) overlay unless
+`pareto_include_highlight: true`; restrict the candidates with `pareto_on: {column: [allowed
+values]}` (e.g. only feasible points). `fixed_axes: true` keeps the axis ranges over all points
+(stable when filtering); `filters_default: {catKey: [visible values]}` sets the initial chips;
+`presets[].desc` (markdown) is shown when that preset is selected.
+
 Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`),
 `log`, `better`, `unit`/`si`/`digits`. Explorer options: `cat_axes: true` lets categorical
 dims be chosen as X/Y (strip plot); `presets[]: {label, x, y, color, symbol, facet, logx,
@@ -377,6 +385,8 @@ Rules:
   `sources.json`.
 - **Units:** base SI with `si: true` wherever the quantity has an SI unit.
 - **Stable ids:** design ids appear in URLs.
+- **Hard failures:** `results.<stage>.status: "fail"` marks a failure at that stage (e.g. a
+  nominal screen fails); the matrix shows it red instead of amber.
 - **Determinism:** sorted output, no per-design timestamps, so git diffs stay small.
 
 ## 8. Size budget
