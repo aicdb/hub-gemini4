@@ -674,8 +674,8 @@ function renderTable(view, c, list) {
     <th>PVT</th><th>MC</th><th class="l">Robust</th><th class="l">DRC/LVS</th></tr>`;
   const rows = list.map((d) => {
     const r = resolve(d);
-    return `<tr data-id="${esc(d.id)}"><td class="l">${esc(d.title)}</td><td>${fmtV(d.vdd)}</td>
-      ${axes.map((a) => `<td class="l">${esc(axisLabel(c, a, d.axes[a]))}</td>`).join('')}
+    return `<tr data-id="${esc(d.id)}"><td class="l wrapt">${esc(d.title)}</td><td>${fmtV(d.vdd)}</td>
+      ${axes.map((a) => `<td class="l wrapa">${esc(axisLabel(c, a, d.axes[a]))}</td>`).join('')}
       <td class="l ${r?.fallback ? 'fbv' : ''}">${r ? STAGE_LABEL[r.st] : '—'}</td>
       ${used.map((m) => { const x = mval(d, m.key, r); return `<td class="${x?.fb ? 'fbv' : ''}"${x?.fb ? ` title="from ${STAGE_LABEL[x.st]}"` : ''}>${x ? fmt(x.v, m) : '—'}</td>`; }).join('')}
       ${(() => { const vi = vinfo(d, r); const fbc = (st) => (st && st !== S.stage ? ' class="fbv"' : ''); return `<td${fbc(vi.pvtSt)}>${vi.pvt ? `${vi.pvt.pass}/${vi.pvt.total}` : '—'}</td><td${fbc(vi.mcSt)}>${vi.mc ? `${vi.mc.pass}/${vi.mc.total}` : '—'}</td><td class="l${r?.r.status === 'fail' ? ' s-bad' : vi.robust === true ? ' s-good' : vi.robust === false ? ' s-warn' : ''}${vi.robustSt && vi.robustSt !== S.stage ? ' fbv' : ''}">${r?.r.status === 'fail' ? 'failed' : vi.robust === true ? '✓' : vi.robust === false ? '✗' : '—'}</td>`; })()}<td class="l">${physOk(d) ? '✓' : d.physical?.drc === false || d.physical?.lvs === false ? '✗' : '—'}</td></tr>`;

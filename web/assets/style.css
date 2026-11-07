@@ -381,3 +381,6 @@ details.hmore summary { cursor: pointer; color: var(--accent); font-size: 12.5px
   nav.tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 }
 .badge.tag { background: transparent; border: 1px solid var(--line); font-weight: 500; }
+table.list td.wrapt { white-space: normal; min-width: 200px; max-width: 320px; }
+table.list td.wrapa { white-space: normal; min-width: 90px; max-width: 170px; }
+table.list th { white-space: normal; vertical-align: bottom; }
