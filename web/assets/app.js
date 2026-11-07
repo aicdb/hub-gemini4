@@ -793,7 +793,6 @@ async function renderDetail(main, c) {
       </div>
     </div>
     <div id="detail-sections"></div>`;
-  window.scrollTo(0, 0);
   $('#djump').onchange = (e) => { location.hash = tabHref(c.id, e.target.value); };
   if (figs.length) await Blocks.render($('#figs'), [{ type: 'gallery', title: 'Figures', items: figs, max_height: 620, default: +S.fig || 0 }], ctx);
   if (dls.length) await Blocks.render($('#dls'), [{ type: 'downloads', title: 'Files', items: dls, caption: 'Files marked **repo** are in the private source repository at the exported commit; access must be requested.' }], ctx);
@@ -814,9 +813,12 @@ async function renderDetail(main, c) {
 
 /* ------------------------------------------------------------------ main */
 async function render() {
-  const prevTab = S.tab, prevDesign = S.design;
+  const prevTab = S.tab, prevDesign = S.design, prevPage = S.page;
+  const y = window.scrollY;
   S = parseHash();
-  if (S.tab !== prevTab || S.design !== prevDesign) limit = PAGE;
+  // navigation (another tab / design / page) starts at the top; changing options keeps the position
+  const sameView = S.tab === prevTab && S.design === prevDesign && S.page === prevPage;
+  if (!sameView) limit = PAGE;
   const cur = CAT.components.find((c) => c.id === S.tab);
   document.title = S.tab ? `${cur ? `${cur.group ? `${cur.group} · ` : ''}${cur.name}` : S.tab} · AICDB Analog Hub` : 'AICDB Analog Hub';
   renderGlobals();
@@ -825,6 +827,7 @@ async function render() {
   try {
     if (!S.tab) await renderOverview(main);
     else await renderComponent(main);
+    window.scrollTo(0, sameView ? y : 0);
   } catch (e) {
     console.error(e);
     main.innerHTML = `<div class="empty-state">Failed to load: ${esc(e.message)}</div>`;

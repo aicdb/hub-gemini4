@@ -12,8 +12,9 @@ Hub locations: **D** = built-in Designs view, **P:overview / P:compare / P:explo
 Result: 54 items — 54 ✓ ported; 4 ✗ sub-features noted inline (10 range-bar graphic, 22 SVG hover, 36 PNG pan-zoom + layer legend, 53 layout.png hosting) — each covered another way.
 
 **Fix round (review switch-gaps.json, 25 gaps):** all 23 non-renderer gaps addressed — see the "(fix)" notes below.
-Stage model of the page views: Pre-PEX = schematic; **Partial post-PEX** = all 125 extracted cards together (90 unit-bank +
-35 complete-cell extractions, stated on every block); **Full post-PEX** = only the 35 complete cells. Tables and the
+Stage model of the page views (round 3, fallback-aware alternatives): Pre-PEX = schematic; **Partial post-PEX** = the 90
+unit-bank extractions; **Full post-PEX + fill from earlier stage** (default) = all 125 extracted cards (35 full + 90 partial
+filled in, marked per card); **Full post-PEX, fill off** = the 35 complete cells only. Tables and the
 interactive explorer use `stage_group` (each design shows its best stage ≤ the selection). All tabs have ids (deep links,
 selection survives global-option changes): detail `t.tab`, explorer `t.tradeoff` / `t.exvdd`, compare `t.vdd`, method `t.vsb`.
 
@@ -33,7 +34,7 @@ selection survives global-option changes): detail `t.tab`, explorer `t.tradeoff`
 
 ## Global / chrome
 1. ✓ Header title + subtitle → component `title`/`summary`; subtitle line in P:overview intro (small print).
-2. ✓ Netlist toggle pre/post → global *Simulation stage* (Pre-PEX / Partial / Full post-PEX); every page/detail block has stage alternatives. (fix) Page views now have pre / partial (all 125 extracted cards, mixed and labelled) / full (35 complete cells) alternatives, so Full post-PEX without fallback shows the real full results; stats blocks have titles.
+2. ✓ Netlist toggle pre/post → global *Simulation stage* (Pre-PEX / Partial / Full post-PEX); every page/detail block has stage alternatives. (fix) Page views have pre / partial (90 unit-bank) / full+fb (all 125, as the old post view) / full no-fb (35 complete cells) alternatives; stats blocks have titles. Explorer/table at Partial: the 35 complete cells fall back to schematic rows (stated in the captions).
 3. ✓ Nav → sub-tabs Designs · Overview · Topology comparison · Design-space explorer · Methodology; theme toggle = hub's.
 4. ✓ Footer (generated date, tools, source link) → P:method closing note.
 
@@ -43,12 +44,12 @@ selection survives global-option changes): detail `t.tab`, explorer `t.tradeoff`
 7. ✓ Coverage matrix (valid range % + area, green/amber/red, n/a cells with reason, click → design) → D matrix with `matrix.status` on valid range (green > 97 %, amber > 0, red none — the old colour code), n/a cells with reason tooltip, preset "Valid range & area"; and P:overview "Coverage matrix" heatmaps, one per supply (follow the V_DD filter), pre / partial / full alt, clickable incl. n/a cells, ≈ marks estimated areas, "partial only" cells at Full post-PEX.
 8. ✓ Filters: VDD → global V_DD; Current / Topology → D axis chips; Status DRC+LVS → global *Verified*; Status rail-to-rail → (fix) search tags `r2r-pre` (70) / `r2r-post` (49), no substring overlap, + matrix colours; R_on grade → tag `R_on grade B` and sortable tables.
 9. ✓ Group headers "R_on points at I_max: A/B/C/D" → P:overview table "R_on points per supply and current class" (labelled as specification thresholds).
-10. ✓ Design card → D cards, (fix) 9 card metrics (valid range, R_on, R_on wc, t_on, t_off, E/cycle, Q_inj, max |Q|, area where drawn) + stage/robust/PVT/DRC/LVS/PEX badges, grouped by current class (`cards_group_by`); valid-range intervals in params ("Valid range (pre-PEX / … post-PEX)"). ✗ sub-feature: the range-bar graphic.
+10. ✓ Design card → D cards, (fix) valid-range intervals as search tags (`valid … (pre)` / `(post)`); 9 card metrics (valid range, R_on, R_on wc, t_on, t_off, E/cycle, Q_inj, max |Q|, area where drawn) + stage/robust/PVT/DRC/LVS/PEX badges, grouped by current class (`cards_group_by`); valid-range intervals in params ("Valid range (pre-PEX / … post-PEX)"). ✗ sub-feature: the range-bar graphic.
 11. ✓ n/a cards → (fix) 5 design records with `"na": reason` (n/a matrix cells with reason tooltip, "not applicable" card badge, detail page with the reason + topology description; old ids resolve) + P:overview "Not applicable cards" table (wrapped, rows link) + heatmap n/a cells + header stat.
 12. ✓ Comparison table (all 17 columns, sortable, rows open the design) → P:overview "Comparison table" (fix: one table, `stage_column` + `stage_group`, generator order by default; + V_DD, Range %, Layout, Stage columns, CSV) and D Table view.
 
 ## Detail view (tabs Overview / Schematic / Simulation / Layout → `tabs` block in the detail doc)
-13. ✓ Header: title, axis chips (topology, class), tags (devices, grade, r2r-pre/post, "unit-bank layout (physical area = drawn unit bank)" / complete layout), R_on target in `params` + summary (unit-bank cards start with the drawn-vs-estimated size statement), DRC/LVS/PEX badges (Physical panel), figure gallery (schematic, layout thumbnail, post-PEX schematic), Performance-by-stage table, files.
+13. ✓ Header (round 3: schematics moved to `images[]` with `bg: "dark"`, so the gallery shows them without a white frame; gallery order Layout · Schematic · post-PEX schematic): title, axis chips (topology, class), tags (devices, grade, r2r-pre/post, "unit-bank layout (physical area = drawn unit bank)" / complete layout), R_on target in `params` + summary (unit-bank cards start with the drawn-vs-estimated size statement), DRC/LVS/PEX badges (Physical panel), figure gallery (schematic, layout thumbnail, post-PEX schematic), Performance-by-stage table, files.
 14. ✓ Post-PEX note → T:Overview note (post stage only; adds the partial-extraction explanation for unit-bank cells).
 15. ✓ Topology panel (description + circuit notes) → T:Overview "Topology".
 16. ✓ Key results (12 tiles with sub-notes) → T:Overview `stats` (pre / post alt); area tile reads "Area (estimated)" with drawn unit-bank size for multi-bank cells.
@@ -106,4 +107,7 @@ selection survives global-option changes): detail `t.tab`, explorer `t.tradeoff`
 - Gap 25 (layout area in `results` at every stage): kept for the 35 complete cells (needed for the area matrix preset and card
   metric) with a metric `desc` "layout property of the drawn cell, identical at every stage"; not emitted for unit-bank cells.
 - Gaps 19 and 24 were renderer issues (fixed in the hub); presets also set `facet`/`pareto` explicitly.
+- Round 3 not changed: scroll position reset on a global-option change (renderer `window.scrollTo(0,0)`); r2r/grade badges on
+  cards (the renderer does not show tags on cards; they are search tags and detail chips); heatmap pastel colours stay
+  fixed (readable in dark mode, but bright). Compare legend chart made taller (290 px) so it does not scroll at phone width.
 - Default Designs-matrix cell: valid range + R_on wc (area is real only for 35 cells; available via the "Valid range & area" preset).
