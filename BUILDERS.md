@@ -356,7 +356,8 @@ values]}` (e.g. only feasible points). `fixed_axes: true` keeps the axis ranges 
 (stable when filtering); `filters_default: {catKey: [visible values]}` sets the initial chips;
 `presets[].desc` (markdown) is shown when that preset is selected.
 
-Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`),
+Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`,
+`symbols: {value: "star"}` — any Plotly marker symbol name),
 `log`, `better`, `unit`/`si`/`digits`. Explorer options: `cat_axes: true` lets categorical
 dims be chosen as X/Y (strip plot); `presets[]: {label, x, y, color, symbol, facet, logx,
 logy, pareto, show: {catKey: [visible values]}}`; `preset_default` (index applied on load).

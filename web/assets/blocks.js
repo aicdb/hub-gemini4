@@ -574,11 +574,13 @@
       const paretoOk = (i) => (b.pareto_include_highlight || !isHi(i)) && Object.entries(b.pareto_on || {}).every(([k, vals]) => vals.map(String).includes(String(C[k]?.[i])));
       const ink = themeColors().ink, muted = themeColors().muted;
       const colOf = (v, ci) => colorD?.colors?.[v] || COLORWAY[ci % COLORWAY.length];
+      const symOf = (v) => D[st.symbol]?.symbols?.[v] || SYMBOLS[catVals(st.symbol).indexOf(v) % SYMBOLS.length];
+      const GLYPH = { circle: '●', x: '✕', diamond: '◆', square: '■', 'triangle-up': '▲', cross: '✚', star: '★', 'triangle-down': '▼', pentagon: '⬟', hexagon: '⬢', 'circle-open': '○', 'square-open': '□', 'diamond-open': '◇', 'star-open': '☆' };
       // facet grids get one HTML legend instead of a Plotly legend per facet
       if (multi) {
         const sw = [];
         if (colorD && colorD.type === 'cat') catVals(st.color).forEach((v, ci) => sw.push(`<span><i style="background:${colOf(v, ci)}"></i>${esc(label(st.color, v))}</span>`));
-        if (st.symbol) catVals(st.symbol).forEach((v, si) => sw.push(`<span><b class="sym">${['●', '✕', '◆', '■', '▲', '✚', '★', '▼', '⬟', '⬢'][si % 10]}</b>${esc(label(st.symbol, v))}</span>`));
+        if (st.symbol) catVals(st.symbol).forEach((v) => sw.push(`<span><b class="sym">${GLYPH[symOf(v)] || '●'}</b>${esc(label(st.symbol, v))}</span>`));
         if (b.highlight) sw.push(`<span><b class="sym">◯</b>${esc(b.highlight_label || 'Delivered designs')}</span>`);
         if (st.pareto) sw.push(`<span><b class="sym">┈</b>${st.pareto === 'color' ? 'Pareto front per colour group' : 'Pareto front'}</span>`);
         plots.insertAdjacentHTML('beforebegin', '');
@@ -590,7 +592,7 @@
         const traces = [];
         const showL = !multi;
         const mk = (sub, name, extraMarker = {}) => {
-          const sy = st.symbol ? sub.map((i) => SYMBOLS[catVals(st.symbol).indexOf(C[st.symbol][i]) % SYMBOLS.length]) : undefined;
+          const sy = st.symbol ? sub.map((i) => symOf(C[st.symbol][i])) : undefined;
           return {
             type: sub.length > 4000 ? 'scattergl' : 'scatter', mode: 'markers', name,
             x: sub.map((i) => (D[st.x]?.type === 'cat' ? label(st.x, C[st.x][i]) : C[st.x][i])), y: sub.map((i) => (D[st.y]?.type === 'cat' ? label(st.y, C[st.y][i]) : C[st.y][i])),
@@ -609,7 +611,7 @@
           traces.push(mk(fi, 'points', { color: fi.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: !multi || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
         } else traces.push(mk(fi, 'points', { color: COLORWAY[0] }));
         // symbol legend entries (the point traces are split by colour, so symbols need their own key)
-        if (st.symbol && showL) catVals(st.symbol).forEach((v, si) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${D[st.symbol]?.label || st.symbol}: ${label(st.symbol, v)}`, marker: { symbol: SYMBOLS[si % SYMBOLS.length], color: muted, size: 8 }, hoverinfo: 'skip', legendgroup: `sym-${v}` }));
+        if (st.symbol && showL) catVals(st.symbol).forEach((v) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${D[st.symbol]?.label || st.symbol}: ${label(st.symbol, v)}`, marker: { symbol: symOf(v), color: muted, size: 8 }, hoverinfo: 'skip', legendgroup: `sym-${v}` }));
         const hi = fi.filter(isHi);
         if (hi.length) traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 12, opacity: 1, color: ink, symbol: 'circle-open', line: { width: 2, color: ink } }), { type: 'scatter' }));
         let frontN = 0;
