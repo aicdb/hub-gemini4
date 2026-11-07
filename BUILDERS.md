@@ -349,8 +349,9 @@ Everything visible on the old site must exist in the export. Typical mapping:
   "presets": [ { "label": "Gain vs power", "x": "power", "y": "a0" }, { "label": "Per architecture", "facet": "arch" } ] }
 ```
 
-Pareto: users choose off / overall front / front per colour group; set the initial mode with
-`pareto_default: "all" | "color"`. Fronts exclude the highlighted (delivered) overlay unless
+Pareto: users choose off / overall front / front per colour group / best-value envelope per
+colour group (best y in ~24 x bins, direction from the y dim's `better`); set the initial mode with
+`pareto_default` (or a preset's `pareto`): `"all" | "color" | "envelope"`. Fronts exclude the highlighted (delivered) overlay unless
 `pareto_include_highlight: true`; restrict the candidates with `pareto_on: {column: [allowed
 values]}` (e.g. only feasible points). `fixed_axes: true` keeps the axis ranges over all points
 (stable when filtering); `filters_default: {catKey: [visible values]}` sets the initial chips;

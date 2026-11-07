@@ -524,7 +524,7 @@
         <label>Color <select data-c="color">${opt(dims, st.color, 'none')}</select></label>
         ${cat.length ? `<label>Symbol <select data-c="symbol">${opt(cat, st.symbol, 'none')}</select></label>` : ''}
         ${cat.length ? `<label>Facet <select data-c="facet">${opt(cat, st.facet, 'none')}</select></label>` : ''}
-        <label title="Non-dominated (Pareto) points for the current axes (direction from each metric's 'better')">Pareto <select data-c="pareto"><option value="">off</option><option value="all" ${st.pareto === 'all' ? 'selected' : ''}>overall front</option><option value="color" ${st.pareto === 'color' ? 'selected' : ''}>front per colour group</option></select></label>
+        <label title="Non-dominated (Pareto) points for the current axes (direction from each metric's 'better')">Pareto <select data-c="pareto"><option value="">off</option><option value="all" ${st.pareto === 'all' ? 'selected' : ''}>overall front</option><option value="color" ${st.pareto === 'color' ? 'selected' : ''}>front per colour group</option><option value="envelope" ${st.pareto === 'envelope' ? 'selected' : ''}>envelope per colour group</option></select></label>
       </div>
       <div class="ex-filters">${(b.filters || []).map((k) => {
         const d = D[k]; if (!d) return '';
@@ -582,7 +582,7 @@
         if (colorD && colorD.type === 'cat') catVals(st.color).forEach((v, ci) => sw.push(`<span><i style="background:${colOf(v, ci)}"></i>${esc(label(st.color, v))}</span>`));
         if (st.symbol) catVals(st.symbol).forEach((v) => sw.push(`<span><b class="sym">${GLYPH[symOf(v)] || '●'}</b>${esc(label(st.symbol, v))}</span>`));
         if (b.highlight) sw.push(`<span><b class="sym">◯</b>${esc(b.highlight_label || 'Delivered designs')}</span>`);
-        if (st.pareto) sw.push(`<span><b class="sym">┈</b>${st.pareto === 'color' ? 'Pareto front per colour group' : 'Pareto front'}</span>`);
+        if (st.pareto) sw.push(`<span><b class="sym">┈</b>${{ color: 'Pareto front per colour group', envelope: 'best-value envelope per colour group', all: 'Pareto front' }[st.pareto]}</span>`);
         plots.insertAdjacentHTML('beforebegin', '');
         const lg = document.createElement('div'); lg.className = 'ex-legend'; lg.innerHTML = sw.join('');
         plots.appendChild(lg);
@@ -617,12 +617,24 @@
         let frontN = 0;
         if (st.pareto && fi.length && D[st.x]?.type !== 'cat' && D[st.y]?.type !== 'cat') {
           const cand = fi.filter(paretoOk);
-          const groups = st.pareto === 'color' && colorD?.type === 'cat' ? catVals(st.color).map((v, ci) => [v, cand.filter((i) => C[st.color][i] === v), colOf(v, ci)]) : [[null, cand, ink]];
+          const perGroup = (st.pareto === 'color' || st.pareto === 'envelope') && colorD?.type === 'cat';
+          const groups = perGroup ? catVals(st.color).map((v, ci) => [v, cand.filter((i) => C[st.color][i] === v), colOf(v, ci)]) : [[null, cand, ink]];
+          // envelope: best y (per the y dim's 'better', default high) in each of ~24 x bins
+          const envelope = (gi) => {
+            const xs = gi.map((i) => C[st.x][i]).filter((v) => typeof v === 'number' && (!st.logx || v > 0));
+            if (!xs.length) return [];
+            const tx = (v) => (st.logx ? Math.log10(v) : v);
+            const lo = Math.min(...xs.map(tx)), hi = Math.max(...xs.map(tx)), nb = 24, w = (hi - lo) / nb || 1;
+            const lowBetter = D[st.y]?.better === 'low';
+            const best = new Map();
+            for (const i of gi) { const x = C[st.x][i], y = C[st.y][i]; if (typeof x !== 'number' || typeof y !== 'number') continue; const k = Math.min(nb - 1, Math.floor((tx(x) - lo) / w)); const cur = best.get(k); if (cur === undefined || (lowBetter ? y < C[st.y][cur] : y > C[st.y][cur])) best.set(k, i); }
+            return [...best.keys()].sort((a, c) => a - c).map((k) => best.get(k));
+          };
           for (const [gv, gi, gc] of groups) {
             if (!gi.length) continue;
-            const fr = pareto(gi).sort((a, c) => C[st.x][a] - C[st.x][c]);
+            const fr = (st.pareto === 'envelope' ? envelope(gi) : pareto(gi)).sort((a, c) => C[st.x][a] - C[st.x][c]);
             frontN += fr.length;
-            traces.push({ type: 'scatter', mode: 'lines', name: gv === null ? 'Pareto front' : `front: ${label(st.color, gv)}`, x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: gc, width: 2, dash: gv === null ? 'dot' : 'solid', shape: 'hv' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: showL && gv === null, legendgroup: gv === null ? 'pareto' : String(label(st.color, gv)) });
+            traces.push({ type: 'scatter', mode: 'lines', name: gv === null ? 'Pareto front' : `front: ${label(st.color, gv)}`, x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: gc, width: 2, dash: gv === null ? 'dot' : 'solid', shape: st.pareto === 'envelope' ? 'linear' : 'hv' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: showL && gv === null, legendgroup: gv === null ? 'pareto' : String(label(st.color, gv)) });
           }
         }
         const div = document.createElement('div');

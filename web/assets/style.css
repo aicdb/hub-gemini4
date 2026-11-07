@@ -358,3 +358,5 @@ table.mt.md th, table.mt.md td { text-align: left; white-space: normal; }
 .ex-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .ex-legend .sym { margin-right: 5px; color: var(--ink); font-weight: 400; }
 .seg button.dim:not(.on) { opacity: 0.45; text-decoration: line-through; text-decoration-thickness: 1px; }
+.chart { max-width: 100%; overflow: hidden; }
+.chart .js-plotly-plot, .chart .plot-container, .chart .svg-container { max-width: 100%; }
