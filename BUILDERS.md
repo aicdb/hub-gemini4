@@ -135,6 +135,7 @@ docs/
   "axes": { "topology": "folded_cascode_nmos", "class": "10u_100u" },
   "tags": ["NMOS input", "2 pF load"],
   "physical": { "drc": true, "lvs": true, "pex": true, "area_um2": 3914.1, "width_um": 54.1, "height_um": 72.35 },
+                                                       // true = clean/done, false = failed, null = not run; pex may be "partial"
   "results": {
     "pre":  { "metrics": { "a0": 97.8, "ugb": 2.65e6 }, "pvt": { "pass": 17, "total": 17 },
               "mc": { "pass": 50, "total": 50 }, "robust": true },

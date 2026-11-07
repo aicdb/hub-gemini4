@@ -11,12 +11,12 @@ Status legend: **✓** reproduced (location given) · **≈** reproduced with a 
 component pages `?page=db|method|about`.
 
 STATUS after the review fix round (validate ✓ 0 warnings; preview with opa + sa: 192 reuse links resolved; screenshots of cards, matrix
-presets, table, detail tabs incl. deep links, DB page, opa “Used in”, hierarchy graph; no console errors): **82 items — 77 ✓, 5 ≈, 0 ✗**
+presets, table, detail tabs incl. deep links, DB page, opa “Used in”, hierarchy graph; no console errors): **83 items — 78 ✓, 5 ≈, 0 ✗**
 (≈: B8 / H6 noise is a placeholder and not exported; J2 layout SVG viewer → GDS thumbnail (hub rule); D9 best value per load class
 instead of per V_OUT; D10 DB table does not follow the explorer chips). Placeholder / constant
 sub-values are labelled (†/‡) instead of shown as results.
 
-Open renderer requests: a table that follows an explorer's chip filters (D10); skipping null fields in explorer hover text.
+Open renderer requests: a table that follows an explorer's chip filters (D10); explorer point counter counting highlighted rows separately and chip lists built from the rows of the current stage; `minexponent` on explorer axes.
 
 ## A. Global chrome
 
@@ -157,5 +157,6 @@ Open renderer requests: a table that follows an explorer's chip filters (D10); s
 
 | # | element | hub |
 |---|---|---|
-| L1 | Block hierarchy | ✓ component `builds_on` (opa: error amplifier, sa: DLDO comparator); every design `uses` its exact sub-block (`opa/2p-<cell>` for 160 analog LDOs, `sa/<cell>` for 32 DLDOs) — all 192 resolve; overview graph, “Built from” on ldo pages, “Used in” on opa / sa pages |
+| L1 | Block hierarchy | ✓ component `builds_on` (opa: error-amplifier sizing, sa: comparator input-pair sizing); every design `uses` its exact sub-block (`opa/2p-<cell>` for 160 analog LDOs, `sa/<cell>` for 32 DLDOs) — all 192 resolve. Roles state the truth found in the published files: flat netlist + flat GDS (sizes reused, no sub-cell instance); DLDOs: input-pair size only, continuous-time 5-T stage, no clocked latch; 30 designs: card characterised at 1.8 V used at V_IN = 3.3 V |
 | L2 | Review fixes (29 gaps) | ✓ all non-renderer gaps fixed (PSRR sign, input pair, start-up validity, C_L text, MC annotation, bench bounds, † params, exact links, DB lede, box plots, DB table rows, deep links, card grouping, half-up rounding, area precision, old-default preset, DB labels / stage notes, matrix presets, neutral header tiles, per-supply best charts, gallery labels); policy kept: card-copied candidate columns attributed to cards only |
+| L3 | Round-3 fixes | ✓ PVT count now uses PM ≥ 30° (reproduces the repo's robust/PVT flag on all 384 design-stages) + new metric “PVT corners PM ≥ 35°” (Table default column, Robustness matrix preset) + per-design discrepancy note (11 design-stages); reuse caveats on design pages (EA / comparator panel), summary note for the 30 supply-mismatch designs, methodology “hub check” note; DB correction note is a Pre-PEX alternative with a Full-stage variant; JS rounding ties away from zero for negatives; gm/Id ramp violet→orange (≥ 3:1 on light and dark); explorer hover limited to per-point fields; log axes `minexponent: 0` on adapter charts |
