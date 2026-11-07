@@ -102,6 +102,7 @@ docs/
               "presets": [ { "label": "Noise & PSRR", "metrics": ["noise", "psrr"] } ],     // optional; users can also pick any metric
               "status": { "metric": "range", "good": 95, "warn": 50 } },   // optional: colour cells by thresholds (direction from metric.better)
   "card_metrics": ["a0", "ugb", "power", "area"],   // up to 12; the first is the headline
+  "vdd_labels": { "1.8": "V<sub>DD</sub> = 1.8 V · V<sub>CM</sub> = 0.9 V" },   // optional matrix supply-group headers
   "cards_group_by": "class",                     // optional axis key (or list) to group the card grid
   "builds_on": [ { "id": "opa", "role": "core OTA" }, { "id": "switch", "role": "chopper switches" } ],  // §4.5
   "families": [ … ],                            // optional sub-tabs (§4.4)
@@ -253,7 +254,7 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 | `layout` | `gds`, `cell` (optional sub-cell), `max_height` | rendered GDS thumbnail + link to the raw GDS in the repo |
 | `gallery` | `items[]: {label, src \| gds, cell?, caption?}`, `style`: tabs/grid, `cols`, `default` | several figures as tabs or a grid |
 | `downloads` | `items[]: {label, file \| src \| url, note?}` | link list; `file` → raw file in the repo, `src` → hosted, `url` → external |
-| `tabs` | `tabs[]: {label, labels?: {pre, partial, full}, blocks[], vdd?, tech?}` (`labels` = stage-dependent tab label), `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
+| `tabs` | `tabs[]: {label, key?, labels?: {pre, partial, full}, blocks[], vdd?, tech?}` (`key` = stable deep-link value, e.g. a design id), (`labels` = stage-dependent tab label), `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
 
 **Table columns:** `{key, label, unit, si, digits, type, group, better, md, align, title, wrap}`
 (`wrap: true` lets long text wrap instead of staying on one line).

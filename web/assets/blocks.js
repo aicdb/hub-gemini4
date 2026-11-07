@@ -277,14 +277,17 @@
     const show = async (i) => {
       view.innerHTML = '';
       el.querySelectorAll('.tabs-bar .chip').forEach((c) => c.classList.toggle('on', +c.dataset.i === i));
-      if (b.id && ctx.tabSet && !first) ctx.tabSet(b.id, i);
+      if (b.id && ctx.tabSet && !first) ctx.tabSet(b.id, tabs[i]?.key != null ? tabs[i].key : i);
       first = false;
       if (tabs[i]) await render(view, tabs[i].blocks, ctx);
     };
     if (sel) el.querySelector('select').onchange = (e) => show(+e.target.value);
     else el.querySelector('.tabs-bar').onclick = (e) => { const c = e.target.closest('[data-i]'); if (c) show(+c.dataset.i); };
     const saved = b.id && ctx.tabGet ? ctx.tabGet(b.id) : null;
-    const start = Math.max(0, Math.min(tabs.length - 1, saved != null ? +saved : +b.default || 0));
+    // tabs may carry a stable `key`; URLs store the key (robust to tabs hidden by filters), else the index
+    let savedIdx = saved == null ? null : tabs.findIndex((t) => t.key != null && String(t.key) === String(saved));
+    if (saved != null && savedIdx < 0) savedIdx = /^\d+$/.test(String(saved)) ? +saved : null;
+    const start = Math.max(0, Math.min(tabs.length - 1, savedIdx != null ? savedIdx : +b.default || 0));
     if (sel) el.querySelector('select').value = String(start);
     await show(start);
   };

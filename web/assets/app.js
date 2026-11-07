@@ -578,7 +578,7 @@ function renderMatrix(view, c, list) {
     const parts = key.split('\u0001').map((v, i) => axisLabel(c, mx.rows[i], v));
     return `${esc(parts[0])}${parts.length > 1 ? `<small>${parts.slice(1).map(esc).join(' · ')}</small>` : ''}`;
   };
-  const head1 = `<tr><th></th>${groups.map((g) => `<th class="grp" colspan="${g.cols.length}">V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}</th>`).join('')}</tr>`;
+  const head1 = `<tr><th></th>${groups.map((g) => `<th class="grp" colspan="${g.cols.length}">${c.vdd_labels?.[String(g.v)] ? Blocks.inline(c.vdd_labels[String(g.v)]) : `V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}`}</th>`).join('')}</tr>`;
   const head2 = `<tr><th class="rowh">${mx.rows.map((a) => esc(c.axes[a]?.label || a)).join(' · ')}</th>${groups.map((g) => g.cols.map((k) => `<th>${colLabel(k)}</th>`).join('')).join('')}</tr>`;
   const body = rows.map((rk) => `<tr><th class="rowh">${rowLabel(rk)}</th>${groups.map((g) => g.cols.map((ck) => {
     const ds = cellMap.get(`${rk}|${g.v}|${ck}`);
