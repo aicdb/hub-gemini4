@@ -380,3 +380,4 @@ details.hmore summary { cursor: pointer; color: var(--accent); font-size: 12.5px
   header.top { position: static; }                      /* don't pin a tall header on phones */
   nav.tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 }
+.badge.tag { background: transparent; border: 1px solid var(--line); font-weight: 500; }

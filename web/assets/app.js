@@ -655,7 +655,7 @@ function renderCards(view, c, list) {
       <div class="thumb${t?.dark ? ' dark' : ''}">${t ? `<img loading="lazy" decoding="async" src="${t}" alt="">` : '<span class="ph">no preview</span>'}</div>
       <div class="body"><h3>${esc(d.title)}</h3><div class="id">${esc(d.id)}</div>
         <div class="kv"><div><span>V<sub>DD</sub></span><b>${fmtV(d.vdd)}</b></div>${kv}</div>
-        <div class="badges">${badgesOf(d, r)}</div></div></a>`;
+        <div class="badges">${badgesOf(d, r)}${(d.tags || []).filter(Boolean).slice(0, 4).map((t) => `<span class="badge tag">${esc(t)}</span>`).join('')}</div></div></a>`;
   }).join('');
   view.innerHTML = `<div class="cards">${html}</div>${list.length > limit ? `<button class="plain more-btn" id="more">Show more (${list.length - limit} left)</button>` : ''}`;
   const mb = $('#more'); if (mb) mb.onclick = () => { limit += PAGE * 2; renderCards(view, c, list); };

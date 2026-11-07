@@ -659,7 +659,7 @@
         const xa = D[st.x]?.type === 'cat' ? { title: { text: axisTitle(st.x) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.x) } : Object.assign({ title: { text: axisTitle(st.x) }, type: st.logx ? 'log' : 'linear', range: xR }, st.logx ? logTicks(xR) : {});
         const ya = D[st.y]?.type === 'cat' ? { title: { text: axisTitle(st.y) }, type: 'category', categoryorder: 'array', categoryarray: catLabels(st.y) } : Object.assign({ title: { text: axisTitle(st.y) }, type: st.logy ? 'log' : 'linear', range: yR }, st.logy ? logTicks(yR) : {});
         const layout = deepMerge(baseLayout(multi ? 300 : (+b.height || 520)), {
-          title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${fi.length.toLocaleString('en-US')} pts${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 }, y: 0.98 } : undefined,
+          title: fv !== null ? { text: `${esc(label(st.facet, fv))} <span style="font-size:11px">· ${(fi.length - hi.length).toLocaleString('en-US')} pts${hi.length ? ` + ${hi.length} ${esc((b.highlight_label || 'delivered').toLowerCase())}` : ''}${st.pareto ? ` · ${frontN} on front` : ''}</span>`, font: { size: 13 }, y: 0.98 } : undefined,
           xaxis: xa, yaxis: ya,
           margin: multi ? { l: 55, r: 10, t: 34, b: 45 } : undefined,
           showlegend: showL,
