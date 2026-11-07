@@ -99,7 +99,8 @@ docs/
     "topology": { "label": "Architecture", "values": [ { "id": "nmos_5t", "label": "5-T NMOS" } ] }
   },
   "matrix": { "rows": ["topology"], "cols": ["class"], "metrics": ["ugb", "a0"],   // cell = metrics[0] big, up to 4 more small
-              "presets": [ { "label": "Noise & PSRR", "metrics": ["noise", "psrr"] } ] },   // optional; users can also pick any metric
+              "presets": [ { "label": "Noise & PSRR", "metrics": ["noise", "psrr"] } ],     // optional; users can also pick any metric
+              "status": { "metric": "range", "good": 95, "warn": 50 } },   // optional: colour cells by thresholds (direction from metric.better)
   "card_metrics": ["a0", "ugb", "power", "area"],   // up to 12; the first is the headline
   "cards_group_by": "class",                     // optional axis key (or list) to group the card grid
   "families": [ … ],                            // optional sub-tabs (§4.3)
@@ -150,6 +151,11 @@ docs/
   "detail": "hub/designs/2p-folded_cascode_nmos_1v8_10u_100u_weak.json"   // §5: all detail sections
 }
 ```
+
+**Not-applicable placeholders:** a combination that exists in the old coverage matrix but
+was deliberately not designed (e.g. an oxide-overstress case) can be a design record with
+`"na": "reason"` and empty `results`. It shows up as an "n/a" matrix cell (the reason is
+the tooltip), as a card with a "not applicable" badge, and as a detail page with the reason.
 
 On the design page the hub renders the title, axis chips and tags, a **figure gallery**
 (schematic, layout thumbnail, `images[]`), the **performance-by-stage table** (from
@@ -296,7 +302,9 @@ Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#h
 `log`, `better`, `unit`/`si`/`digits`. Explorer options: `cat_axes: true` lets categorical
 dims be chosen as X/Y (strip plot); `presets[]: {label, x, y, color, symbol, facet, logx,
 logy, pareto, show: {catKey: [visible values]}}`; `preset_default` (index applied on load).
-Rows with a null `stage` are shown at every stage.
+Rows with a null `stage` are shown at every stage. With `stage_group: "<column>"` (e.g. the
+design-id column), each entity keeps only its best available stage ≤ the selected one, so
+designs with different extraction levels can be shown together.
 
 Users can switch X/Y/colour/symbol/facet, toggle log axes and a Pareto front, and filter
 by categorical chips and numeric ranges. Clicking a highlighted point opens the design.

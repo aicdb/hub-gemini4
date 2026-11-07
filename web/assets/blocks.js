@@ -455,7 +455,20 @@
     if (ctx.vdd && C.vdd) for (let i = 0; i < N; i++) if (C.vdd[i] != null && String(C.vdd[i]) !== ctx.vdd) base[i] = 0;
     if (ctx.tech && C.tech) for (let i = 0; i < N; i++) if (C.tech[i] && C.tech[i] !== ctx.tech) base[i] = 0;
     let stageNote = '';
-    if (C.stage) {
+    if (C.stage && b.stage_group && C[b.stage_group]) {
+      // per entity (e.g. design id): keep the row of the best available stage <= selected
+      const groups = new Map();
+      for (let i = 0; i < N; i++) { const g = C[b.stage_group][i]; if (g == null) continue; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(i); }
+      let fbN = 0;
+      for (const idxs of groups.values()) {
+        const pick = pickStage([...new Set(idxs.map((i) => C.stage[i]).filter(Boolean))], ctx);
+        if (pick && pick !== ctx.stage) fbN++;
+        for (const i of idxs) if (C.stage[i] != null && C.stage[i] !== pick) base[i] = 0;
+      }
+      const pickAll = pickStage([...new Set(C.stage.filter(Boolean))], ctx);
+      for (let i = 0; i < N; i++) if (C[b.stage_group][i] == null && C.stage[i] != null && C.stage[i] !== pickAll) base[i] = 0;
+      stageNote = ` · best available stage ≤ ${STAGE_LABEL[ctx.stage]}${fbN ? ` (${fbN} from an earlier stage)` : ''}`;
+    } else if (C.stage) {
       const pick = pickStage([...new Set(C.stage)], ctx);
       for (let i = 0; i < N; i++) if (C.stage[i] != null && C.stage[i] !== pick) base[i] = 0;
       stageNote = pick ? ` · ${STAGE_LABEL[pick]}${pick !== ctx.stage ? ' (fallback)' : ''}` : ' · no data at this stage';

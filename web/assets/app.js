@@ -308,7 +308,7 @@ function viewCfg(c) {
   const presets = mx.presets || [];
   if (S.mm.startsWith('p:') && presets[+S.mm.slice(2)]) metrics = presets[+S.mm.slice(2)].metrics;
   else if (S.mm.startsWith('m:') && c._metric[S.mm.slice(2)]) metrics = [S.mm.slice(2), ...metrics.filter((k) => k !== S.mm.slice(2))].slice(0, Math.max(2, metrics.length));
-  return { card, presets, mx: { rows: mx.rows || [], cols: mx.cols || [], metrics } };
+  return { card, presets, mx: { rows: mx.rows || [], cols: mx.cols || [], metrics, status: mx.status || null } };
 }
 function axisLabel(c, ak, v) { return c._axisLabel[ak]?.[v]?.label ?? v ?? '—'; }
 function axisIdx(c, ak, v) { return c._axisLabel[ak]?.[v]?.i ?? 1e9; }
@@ -416,9 +416,17 @@ function sorted(c, list) {
   });
 }
 
-function cellClass(d, r) {
+function cellClass(d, r, status, c) {
+  if (d.na) return 'nodata';
   if (d.physical?.drc === false || d.physical?.lvs === false) return 'bad';
   if (!r) return 'nodata';
+  if (status && c._metric[status.metric]) {          // colour by metric thresholds
+    const v = r.r.metrics?.[status.metric];
+    if (v == null) return 'nodata';
+    const hi = (c._metric[status.metric].better || 'high') === 'high';
+    const ok = (t) => (t == null ? true : hi ? v >= t : v <= t);
+    return ok(status.good) ? '' : ok(status.warn) ? 'warn' : 'bad';
+  }
   if (r.r.robust === false) return 'warn';
   return '';
 }
@@ -452,13 +460,13 @@ function renderMatrix(view, c, list) {
   const body = rows.map((rk) => `<tr><th class="rowh">${rowLabel(rk)}</th>${groups.map((g) => g.cols.map((ck) => {
     const ds = cellMap.get(`${rk}|${g.v}|${ck}`);
     if (!ds) return '<td class="cell empty"></td>';
-    const d = ds.find((x) => resolve(x)) || ds[0];
+    const d = ds.find((x) => resolve(x)) || ds.find((x) => !x.na) || ds[0];
     const r = resolve(d);
     const met = r?.r.metrics || {};
-    const tip = `${d.title}${r ? ` — ${STAGE_LABEL[r.st]}` : ` — no ${STAGE_LABEL[S.stage]} result`}${ds.length > 1 ? `\n+${ds.length - 1} more: ${ds.slice(1, 6).map((x) => x.id).join(', ')}` : ''}`;
-    return `<td class="cell ${cellClass(d, r)}" data-id="${esc(d.id)}" title="${esc(tip)}">
+    const tip = `${d.title}${d.na ? ` — not applicable: ${d.na}` : r ? ` — ${STAGE_LABEL[r.st]}` : ` — no ${STAGE_LABEL[S.stage]} result`}${ds.length > 1 ? `\n+${ds.length - 1} more: ${ds.slice(1, 6).map((x) => x.id).join(', ')}` : ''}`;
+    return `<td class="cell ${cellClass(d, r, mx.status, c)}" data-id="${esc(d.id)}" title="${esc(tip)}">
       ${r?.fallback ? `<span class="fb">${STAGE_SHORT[r.st]}</span>` : ''}
-      <div class="v1">${r ? fmt(met[m1?.key], m1) : 'no data'}</div>
+      <div class="v1">${d.na ? 'n/a' : r ? fmt(met[m1?.key], m1) : 'no data'}</div>
       ${mRest.slice(0, 4).map((mm) => `<div class="v2">${r ? `${esc(mm.label)} ${fmt(met[mm.key], mm)}` : '&nbsp;'}</div>`).join('')}
       <div class="v2">${r?.r.pvt ? `PVT ${r.r.pvt.pass}/${r.r.pvt.total}` : ''}${physOk(d) ? `${r?.r.pvt ? ' · ' : ''}DRC/LVS ✓` : ''}${ds.length > 1 ? ` <span class="more">+${ds.length - 1}</span>` : ''}</div>
     </td>`;
@@ -467,7 +475,8 @@ function renderMatrix(view, c, list) {
     <div class="legend"><span>Cell: <b>${esc(m1?.label || '')}</b>${mRest.slice(0, 4).map((mm) => ` / ${esc(mm.label)}`).join('')} at <b>${STAGE_LABEL[S.stage]}</b></span>
       <span><i style="background:var(--goodbg)"></i>meets generator criteria</span><span><i style="background:var(--warnbg)"></i>not robust over PVT/MC</span>
       <span><i style="background:var(--badbg)"></i>DRC/LVS failed</span><span><i style="background:var(--nonebg)"></i>no result at this stage</span>
-      <span><b>PRE/PART</b> corner tag = value filled from an earlier stage</span></div>`;
+      ${mx.status && c._metric[mx.status.metric] ? `<span>colour: ${esc(c._metric[mx.status.metric].label)} thresholds (green ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.good, c._metric[mx.status.metric])}${mx.status.warn != null ? `, amber ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.warn, c._metric[mx.status.metric])}` : ''})</span>` : ''}
+      <span><b>PRE/PART</b> corner tag = value filled from an earlier stage · <b>n/a</b> = not applicable (hover for the reason)</span></div>`;
   view.querySelector('tbody').onclick = (e) => { const td = e.target.closest('td[data-id]'); if (td) location.hash = tabHref(c.id, td.dataset.id); };
 }
 
@@ -482,7 +491,7 @@ function thumbOf(c, d) {
 function badgesOf(d, r) {
   const p = d.physical || {};
   const b = (ok, name) => (ok === undefined || ok === null ? '' : `<span class="badge ${ok ? 'good' : 'bad'}">${name} ${ok ? '✓' : '✗'}</span>`);
-  const st = r ? `<span class="badge ${r.fallback ? 'warn' : 'acc'}">${STAGE_LABEL[r.st]}</span>` : `<span class="badge">no ${STAGE_LABEL[S.stage]}</span>`;
+  const st = d.na ? `<span class="badge" title="${esc(d.na)}">not applicable</span>` : r ? `<span class="badge ${r.fallback ? 'warn' : 'acc'}">${STAGE_LABEL[r.st]}</span>` : `<span class="badge">no ${STAGE_LABEL[S.stage]}</span>`;
   const rb = r?.r.robust === true ? '<span class="badge good">robust</span>' : r?.r.robust === false ? '<span class="badge warn">not robust</span>' : '';
   const pvt = r?.r.pvt ? `<span class="badge">PVT ${r.r.pvt.pass}/${r.r.pvt.total}</span>` : '';
   return st + rb + pvt + b(p.drc, 'DRC') + b(p.lvs, 'LVS') + b(p.pex, 'PEX');
@@ -608,6 +617,7 @@ async function renderDetail(main, c) {
         <div class="eyebrow">${esc(techLabel(d.technology))} · V<sub>DD</sub> ${fmtV(d.vdd)}${r ? ` · showing ${STAGE_LABEL[r.st]}${r.fallback ? ' (fallback)' : ''}` : ''}</div>
         <h1>${esc(d.title)}</h1>
         <div class="tags">${axesChips}${(d.tags || []).filter(Boolean).map((t) => `<span class="badge">${esc(t)}</span>`).join('')}</div>
+        ${d.na ? `<div class="note muted"><b>Not applicable:</b> ${Blocks.inline(d.na)}</div>` : ''}
         ${d.summary ? `<div class="md">${Blocks.md(d.summary)}</div>` : ''}
       </div>
     </section>

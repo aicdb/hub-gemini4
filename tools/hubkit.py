@@ -320,8 +320,8 @@ def validate(ex: Export, rep: Report, exclude=()) -> Refs:
             elif av not in axis_vals[ak]:
                 rep.err(f"{tag}: axis {ak}={av!r} not in axes.{ak}.values")
         res = d.get("results") or {}
-        if not res:
-            rep.err(f"{tag}: results{{}} is empty — need at least one of {STAGES}")
+        if not res and not d.get("na"):
+            rep.err(f"{tag}: results{{}} is empty — need at least one of {STAGES} (or set \"na\": \"reason\" for a not-applicable placeholder)")
         for st, r in res.items():
             if st not in STAGES:
                 rep.err(f"{tag}: unknown stage {st!r} (use {STAGES})")
