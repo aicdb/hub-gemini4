@@ -271,7 +271,10 @@ Pages and detail documents are lists of blocks. Every block accepts these common
   options automatically. Links to sibling components are fine: `[comparator](#/sa/san-lv-1v8-sub)`.
   Escape markdown characters with a backslash (`\_`); underscores inside link URLs are safe.
 - `rows` may be arrays in column order instead of objects.
-- A column named `vdd` (or `tech`) makes the table follow the global filter.
+- A column named `vdd` makes the table follow the global V<sub>DD</sub> filter when all its values
+  are design supplies used in the hub (e.g. 1.8 / 3.3). Per-corner supplies (1.62 V …) are
+  never filtered; force it with `vdd_filter: true`, or disable it with `vdd_filter: false`.
+  A `tech` column follows the technology filter. Explorers apply the same rule to a `vdd` column.
 - `stage_column: "stage"` makes it follow the global simulation stage (rows without a stage
   are always shown). Add `stage_group: "<column>"` (e.g. the design-id column) to keep, per
   entity, the row of its best available stage ≤ the selected one. This mixes e.g. full and

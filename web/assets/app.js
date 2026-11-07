@@ -133,6 +133,7 @@ function ctxFor(c) {
   if (!c._ids) c._ids = new Set(c.designs.map((d) => d.id));
   return {
     stage: S.stage, fb: S.fb === '1', vdd: S.vdd, tech: S.tech,
+    vdds: [...new Set(CAT.components.flatMap((x) => x.rows.map((r) => r[1])).filter((v) => v != null).map(String))],
     src: (p) => asset(c, p),
     repo: (f) => repoUrl(c, f),
     thumb: (g, cell) => thumbFor(c, g, cell),

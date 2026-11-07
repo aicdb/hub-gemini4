@@ -298,7 +298,11 @@
     const data = b.src ? await ctx.json(b.src) : b;
     const cols = (b.columns || data.columns || []).map((c) => (typeof c === 'string' ? { key: c, label: c } : c));
     let rows = (data.rows || []).map((r) => (Array.isArray(r) ? Object.fromEntries(cols.map((c, i) => [c.key, r[i]])) : r));
-    if (ctx.vdd && b.vdd_filter !== false && cols.some((c) => c.key === 'vdd')) rows = rows.filter((r) => cellV(r.vdd) == null || String(cellV(r.vdd)) === ctx.vdd);
+    // follow the global VDD only for real design supplies: opt-in via vdd_filter:true, or automatic when
+    // every value of the 'vdd' column is one of the hub's supplies (corner supplies like 1.62 V never match)
+    const isSupplyCol = (vals) => vals.every((v) => v == null || (ctx.vdds || []).includes(String(v)));
+    if (ctx.vdd && b.vdd_filter !== false && cols.some((c) => c.key === 'vdd') && (b.vdd_filter === true || isSupplyCol(rows.map((r) => cellV(r.vdd)))))
+      rows = rows.filter((r) => cellV(r.vdd) == null || String(cellV(r.vdd)) === ctx.vdd);
     if (ctx.tech && cols.some((c) => c.key === 'tech')) rows = rows.filter((r) => !cellV(r.tech) || cellV(r.tech) === ctx.tech);
     let stageNote = '';
     if (b.stage_column && b.stage_group) {
@@ -479,7 +483,8 @@
     applyShow(b.filters_default);
     // global options
     let base = new Uint8Array(N).fill(1);
-    if (ctx.vdd && C.vdd) for (let i = 0; i < N; i++) if (C.vdd[i] != null && String(C.vdd[i]) !== ctx.vdd) base[i] = 0;
+    if (ctx.vdd && C.vdd && b.vdd_filter !== false && (b.vdd_filter === true || C.vdd.every((v) => v == null || (ctx.vdds || []).includes(String(v)))))
+      for (let i = 0; i < N; i++) if (C.vdd[i] != null && String(C.vdd[i]) !== ctx.vdd) base[i] = 0;
     if (ctx.tech && C.tech) for (let i = 0; i < N; i++) if (C.tech[i] && C.tech[i] !== ctx.tech) base[i] = 0;
     let stageNote = '';
     if (C.stage && b.stage_group && C[b.stage_group]) {
