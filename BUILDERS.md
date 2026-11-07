@@ -206,7 +206,7 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 | `layout` | `gds`, `cell` (optional sub-cell), `max_height` | rendered GDS thumbnail + link to the raw GDS in the repo |
 | `gallery` | `items[]: {label, src \| gds, cell?, caption?}`, `style`: tabs/grid, `cols`, `default` | several figures as tabs or a grid |
 | `downloads` | `items[]: {label, file \| src \| url, note?}` | link list; `file` → raw file in the repo, `src` → hosted, `url` → external |
-| `tabs` | `tabs[]: {label, blocks[], vdd?, tech?}`, `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
+| `tabs` | `tabs[]: {label, labels?: {pre, partial, full}, blocks[], vdd?, tech?}` (`labels` = stage-dependent tab label), `style`: tabs/select, `label`, `default`, `id` (selection is kept in the URL as `t.<id>=<index>`, so it can be deep-linked) | switch between alternative block groups (benches, corners, topologies…); more than 12 tabs become a dropdown |
 
 **Table columns:** `{key, label, unit, si, digits, type, group, better, md, align, title, wrap}`
 (`wrap: true` lets long text wrap instead of staying on one line).

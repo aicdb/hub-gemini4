@@ -266,7 +266,8 @@
   };
 
   R.tabs = async (el, b, ctx) => {
-    const tabs = (b.tabs || []).filter((t) => passGlobal(t, ctx));
+    const stageLabel = (t) => { if (!t.labels) return t.label; const st = pickStage(Object.keys(t.labels), ctx); return st ? t.labels[st] : t.label; };
+    const tabs = (b.tabs || []).filter((t) => passGlobal(t, ctx)).map((t) => Object.assign({}, t, { label: stageLabel(t) }));
     const sel = b.style === 'select' || tabs.length > 12;
     el.innerHTML = `${head(b)}${sel
       ? `<label class="tabsel">${esc(b.label || 'Show')} <select>${tabs.map((t, i) => `<option value="${i}">${esc(String(t.label).replace(/<[^>]+>/g, ''))}</option>`).join('')}</select></label>`
@@ -315,7 +316,8 @@
       let inner;
       if (c.type === 'design') {
         const href = v != null ? ctx.designHref(String(v)) : null;
-        inner = href ? `<a href="${href}">${esc(s.t || v)}</a>` : esc(v ?? '—');
+        const txt = c.md ? inline(s.t || v) : esc(s.t || v);
+        inner = href ? `<a href="${href}">${txt}</a>` : (c.md ? inline(v ?? '—') : esc(v ?? '—'));
       } else if (c.type === 'link' && s.href) inner = `<a href="${esc(s.href)}" target="_blank" rel="noopener">${esc(v)}</a>`;
       else if (c.type === 'status' || typeof v === 'boolean') inner = v === true ? '✓' : v === false ? '✗' : esc(v ?? '—');
       else if (typeof v === 'number') inner = fmt(v, c);

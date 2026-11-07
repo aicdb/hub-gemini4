@@ -1350,6 +1350,11 @@ def page_method():
         {"type": "section", "title": "gm/I<sub>D</sub> of the GF180 devices (saturation, L<sub>min</sub>)",
          "intro": f"From `data/gmid.json` (W = {G[devs[0]]['w_um']} µm, L = L<sub>min</sub> per device).",
          "blocks": [{"type": "tabs", "label": "V<sub>SB</sub>", "tabs": tabs}]},
+        {"type": "downloads", "title": "Data files",
+         "items": [{"label": "Card index (meta + all cards, pre/post metrics)", "file": "data/index.json"},
+                   {"label": "Design-space sweep (2,025 samples + Pareto fronts)", "file": "data/sweep.json"},
+                   {"label": "gm/I<sub>D</sub> lookup curves", "file": "data/gmid.json"},
+                   {"label": "Explorer data as shown on the hub (sweep + cards, columnar)", "src": "hub/data/dse_explorer.json"}]},
         {"type": "note", "tone": "muted",
          "text": f"generated {META['generated']} · GF180MCU-D (5LM, MIM M4/M5) · Cadence Spectre (YI-141-SM064 Rev 9) · KLayout DRC/LVS · source on "
                  "[GitHub](https://github.com/aicdb/switch-gen-gemini4) (private)"},
