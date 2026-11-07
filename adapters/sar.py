@@ -94,7 +94,7 @@ def href(comp, key):
     """hub link to a sibling component design (underscores %-encoded: the hub's markdown would
     otherwise read `__x__` as bold inside the URL)"""
     hid = key.replace("/", "-") if comp == "opa" else key
-    return f"#/{comp}/{hid.replace('_', '%5F')}"
+    return f"#/{comp}/{hid}"
 
 
 def mdlink(comp, key):
@@ -151,7 +151,7 @@ def section(title, blocks, cols=None, intro=None, collapsed=None):
 
 
 def line(name, x, y, color=None, dash=None, width=2, mode="lines", **kw):
-    t = {"type": "scatter", "mode": mode, "name": name, "x": x, "y": y, "line": {"width": width}}
+    t = {"type": "scatter", "mode": mode, "name": str(name).replace("`", ""), "x": x, "y": y, "line": {"width": width}}
     if color:
         t["line"]["color"] = color
         if "markers" in mode:
@@ -163,10 +163,7 @@ def line(name, x, y, color=None, dash=None, width=2, mode="lines", **kw):
 
 
 def chart(title, data, xt=None, yt=None, layout=None, height=None, caption=None, **kw):
-    hh = height or 380
-    # legend below the x-axis title (the hub default overlaps it on short charts)
-    lay = {"xaxis": {"title": {"text": xt or ""}}, "yaxis": {"title": {"text": yt or ""}},
-           "legend": {"yanchor": "top", "y": R(-62.0 / max(120, hh - 80), 3)}}
+    lay = {"xaxis": {"title": {"text": xt or ""}}, "yaxis": {"title": {"text": yt or ""}}}
     for k, v in (layout or {}).items():
         if isinstance(v, dict) and isinstance(lay.get(k), dict):
             lay[k] = {**lay[k], **v}
@@ -178,6 +175,13 @@ def chart(title, data, xt=None, yt=None, layout=None, height=None, caption=None,
     if caption:
         b["caption"] = caption
     b.update(kw)
+    return b
+
+
+def staged(b, st="partial"):
+    """mark a block as a result of one simulation stage (follows the global stage option)"""
+    if b:
+        b["stage"] = st
     return b
 
 
@@ -224,22 +228,33 @@ SUB_LABEL = {
 
 METRICS = [
     # key, label, unit, si, better, digits
-    ("enob", "ENOB", "bit", False, "high", 3),
-    ("sndr", "SNDR", "dB", False, "high", 4),
-    ("sfdr", "SFDR", "dB", False, "high", 4),
-    ("thd", "THD", "dB", False, "low", 4),
-    ("snr", "SNR", "dB", False, "high", 4),
-    ("fs", "Sample rate", "S/s", True, "high", 4),
-    ("power", "Total power", "W", True, "low", 3),
-    ("e_conv", "Energy / conversion", "J", True, "low", 3),
-    ("fom_w", "Walden FoM", "fJ/step", False, "low", 3),
-    ("fom_s", "Schreier FoM", "dB", False, "high", 4),
-    ("p_leak", "Sleep leakage (ULP, SPICE)", "W", True, "low", 3),
-    ("dnl", "DNL max (extracted CDAC)", "LSB", False, "low", 2),
-    ("inl", "INL max (extracted CDAC)", "LSB", False, "low", 2),
-    ("enob_var", "Worst redundant ENOB, injected variance", "bit", False, "high", 3),
-    ("enob_var_bin", "Worst binary-CDAC ENOB, injected variance", "bit", False, "high", 3),
-    ("area", "Layout area", "µm²", False, "low", 4),
+    ("enob", "ENOB", "bit", False, "high", 4,
+     "Effective number of bits from the coherent 16/32-point SPICE FFT incl. the generator's analytical thermal-noise term; "
+     "short FFTs can give ENOB at or above N (accuracy about ±0.3 b). Not reported for loop-unrolled cards (synthesized codes)."),
+    ("enob_loss", "ENOB shortfall", "bit", False, "low", 3,
+     "N − ENOB (nominal resolution minus SPICE ENOB). The generator's own feasibility criterion is ≤ 1.8 b; negative values are short-FFT artefacts."),
+    ("sndr", "SNDR", "dB", False, "high", 4, "SPICE FFT SNDR incl. the analytical thermal-noise term."),
+    ("sfdr", "SFDR", "dB", False, "high", 4, "Spurious-free dynamic range of the SPICE FFT."),
+    ("thd", "THD", "dB", False, "low", 4, "Total harmonic distortion (HD2–HD5) of the SPICE FFT."),
+    ("enob_raw", "ENOB (raw codes)", "bit", False, "high", 4,
+     "Loop-unrolled cards only: ENOB of the raw, uncalibrated SPICE output codes (FFT computed by the hub, no added noise). "
+     "The published calibrated codes of these cards are synthesized by the generator."),
+    ("fs", "Sample rate", "S/s", True, "high", 4, "Single-channel conversion rate."),
+    ("power", "Total power", "W", True, "low", 3,
+     "SPICE supply power; sleep-gated ULP cards: SPICE energy/conversion × f_s + duty-cycled SPICE sleep leakage (repo formula)."),
+    ("e_conv", "Energy / conv.", "J", True, "low", 3, "Total power / f_s."),
+    ("fom_w", "Walden FoM", "fJ/step", False, "low", 4, "P / (f_s · 2^ENOB)."),
+    ("fom_s", "Schreier FoM", "dB", False, "high", 4, "SNDR + 10·log10(f_s / 2P)."),
+    ("p_leak", "Sleep leakage", "W", True, "low", 3,
+     "Sleep-gated ULP cards only: SPICE supply leakage in the sleep window (before duty cycling). Not reported for "
+     "continuous-mode cards, whose published 'standby leakage' is op-amp bias + a constant."),
+    ("dnl", "DNL max", "LSB", False, "low", 3, "Static DNL from the Magic-extracted CDAC step weights."),
+    ("inl", "INL max", "LSB", False, "low", 3, "Static INL from the Magic-extracted CDAC step weights."),
+    ("enob_var", "Redundant ENOB (var.)", "bit", False, "high", 4,
+     "Worst ENOB of the redundant CDAC over the 5 injected-variance corners (SPICE on the extracted CDAC macro of this card)."),
+    ("enob_var_bin", "Binary ENOB (var.)", "bit", False, "high", 4,
+     "Worst ENOB of a binary CDAC on the same extracted array over the same 5 corners — the comparison case."),
+    ("area", "Layout area", "µm²", False, "low", 4, "Full-chip layout area (1:1 square)."),
 ]
 
 PARTIAL_NOTE = ("Transistor-level SPICE with the Magic-extracted CDAC and the sibling repos' PEX netlists of "
@@ -298,10 +313,44 @@ def fft_ok_of(d):
     return bool(fp.get("codes")) and "error" not in fp
 
 
+def synth_of(d):
+    """loop-unrolled cards: published codes are the generator's calibration fit to an ideal sine plus a
+    hard-coded HD2/HD3 term (sargen/lu2g.py _calibrate_lu2g_radix_and_cm_lut), not SPICE output"""
+    return d.get("fs_tier") == "lu2g"
+
+
+def raw_fft(codes, n, m):
+    """noise-free coherent FFT metrics of raw codes (same bins as sargen/ulp.py, no added thermal noise)"""
+    if not codes or len(codes) != n:
+        return None
+    mu = sum(codes) / n
+    y = [x - mu for x in codes]
+    p = []
+    for b in range(n // 2 + 1):
+        re = sum(y[k] * math.cos(2 * math.pi * b * k / n) for k in range(n))
+        im = -sum(y[k] * math.sin(2 * math.pi * b * k / n) for k in range(n))
+        p.append((re * re + im * im) / (n / 2.0) ** 2)
+    p[0] = 0.0
+    ps = p[m]
+    nd = [x for i, x in enumerate(p) if i != m]
+    pnd = max(sum(nd), 1e-18)
+    harm = 0.0
+    for h in range(2, 6):
+        hb = (h * m) % n
+        if hb > n // 2:
+            hb = n - hb
+        if hb != m and 0 < hb <= n // 2:
+            harm += p[hb]
+    sndr = 10 * math.log10(max(ps, 1e-18) / pnd)
+    spec = [-110.0 if i == 0 else (0.0 if i == m else 10 * math.log10(max(x, 1e-16) / max(ps, 1e-18))) for i, x in enumerate(p)]
+    return {"sndr_db": R(sndr, 4), "enob": R((sndr - 1.76) / 6.02, 4), "sfdr_db": R(10 * math.log10(max(ps, 1e-18) / max(max(nd), 1e-18)), 4),
+            "thd_db": R(10 * math.log10(max(harm, 1e-18) / max(ps, 1e-18)), 4), "spec_dbc": [R(x, 4) for x in spec]}
+
+
 def partial_stage(c, d):
     fp = d["spice"]["fft_post"]
     fs_hz = fp["fs_msps"] * 1e6
-    ok = fft_ok_of(d)
+    ok = fft_ok_of(d) and not synth_of(d)
     sndr = fp.get("sndr_db") if ok else None
     enob = fp.get("enob") if ok else None
     p_leak = None
@@ -322,11 +371,12 @@ def partial_stage(c, d):
     cp = d.get("cdac_pex") or {}
     mac = MACROS.get(c["cdac_key"]) or {}
     _, pv = own_pv(c, d)
+    raw = raw_fft(fp.get("codes_uncalibrated"), fp.get("n_fft"), fp.get("m_bin")) if synth_of(d) else None
     m = {
-        "enob": enob, "sndr": sndr,
+        "enob": enob, "enob_loss": R(c["nbits"] - enob, 4) if enob is not None else None, "sndr": sndr,
         "sfdr": fp.get("sfdr_db") if ok else None,
         "thd": fp.get("thd_db") if ok else None,
-        "snr": fp.get("snr_db") if ok else None,
+        "enob_raw": raw["enob"] if raw else None,
         "fs": R(fs_hz),
         "power": R(power), "e_conv": R(e_conv),
         "fom_w": R(fom_w), "fom_s": R(fom_s),
@@ -336,8 +386,12 @@ def partial_stage(c, d):
         "enob_var_bin": mac.get("worst_binary_enob", pv.get("worst_binary_enob")),
         "area": c.get("area_um2"),
     }
-    nt = PARTIAL_NOTE + f"; {fp.get('n_fft', 32)}-point coherent FFT"
-    if not ok:
+    nt = PARTIAL_NOTE + (f"; {fp.get('n_fft', 32)}-point coherent FFT — SNDR/ENOB/FoMs include an analytical thermal-noise "
+                         "term (kT/C + comparator noise) added to the SPICE spectrum, and short FFTs can put ENOB at or above N (±0.3 b)")
+    if synth_of(d):
+        nt += ("; **dynamic metrics not reported**: the published calibrated codes of loop-unrolled cards are synthesized by the "
+               "generator (fit to an ideal sine + hard-coded HD2/HD3), so 'ENOB (raw codes)' gives the uncalibrated SPICE result instead")
+    elif not fft_ok_of(d):
         nt += "; **FFT run failed for this card** (ngspice error) — dynamic metrics not available"
     elif fp.get("eoc_all_high") is False:
         nt += "; EOC was not reached on every FFT cycle (incomplete conversions lower ENOB)"
@@ -361,7 +415,7 @@ def weights_str(w, red):
     return ", ".join(out)
 
 
-def fft_chart(fp, title):
+def fft_chart(fp, title, stage=None, note_=None):
     f = fp.get("freqs_mhz") or []
     s = fp.get("spec_dbc") or []
     mb = fp.get("m_bin", 3)
@@ -386,7 +440,7 @@ def fft_chart(fp, title):
     return chart(title, [stem("spurs / noise bins", xs, ys, BLUE, 6), stem("signal bin", xsig, ysig, GREEN, 9)],
                  "Frequency (Hz)", "Power (dBc)",
                  {"xaxis": {"exponentformat": "SI", "ticksuffix": "Hz"}, "yaxis": {"range": [-112, 6]}},
-                 height=340, caption=head)
+                 height=340, caption=head + (f"  \n{note_}" if note_ else ""), **({"stage": stage} if stage else {}))
 
 
 def detail_doc(c, d):
@@ -409,7 +463,18 @@ def detail_doc(c, d):
                            "netlist). The old site showed fallback values (thermal-noise ceiling) as if simulated: "
                            f"ENOB {fp.get('enob')} b, SNDR {fp.get('sndr_db')} dB. The hub reports no dynamic metrics.",
                            "bad", "FFT failed."))
-    if ok and fp.get("eoc_all_high") is False:
+    syn = synth_of(d)
+    raw = raw_fft(fp.get("codes_uncalibrated"), fp.get("n_fft"), fp.get("m_bin")) if syn else None
+    if syn:
+        blocks.append(note(
+            "The published FFT codes of loop-unrolled cards are **not SPICE output**: the generator fits the raw SPICE codes "
+            "exactly to an ideal sine (its 'foreground LUT + radix calibration' includes a per-sample basis) and then adds a "
+            "hard-coded HD2/HD3 term (sargen/lu2g.py `_calibrate_lu2g_radix_and_cm_lut`). The published ENOB "
+            f"{fp.get('enob')} b, SNDR {fp.get('sndr_db')} dB and FoMs are therefore synthetic. The raw, uncalibrated SPICE "
+            f"codes give ENOB {raw['enob'] if raw else '—'} b (SNDR {raw['sndr_db'] if raw else '—'} dB, hub FFT without added noise); "
+            "the hub reports only that as a result. The 3-cycle conversion table was gain/offset-fitted as well (tab 2).",
+            "bad", "Synthesized FFT codes."))
+    if ok and not syn and fp.get("eoc_all_high") is False:
         blocks.append(note("EOC (end of conversion) was not reached on every FFT cycle, so part of the conversions "
                            "were incomplete; the SPICE ENOB of this card is correspondingly low.", "warn", "Incomplete conversions."))
     if sleep:
@@ -422,12 +487,13 @@ def detail_doc(c, d):
             "(E_dyn × fs + duty-cycled leakage).", "warn", "ULP energy placeholders."))
     twins = WF_TWINS.get(cid) or []
     if twins:
-        blocks.append(note("This card shares its SPICE waveform/FFT record with " + ", ".join(f"[`{x}`](#/sar/{x.replace('_', '%5F')})" for x in twins)
+        blocks.append(note("This card shares its SPICE waveform/FFT record with " + ", ".join(f"[`{x}`](#/sar/{x})" for x in twins)
                            + " (same ULP core simulation, different target sample rate).", "muted"))
     elif FFT_TWINS.get(cid):
-        blocks.append(note(f"The {fp.get('n_fft')} FFT output codes of this card are identical to those of "
-                           + ", ".join(f"[`{x}`](#/sar/{x.replace('_', '%5F')})" for x in FFT_TWINS[cid])
-                           + " (duplicated simulation record in the generator's cache).", "muted"))
+        blocks.append(note(f"The {fp.get('n_fft')} published FFT output codes of this card are identical to those of "
+                           + ", ".join(f"[`{x}`](#/sar/{x})" for x in FFT_TWINS[cid])
+                           + (" — both are synthesized by the generator's loop-unrolled calibration fit (see above)." if syn
+                              else " (duplicated simulation record in the generator's cache)."), "muted"))
     pv_src, pv = own_pv(c, d)
     old_pv = (d.get("resilience") or {}).get("postpex_variance") or {}
     if old_pv.get("ckey") and old_pv.get("ckey") != c["cdac_key"]:
@@ -511,8 +577,15 @@ def detail_doc(c, d):
 
     # ================================================================== 2 FFT & waveforms
     t2 = []
-    if ok:
-        t2.append(fft_chart(fp, "Coherent transistor-level SPICE FFT spectrum (partial post-PEX)"))
+    if ok and syn:
+        if raw:
+            t2.append(fft_chart(dict(fp, spec_dbc=raw["spec_dbc"], enob=raw["enob"], sndr_db=raw["sndr_db"], sfdr_db=raw["sfdr_db"], thd_db=raw["thd_db"]),
+                                "FFT spectrum of the raw, uncalibrated SPICE output codes (hub-computed)", stage="partial",
+                                note_="Computed by the hub from `codes_uncalibrated` (no added thermal noise)."))
+        t2.append(fft_chart(fp, "Published spectrum — synthesized by the generator's calibration fit (not SPICE)",
+                            note_="Old-site spectrum, shown for completeness: the codes are an ideal sine plus a hard-coded HD2/HD3 term."))
+    elif ok:
+        t2.append(fft_chart(fp, "Coherent transistor-level SPICE FFT spectrum (partial post-PEX)", stage="partial"))
     else:
         t2.append(note("No FFT spectrum: the SPICE FFT run failed for this card.", "bad"))
     # pre / post / full summary table
@@ -524,12 +597,12 @@ def detail_doc(c, d):
            col("full", "Full-chip PEX — model estimate", type_="text", title="post − 0.18 dB SNDR, ×1.018 power; never simulated")]
     if sleep:
         hdr.append(col("rec", "Post-CDAC-PEX — recomputed from SPICE energy (hub)", type_="text"))
-    fail = "" if ok else " (fallback, FFT failed)"
+    fail = " (synthesized)" if syn else "" if ok else " (fallback, FFT failed)"
 
     def rowp(label, kp, unit="", d_=4, scale=1.0, siu=None, rec=None):
         f = (lambda v: si(mul(v, scale), siu, d_)) if siu else (lambda v: fx(v, unit, d_))
         sfx = fail if kp not in ("fs_msps", "power_uw") else ""
-        r = [label, f(fpre.get(kp)) + sfx, {"v": f(fp.get(kp)) + sfx, "s": "good" if ok else "warn"}, f(ffull.get(kp)) + sfx]
+        r = [label, f(fpre.get(kp)) + sfx, {"v": f(fp.get(kp)) + sfx, "s": "good" if ok and not syn else "warn"}, f(ffull.get(kp)) + sfx]
         if sleep:
             r.append(rec if rec is not None else "—")
         return r
@@ -588,15 +661,15 @@ def detail_doc(c, d):
         t = wf["tot"]
         e = mul(t.get("e_dyn_pj"), 1e-12)
         sub_rows.append([{"v": "Total (all rails)", "s": "good"}, e, mul(e, fs_hz), mul(t.get("p_leak_nw"), 1e-9), mul(t.get("i_leak_na"), 1e-9)])
-    t2.append(table(f"Sub-block dynamic energy & standby leakage breakdown ({'EOC autonomous sleep power-gated' if sleep else 'continuous high-speed mode'})",
+    t2.append((staged if tier != "hs" else (lambda x: x))(table(f"Sub-block dynamic energy & standby leakage breakdown ({'EOC autonomous sleep power-gated' if sleep else 'continuous high-speed mode'})",
                     [col("b", "Sub-block rail", type_="text"), col("e", "Dynamic energy / conv. E_dyn", "J", True),
                      col("p", f"Dynamic power @ {si(fs_hz, 'S/s')}", "W", True), col("l", "Standby (sleep) leakage power", "W", True),
                      col("i", "Standby leakage current (27 °C)", "A", True)],
-                    sub_rows, caption=sub_cap, search=False, csv=False))
+                    sub_rows, caption=sub_cap, search=False, csv=False)))
     t_ns = RL(tr.get("t_ns"), 5)
     if t_ns:
         wf_cap = f"SPICE transient (partial post-PEX), cycles 0 and 1 at +0.75·FS and −0.75·FS. {len(t_ns)} samples (as stored in docs)."
-        t2.append(section(None, [
+        t2.append(staged(section(None, [
             chart("CDAC top-plate convergence waveform", [
                 line("TOP_P (CDAC +)", t_ns, RL(tr.get("top_p"), 4), BLUE),
                 line("TOP_N (CDAC −)", t_ns, RL(tr.get("top_n"), 4), PINK),
@@ -607,17 +680,18 @@ def detail_doc(c, d):
                 line("COMP_CLK (async osc.)", t_ns, RL(tr.get("comp_clk"), 4), PURPLE, width=1.5),
                 line("EOC (done)", t_ns, RL(tr.get("eoc"), 4), GREEN)],
                 "Time (ns)", "Clock / control (V)", {"yaxis": {"range": [-0.1, vdd * 1.1]}}, height=320),
-        ], cols=2))
+        ], cols=2)))
         extra = []
         if tr.get("vdiff_top"):
             extra.append(line("V(top_p) − V(top_n)", t_ns, RL(tr.get("vdiff_top"), 4), BLUE))
         if tr.get("code_reconstructed"):
             extra.append(line("reconstructed code", t_ns, RL(tr.get("code_reconstructed"), 5), AMBER, yaxis="y2"))
         if extra:
-            t2.append(chart("Differential top-plate residue & reconstructed output code", extra, "Time (ns)", "V_diff (V)",
+            t2.append(staged(chart("Differential top-plate residue & reconstructed output code", extra, "Time (ns)", "V_diff (V)",
                             {"yaxis2": {"title": {"text": "Code (LSB)"}, "overlaying": "y", "side": "right"}}, height=300,
-                            caption="Additional traces stored in docs (`vdiff_top`, `code_reconstructed`); not plotted by the old site."))
+                            caption="Additional traces stored in docs (`vdiff_top`, `code_reconstructed`); not plotted by the old site.")))
     cyc = []
+    tt = next((x for x in (sp.get("pvt_corners") or []) if x.get("corner") == "typical"), {}) if syn else {}
     for i, cy in enumerate(wf.get("cycles") or []):
         vd = num(cy.get("vdiff_v")) or 0.0
         norm = cy.get("norm_in", vd / max(0.1, vdd))
@@ -627,20 +701,28 @@ def detail_doc(c, d):
                     cy.get("expected_code_nbits", cy.get("ideal_code")),
                     {"v": err, "s": "good" if num(err) is not None and abs(err) <= 1 else "warn"},
                     bool(cy.get("eoc_ok", wf.get("eoc_ok", True)))])
-    t2.append(table("3-cycle transistor-level SPICE conversion verification",
-                    [col("c", "Cycle", type_="text"), col("v", "Differential input (VIP − VIN)", "V", digits=5),
-                     col("n", "Input", "% FS", digits=3), col("b", "Redundant output bit stream", type_="text"),
-                     col("m", "Measured code", "LSB", digits=6), col("e", "Expected code", "LSB", digits=6),
-                     col("err", "Linearity error", "LSB", digits=3), col("eoc", "EOC handshake", type_="status")],
-                    cyc, search=False, csv=False))
+        if syn:
+            rc = tt.get(f"cyc{i}_code")
+            ex = cy.get("expected_code_nbits", cy.get("ideal_code"))
+            cyc[-1] += [rc, {"v": R(rc - ex, 4) if num(rc) is not None and num(ex) is not None else None, "s": "bad"}]
+    cyc_cols = [col("c", "Cycle", type_="text"), col("v", "Differential input (VIP − VIN)", "V", digits=5),
+                col("n", "Input", "% FS", digits=3), col("b", "Redundant output bit stream", type_="text"),
+                col("m", "Measured code" + (" (post-fit)" if syn else ""), "LSB", digits=6), col("e", "Expected code", "LSB", digits=6),
+                col("err", "Linearity error" + (" (post-fit)" if syn else ""), "LSB", digits=3), col("eoc", "EOC handshake", type_="status")]
+    if syn:
+        cyc_cols += [col("raw", "Raw SPICE code (TT)", "LSB", digits=6), col("rerr", "Raw error", "LSB", digits=4)]
+    t2.append(staged(table("3-cycle transistor-level SPICE conversion verification", cyc_cols, cyc, search=False, csv=False,
+                           caption=("**Post-fit codes:** the generator fits cycles 0 and 1 with a 2-point gain/offset correction "
+                                    "(errors forced to 0.00 LSB) and clamps the cycle-2 error to ≤ 0.68 LSB (sargen/lu2g.py). The raw "
+                                    "SPICE codes of the TT run (`pvt_corners[0]`) and their errors are added on the right.") if syn else None)))
     sd = wf.get("step_decisions_cycle0") or []
     if sd:
-        t2.append(table("Bit-cycling decisions, cycle 0 (SPICE)",
+        t2.append(staged(table("Bit-cycling decisions, cycle 0 (SPICE)",
                         [col("s", "Step", digits=3), col("w", "Weight", "LSB", digits=5), col("t", "t", "ns", digits=5),
                          col("p", "V(top_p)", "V", digits=4), col("n", "V(top_n)", "V", digits=4),
                          col("d", "V_diff", "mV", digits=4), col("b", "Bit", digits=1)],
                         [[x.get("step"), x.get("weight_lsb"), x.get("t_ns"), x.get("top_p_v"), x.get("top_n_v"), x.get("vdiff_mv"), x.get("bit")] for x in sd],
-                        caption="Stored in docs (`waveform_post.step_decisions_cycle0`); not shown by the old site.", search=False, csv=False))
+                        caption="Stored in docs (`waveform_post.step_decisions_cycle0`); not shown by the old site.", search=False, csv=False)))
     tabs.append({"label": "2 · Dynamic FFT & waveforms (SPICE)", "blocks": t2})
 
     # ================================================================== 3 static linearity & noise
@@ -648,14 +730,14 @@ def detail_doc(c, d):
     lin = cp.get("linearity") or {}
     b = d.get("budget") or {}
     ax = RL(lin.get("code_axis"), 5)
-    t3 = [section(None, [
+    t3 = [staged(section(None, [
         chart("Post-PEX differential non-linearity (DNL)", [line(f"DNL (max {cp.get('dnl_max')} LSB)", ax, RL(lin.get("dnl"), 4), BLUE)],
               f"Output code (0 … {2 ** d['nbits'] - 1})", "DNL (LSB)", height=300),
         chart("Post-PEX integral non-linearity (INL)", [line(f"INL (max {cp.get('inl_max')} LSB)", ax, RL(lin.get("inl"), 4), AMBER)],
               f"Output code (0 … {2 ** d['nbits'] - 1})", "INL (LSB)", height=300),
     ], cols=2, intro="Static linearity computed from the Magic-extracted CDAC step weights (sargen/cdac_pex.py "
                      "`compute_static_linearity`), not from a SPICE code-density test. "
-                     f"{len(ax)} code points as stored in docs; missing codes: {lin.get('missing_codes')}.")]
+                     f"{len(ax)} code points as stored in docs; missing codes: {lin.get('missing_codes')}."))]
     t3.append(kv("Thermal noise & static linearity budget (analytical)", [
         ["LSB step (differential)", f"{b.get('v_lsb_mv')} mV (FS_diff = ±{b.get('fs_diff_v')} V)"],
         ["Single-ended top-plate capacitance C_top", f"{b.get('c_top_single_ff')} fF (C_u = {cp.get('cu_ext_ff')} fF, C_B = {cp.get('cb_p_ff')} fF)"],
@@ -666,17 +748,32 @@ def detail_doc(c, d):
         ["Thermal-noise SNDR / ENOB ceiling", f"{b.get('sndr_thermal_ceiling_db')} dB / {b.get('enob_thermal_ceiling')} b"],
         ["Post-PEX DNL_max / INL_max", f"{b.get('dnl_max_lsb')} / {b.get('inl_max_lsb')} LSB ({b.get('missing_codes')} missing codes)"],
         ["Max step error", f"{b.get('max_step_error_lsb')} LSB"],
-        ["Attenuation gain / full-scale (diff.)", f"{b.get('atten_gain')} / {b.get('v_fs_diff_v')} V"],
-    ], cols=2, caption="Noise values combine kT/C, the sibling comparator's simulated noise and the op-amp noise analytically (sargen/arch.py)."))
+    ] + ([["Attenuation gain / full-scale (diff.)", f"{b.get('atten_gain')} / {b.get('v_fs_diff_v')} V"]]
+         if b.get("atten_gain") is not None and b.get("v_fs_diff_v") is not None else []), cols=2, caption="Noise values combine kT/C, the sibling comparator's simulated noise and the op-amp noise analytically (sargen/arch.py)."))
     gt = cp.get("group_table") or []
     sw_ = cp.get("step_weights") or []
-    t3.append(table(f"Magic post-PEX extracted capacitor group weights (`{d.get('cdac_key')}`)",
+    nom_step = defaultdict(float)
+    for g in gt:
+        if g.get("step_idx") is not None:
+            nom_step[g["step_idx"]] += g.get("nom_weight") or 0
+    grows = []
+    for g in gt:
+        si_ = g.get("step_idx")
+        stw = sw_[si_] if si_ is not None and si_ < len(sw_) else None
+        share = R(stw * (g.get("nom_weight") or 0) / nom_step[si_], 6) if stw is not None and nom_step.get(si_) else None
+        grows.append([g.get("name"), str(g.get("node", "")).upper(), g.get("units"), si_ if si_ is not None else "term",
+                      g.get("nom_weight"), stw, share, mul(g.get("c_top_ff"), 1e-15), mul(g.get("c_sub_ff"), 1e-15), mul(g.get("c_active_ff"), 1e-15)])
+    split = len(gt) > len(sw_)
+    t3.append(staged(table(f"Magic post-PEX extracted capacitor group weights (`{d.get('cdac_key')}`)",
                     [col("g", "Group", type_="text"), col("n", "Array node", type_="text"), col("u", "Units", digits=4),
-                     col("w", "Nominal weight", "LSB", digits=5), col("p", "Post-PEX weight", "LSB", digits=6),
+                     col("st", "Step", type_="text"), col("w", "Nominal group weight", "LSB", digits=5),
+                     col("p", "Post-PEX step weight", "LSB", digits=6), col("ps", "Post-PEX group share", "LSB", digits=6),
                      col("t", "C to top plate", "F", True), col("s", "C to sub-DAC", "F", True), col("a", "Extracted active cap", "F", True)],
-                    [[g.get("name"), str(g.get("node", "")).upper(), g.get("units"), g.get("nom_weight"),
-                      sw_[i] if i < len(sw_) else g.get("nom_weight"), mul(g.get("c_top_ff"), 1e-15), mul(g.get("c_sub_ff"), 1e-15),
-                      mul(g.get("c_active_ff"), 1e-15)] for i, g in enumerate(gt)], search=False))
+                    grows, search=False,
+                    caption=("Post-PEX weights are matched to groups by `step_idx`. " + (
+                        "This array splits each step into hi/lo groups, so the step weight is shown on both and the group share = "
+                        "step weight × group nominal / step nominal. " if split else "") +
+                        "The old site paired step weights with group rows by row index, which mislabels split arrays.")))) 
     t3.append(kv("CDAC extraction summary", [
         ["Unit capacitor C_u (extracted)", f"{cp.get('cu_ext_ff')} fF"],
         ["Bridge capacitor C_B,p / C_B,n", f"{cp.get('cb_p_ff')} / {cp.get('cb_n_ff')} fF"],
@@ -1265,7 +1362,7 @@ for k in sorted(MACROS, key=lambda k: (MACROS[k]["nbits"], MACROS[k]["cap_type"]
                      m.get("nom_enob"), m.get("worst_redundant_enob"), {"v": m.get("worst_binary_enob"), "s": "bad"},
                      m.get("max_redundant_err_lsb"), {"v": m.get("max_binary_err_lsb"), "s": "bad"},
                      {"v": "5/5 PASS (0 switching failures)" if m.get("all_redundant_corners_pass") else "CHECK", "s": "good" if m.get("all_redundant_corners_pass") else "bad"},
-                     len(users), f"[`{src}`](#/sar/{src.replace('_', '%5F')})" if src else "—"])
+                     len(users), f"[`{src}`](#/sar/{src}?t.pane=3)" if src else "—"])
 mac_tabs = []
 for nb in (8, 10, 12):
     tr_ = []
@@ -1284,12 +1381,11 @@ for k in sorted(PV_BY_MACRO, key=lambda k: (MACROS.get(k, {}).get("nbits", 0), k
     corners = pv.get("corners") or []
     figs = {"data": [line(co.get("label"), list(range(len(co.get("trace_res_lsb") or []))), RL(co.get("trace_res_lsb"), 5), [GRAY, BLUE, GREEN, AMBER, PURPLE][i % 5],
                           "dash" if i == 0 else None, mode="lines+markers") for i, co in enumerate(corners)],
-            "layout": {"xaxis": {"title": {"text": "Bit-cycling step index j"}}, "yaxis": {"title": {"text": "Residue V_diff (LSB)"}},
-                       "legend": {"yanchor": "top", "y": -0.22}}}
+            "layout": {"xaxis": {"title": {"text": "Bit-cycling step index j"}}, "yaxis": {"title": {"text": "Residue V_diff (LSB)"}}}}
     dump(OUT / rel, figs)
     macro_detail.append({"label": k, "blocks": [
         chart(f"`{k}`: 5-corner bit-cycling residue (SPICE)", None, height=360, src=f"hub/{rel}",
-              caption=f"Record simulated with card [`{src}`](#/sar/{src.replace('_', '%5F')}); the full corner table is on that card's page (tab 4)."),
+              caption=f"Record simulated with card [`{src}`](#/sar/{src}?t.pane=3); the full corner table is on that card's page (tab 4)."),
         table(f"`{k}`: corner summary", [col("id", "Corner", type_="text"), col("l", "Perturbation", type_="text"), col("re", "Redundant ENOB", "b", digits=4),
                                          col("be", "Binary ENOB", "b", digits=4), col("rerr", "Max err. red.", "LSB", digits=3), col("berr", "Max err. bin.", "LSB", digits=4),
                                          col("rf", "Red. switching failure", type_="status"), col("bf", "Bin. switching failure", type_="status")],
@@ -1507,8 +1603,8 @@ comp = {
         {"label": "DSE feasible", "value": f"{SWEEP.get('feasible_count', 0):,}"},
         {"label": "peak single-channel rate", "value": si(peak["fs_msps"] * 1e6, "S/s", 4)},
     ],
-    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u, si=s or None, better=b, digits=dg).items() if v is not None}
-                for k, l, u, s, b, dg in METRICS],
+    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u, si=s or None, better=b, digits=dg, desc=ds).items() if v is not None}
+                for k, l, u, s, b, dg, ds in METRICS],
     "axes": {
         "topology": {"label": "Architecture", "values": [{"id": a, "label": l} for a, l in ARCHS]},
         "nbits": {"label": "Resolution", "values": [{"id": str(n), "label": f"{n}-bit"} for n in (8, 10, 12)]},

@@ -47,7 +47,7 @@ ICL = {"10u-100u": "10–100 µA", "100u-1m": "0.1–1 mA", "1m-10m": "1–10 mA
 TCOL = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#8c3bd1", "#11a3a3", "#7a5c00", "#d43d3d",
         "#0284c7", "#c026d3", "#4f46e5"]
 S1, S2, S3, BAD, GOOD, GREY = "#2a78d6", "#eb6834", "#1baf7a", "#cf222e", "#1a7f37", "rgba(140,140,140,0.55)"
-DIAMOND = {"symbol": "diamond", "size": 8, "color": "#1f2937", "line": {"width": 1.2, "color": "#e5e7eb"}}
+DIAMOND = {"symbol": "diamond", "size": 9, "color": "#71717a", "line": {"width": 1.2, "color": "#ffffff"}}   # mid grey: visible in light and dark themes
 STAGE_OF = {"pre": "pre", "post": "full"}   # "post" is set per design (full / partial) and to "partial" for the mixed page views
 VIEW_NAME = {"pre": "schematic (pre-PEX)", "post": "extracted (post-PEX)"}
 written = []
@@ -269,6 +269,26 @@ METRICS = [
 ]
 
 
+METRIC_DESC = {
+    "coverage": "Valid signal range (on-range ∩ off-range) as a fraction of VDD, worst PVT; matrix colour: green > 97 % (rail-to-rail), amber partial, red none",
+    "on_coverage": "Input range where the worst-PVT R_on stays within 3× its minimum",
+    "off_coverage": "Largest window in which every (in, out) pair leaks < 0.1 % of I_max (worst PVT)",
+    "ron_vtest": "On-resistance at the test level (centre of the valid range), tt 27 °C",
+    "ron_wc": "Worst on-resistance over the valid range and all 15 PVT points",
+    "drop": "I_max·R_on (worst PVT, over the valid range) as a fraction of VDD; grades A ≤ 2 %, B ≤ 5 % (target), C ≤ 10 %, D ≤ 20 %",
+    "leak_wc": "Worst off-leakage over every (in, out) pair in the valid range, 15 PVT points",
+    "t_on": "ck 50 % → 90 % of the load current, tt 27 °C, input at the test level, resistive load at I_max",
+    "t_off": "ck 50 % → 10 % of the load current, tt 27 °C",
+    "e_vdd": "Charge from VDD over one full on/off cycle × VDD (drivers, bootstrap / pump)",
+    "q_vtest": "Injected charge (pedestal × C_H) at the test level, tt 27 °C (signed)",
+    "q_absmax": "Largest |injected charge| over 7 levels across the valid range",
+    "thd": "Tracking THD for a 1 MHz sine over 90 % of the valid range into the I_max load",
+    "stress": "Largest sustained (≥ 1 ns) gate-to-channel / drain-source voltage of any device as a fraction of its oxide rating",
+    "area": "Layout property of the drawn cell (identical at every stage); only for the cards whose complete cell is drawn — "
+            "multi-bank cells are drawn as one unit bank and their full-cell area is only estimated",
+}
+
+
 def stage_result(m, c, note):
     mm = {}
     for key, _l, _u, _s, _d, _b, field, scale in METRICS:
@@ -317,6 +337,7 @@ def drawn_txt(c):
     return f"{fx(bb[0], 1)} × {fx(bb[1], 1)} µm = {area(bb[0] * bb[1])}" if bb else "—"
 
 
+SCALE = ("devices multiplied by m-factors to the full width, extracted parasitic C × (1 + 0.22·(W/W<sub>drawn</sub> − 1)) (generator heuristic), MIM capacitors set to the full-cell area")
 MIXED_NOTE = (f"Post-PEX values: {N_COMPLETE} cards are extractions of the complete drawn cell (full post-PEX), the other {N_UNIT} are "
               "extractions of the drawn unit bank scaled to the full switch width (partial post-PEX); layout areas marked ≈ are the "
               "generator's estimate for the full multi-bank cell, which is not drawn.")
@@ -381,8 +402,8 @@ def spec_table(d, m, view):
         rows.append(["EM: DC current density in the met3 S/D stripes ≤ 1 mA/µm",
                      ", ".join(f"{e['dev']} {fx(e['j_stripe_ma_per_um'], 2)} mA/µm" for e in L["em"]), all(e["ok"] for e in L["em"])])
     return {"type": "table", "title": "Specification checks", "stage": STAGE_OF[view], "alt": "spec", "csv": False, "search": False,
-            "columns": [{"key": "r", "label": "Result", "type": "text"}, {"key": "k", "label": "Check", "type": "text"},
-                        {"key": "v", "label": "Value", "type": "text"}],
+            "columns": [{"key": "r", "label": "Result", "type": "text"}, {"key": "k", "label": "Check", "type": "text", "wrap": True},
+                        {"key": "v", "label": "Value", "type": "text", "wrap": True}],
             "rows": [{"k": k, "v": v, "r": {"v": "pass" if ok else "fail", "s": "good" if ok else "bad"}} for k, v, ok in rows]}
 
 
@@ -393,8 +414,7 @@ KNOB_NAME = {"rp": "P/N width ratio W_p/W_n", "kcb": "C_B (pump) / switch gate c
 def overview_blocks(d, key):
     c = d["card"]
     unit = (f" **Partial extraction:** only one unit bank of this cell is drawn ({drawn_txt(c)}); its Magic extraction was scaled by the "
-            "generator to the full switch width (devices multiplied, parasitic capacitances scaled, MIM capacitors set to the full-cell area), "
-            "so these post-PEX results are *partial post-PEX*.") if est(c) else ""
+            f"generator to the full switch width ({SCALE}), so these post-PEX results are *partial post-PEX*.") if est(c) else ""
     blocks = [{"type": "note", "stage": STAGE_OF["post"], "tone": "info",
                "text": "**Post-PEX view:** every result below is from the extracted layout netlist (R<sub>on</sub>, range, leakage, timing and "
                        "energy over PVT, charge injection, isolation, THD, device stress); only the design data (sizing, test conditions) "
@@ -419,10 +439,10 @@ def overview_blocks(d, key):
             "caption": "Sized from the reference characterisation (W<sub>s</sub> = 100 µm, 15 PVT points). Chosen (highlighted): smallest "
                        "estimated area among the knobs reaching ≥ 97 % of the best range. *Area est.* is the generator's pre-layout estimate, "
                        "not a layout result.",
-            "columns": [{"key": "k", "label": "Knob", "type": "text"}, {"key": "ws", "label": "W<sub>s</sub>", "unit": "m", "si": True},
+            "columns": [{"key": "k", "label": "Knob", "type": "text"}, {"key": "ws", "label": "W<sub>s</sub>", "type": "text", "align": "r"},
                         {"key": "cov", "label": "Range", "unit": "%", "digits": 3}, {"key": "a", "label": "Area est.", "unit": "µm²", "digits": 4},
                         {"key": "ch", "label": "Chosen", "type": "text"}],
-            "rows": [dict(k=", ".join(f"{a}={jsnum(b, 6)}" for a, b in x["knobs"].items()) or "—", ws=x["ws"] * 1e-6, cov=100 * x["coverage"],
+            "rows": [dict(k=", ".join(f"{a}={jsnum(b, 6)}" for a, b in x["knobs"].items()) or "—", ws=f"{fx(x['ws'] / 1000, 2)} mm" if x["ws"] >= 1000 else f"{fx(x['ws'], 1)} µm", cov=100 * x["coverage"],
                           a=x["area_est"], ch="✓" if x["knobs"] == c["knobs"] else "",
                           **({"_s": "good"} if x["knobs"] == c["knobs"] else {})) for x in alts]})
     right.append({"type": "downloads", "items": [{"label": "netlist.spice", "file": f"designs/{key}/netlist.spice", "note": "simulation netlist"}]})
@@ -601,10 +621,11 @@ def simulation_blocks(d):
     px = V.get("pex") or {}
     rp = px.get("r_path") or {}
     c = d["card"]
-    what = (f"of the drawn unit bank ({drawn_txt(c)}), scaled by the generator to the full switch width (devices multiplied, parasitic C scaled, "
-            "MIM capacitors set to the full-cell area) — **partial post-PEX**") if est(c) else "of the complete verified cell — **full post-PEX**"
+    what = (f"of the drawn unit bank ({drawn_txt(c)}), scaled by the generator to the full switch width ({SCALE}) — **partial post-PEX**"
+            if est(c) else "of the complete verified cell — **full post-PEX**")
     note = (f"Post-PEX: Magic extraction {what} (hierarchical, {px.get('n_c', 0):,} parasitic capacitances ≥ 0.01 fF, MIM and junction "
-            f"geometry) plus the drawn series metal resistance of the switch path (in {si(rp.get('in') or 0, 'Ω')}, out {si(rp.get('out') or 0, 'Ω')}); "
+            f"geometry) plus an estimated series resistance of the met3 source/drain stripes (formula on the stripe geometry; in "
+            f"{si(rp.get('in') or 0, 'Ω')}, out {si(rp.get('out') or 0, 'Ω')}) added at the IN/OUT pins; "
             "same benches and test conditions as the schematic results. Dotted R<sub>on</sub> curve: the schematic.")
     if px.get("coupling") is False:
         note += (" **Reduced extraction:** the full extraction of this cell exceeds the 30-min run limit, so coupling capacitance between nets is omitted "
@@ -656,7 +677,7 @@ def layout_blocks(d, key):
         kv += [{"label": "PEX (Magic)", "value": "ok" if px.get("ok") else "failed", "s": "good" if px.get("ok") else "bad"},
                {"label": "Extracted parasitic capacitances (≥ 0.01 fF)", "value": f"{px.get('n_c', 0):,}"},
                {"label": "Coupling capacitance", "value": "extracted" if px.get("coupling") is not False else "omitted (reduced extraction)"},
-               {"label": "Series stripe R added at IN / OUT", "value": f"{si(rp.get('in') or 0, 'Ω')} / {si(rp.get('out') or 0, 'Ω')}"},
+               {"label": "Series stripe R added at IN / OUT (estimated, formula)", "value": f"{si(rp.get('in') or 0, 'Ω')} / {si(rp.get('out') or 0, 'Ω')}"},
                {"label": "Missing ports", "value": ", ".join(px.get("missing_ports") or []) or "none"}]
     blocks = []
     if est(c):
@@ -709,7 +730,7 @@ def layout_blocks(d, key):
 
 
 def detail_doc(d, key):
-    return {"blocks": [{"type": "tabs", "tabs": [
+    return {"blocks": [{"type": "tabs", "id": "tab", "tabs": [
         {"label": "Overview", "blocks": overview_blocks(d, key)},
         {"label": "Schematic", "blocks": schematic_blocks(d, key)},
         {"label": "Simulation", "blocks": simulation_blocks(d)},
@@ -726,6 +747,15 @@ for c in CARDS_SORTED:
     key, m, mp, st = c["key"], c.get("m") or {}, c.get("mp") or {}, c.get("status") or {}
     if st.get("sim") == "n/a" or not m:
         na_cards.append(c)
+        nd = load(f"designs/{key}/data.json") if (docs / "designs" / key / "data.json").is_file() else {}
+        designs.append({
+            "id": key, "title": c["name"], "vdd": c["vdd"], "axes": {"topology": c["topo"], "class": c["iclass"]},
+            "tags": list(c.get("tags") or []) + ["not applicable"], "na": c.get("reason") or "not applicable", "results": {},
+            **({"files": {"data": f"designs/{key}/data.json"}} if nd else {}),
+            "detail": write(f"designs/{key}.json", {"blocks": [
+                {"type": "section", "title": "Topology", "blocks": [{"type": "markdown", "text": DESC[c["topo"]] + "".join(
+                    f"\n\n<small>{n}</small>" for n in (nd.get("circuit") or {}).get("notes") or [] if n != c.get("reason"))}]}]}),
+        })
         continue
     base = f"designs/{key}"
     d = load(f"{base}/data.json")
@@ -738,11 +768,11 @@ for c in CARDS_SORTED:
     if mp:
         if unit:
             note = (f"Magic extraction of the drawn unit bank only ({drawn_txt(c)}; the full multi-bank cell is not drawn), scaled by the generator "
-                    "to the full switch width (devices multiplied, parasitic C scaled, MIM caps set to the full-cell area), plus the met3 stripe "
-                    "series R at IN/OUT; same benches, 15 PVT points")
+                    "to the full switch width (devices multiplied by m-factors, extracted parasitic C × (1 + 0.22·(W/W_drawn − 1)) as a generator "
+                    "heuristic, MIM caps set to the full-cell area), plus an estimated met3 stripe series R (formula) at IN/OUT; same benches, 15 PVT points")
         else:
-            note = ("Magic extraction of the complete drawn cell (device geometry, parasitic C ≥ 0.01 fF incl. coupling) plus the met3 stripe "
-                    "series R at IN/OUT; same benches, 15 PVT points")
+            note = ("Magic extraction of the complete drawn cell (device geometry, parasitic C ≥ 0.01 fF incl. coupling) plus an estimated met3 "
+                    "stripe series R (formula) at IN/OUT; same benches, 15 PVT points")
         if capfix:
             note += "; the generator scales the extracted ntop–vss / vb–vss capacitances by 0.25"
         results[POST_STAGE[key]] = stage_result(mp, c, note)
@@ -753,12 +783,12 @@ for c in CARDS_SORTED:
     pex = verify.get("pex") or {}
     tags = list(c.get("tags") or []) + [f"R_on grade {m.get('grade') or 'below D'}"]
     r2r_pre, r2r_post = (m.get("coverage") or 0) > 0.97, (mp.get("coverage") or 0) > 0.97
-    tags += ["rail-to-rail"] if r2r_pre and r2r_post else ["rail-to-rail pre-PEX only"] if r2r_pre else []
+    tags += (["r2r-pre"] if r2r_pre else []) + (["r2r-post"] if r2r_post else [])   # rail-to-rail (> 97 % VDD) per netlist; not substrings
     if m.get("stress_ok") is False:
         tags.append("overstress")
     if m.get("em_ok") is False:
         tags.append("EM-limited")
-    tags.append("unit-bank layout" if unit else "complete layout")
+    tags.append("unit-bank layout (physical area = drawn unit bank)" if unit else "complete layout")
     params = {"R_on target (5 % VDD / I_max)": si(m["rt"], "Ω"), "I_max (class maximum)": si(c["imax"], "A"),
               "Main switch width W_s": f"{fx(m['ws'] / 1000, 3)} mm" if m["ws"] >= 1000 else f"{fx(m['ws'], 2)} µm",
               "Test level (input)": f"{fx(m['vtest'], 3)} V", "Load R_L": si(m["rl"], "Ω"), "Hold cap C_H": si(m["ch"], "F"),
@@ -766,12 +796,17 @@ for c in CARDS_SORTED:
               "THD tone (amplitude @ centre)": f"{fx(m.get('thd_amp'), 3)} V @ {fx(m.get('thd_vc'), 3)} V",
               "Auxiliary slices": m.get("naux"), "Switch banks": m.get("banks"),
               "Device / MIM area": f"{area(m.get('act_um2'))} / {area(m.get('mim_um2'))}"}
+    params["Valid range (pre-PEX)"] = range_txt(m.get("valid"))
+    if mp:
+        params[f"Valid range ({POST_STAGE[key]} post-PEX)"] = range_txt(mp.get("valid"))
     if unit:
         params["Estimated full-cell size (multi-bank, not drawn)"] = f"{fx(m['layout_w'], 1)} × {fx(m['layout_h'], 1)} µm = {area(m['area_um2'])}"
     params.update({KNOB_NAME.get(k, k): v for k, v in (c.get("knobs") or {}).items()})
     designs.append({
         "id": key, "title": c["name"],
-        "summary": f"Sized for I<sub>max</sub>·R<sub>on</sub> ≤ 5 % VDD at I<sub>max</sub> = {si(c['imax'], 'A')} (R<sub>on</sub> target {si(m['rt'], 'Ω')}) "
+        "summary": (f"**Unit-bank layout:** the GDS and the *Physical* area are one drawn unit bank ({drawn_txt(c)}); the full multi-bank "
+                    f"cell (≈ {fx(m['layout_w'], 1)} × {fx(m['layout_h'], 1)} µm = {area(m['area_um2'])}) is the generator's estimate and is not drawn. "
+                    if unit else "") + f"Sized for I<sub>max</sub>·R<sub>on</sub> ≤ 5 % VDD at I<sub>max</sub> = {si(c['imax'], 'A')} (R<sub>on</sub> target {si(m['rt'], 'Ω')}) "
                    f"over the valid signal range at all 15 PVT points. Results: Overview · Schematic · Simulation · Layout tabs below; "
                    f"the global *Simulation stage* switches between the schematic (pre-PEX) and the extracted-layout results"
                    + (f" (*partial post-PEX*: only one unit bank of this cell is drawn and extracted, {drawn_txt(c)}; the reported cell size is an estimate)."
@@ -783,61 +818,92 @@ for c in CARDS_SORTED:
         "results": results, "params": params, "files": files, "images": images,
         "detail": write(f"designs/{key}.json", detail_doc(d, key)),
     })
-STAGE_OF["post"] = "partial"   # page views mix full (complete-cell) and partial (unit-bank) extractions
+STAGE_OF["post"] = "partial"
 DESIGN_IDS = {x["id"] for x in designs}
 done = [c for c in CARDS_SORTED if c["status"]["sim"] == "done"]
+# page-level views of the old site's pre/post switch. The post-PEX cards have two extraction levels (35 complete cells = full,
+# 90 unit banks = partial); fixed page views are emitted per stage: partial = all extracted cards together, full = complete cells only.
+PARTIAL_NOTE = (f"Partial post-PEX view: all {N_COMPLETE + N_UNIT} extracted cards together — the {N_UNIT} unit-bank extractions (partial "
+                f"post-PEX) and, alongside, the {N_COMPLETE} complete-cell extractions (full post-PEX); select Full post-PEX for the complete cells "
+                "only. Areas marked ≈ are the generator's estimates for multi-bank cells.")
+FULL_NOTE = (f"Full post-PEX view: only the {N_COMPLETE} cards whose complete cell is drawn and extracted; the other {N_UNIT} cards have a "
+             "partial (unit-bank) extraction — select Partial post-PEX to include them.")
+PAGE_VIEWS = [
+    {"stage": "pre", "mv": "pre", "cards": lambda c: True, "note": ""},
+    {"stage": "partial", "mv": "post", "cards": lambda c: bool(c.get("mp")), "note": PARTIAL_NOTE},
+    {"stage": "full", "mv": "post", "cards": lambda c: bool(c.get("mp")) and not est(c), "note": FULL_NOTE},
+]
 
 
 # ============================================================================= page: overview (old list view)
 def page_overview():
     blocks = []
-    for view in ("pre", "post"):
-        cs = CARDS
-        blocks.append({"type": "stats", "stage": STAGE_OF[view], "alt": "ovst", "items": [
-            {"label": "design cards", "value": str(sum(1 for c in cs if c["status"]["sim"] != "n/a"))},
-            {"label": "fully characterised", "value": str(sum(1 for c in cs if c["status"]["sim"] == "done"))},
-            {"label": "rail-to-rail valid range", "value": str(sum(1 for c in done if (mv(c, view).get("coverage") or 0) > 0.97))},
-            {"label": "layouts DRC + LVS clean", "value": str(sum(1 for c in cs if c["status"].get("drc") and c["status"].get("lvs")))},
-            {"label": "meet the R<sub>on</sub> target (grade A/B)", "value": str(sum(1 for c in done if mv(c, view).get("grade") in ("A", "B")))},
-            {"label": "post-PEX simulated (extracted netlists)", "value": str(sum(1 for c in cs if c.get("mp")))},
-            {"label": "not applicable (n/a)", "value": str(len(na_cards))}],
-            **({"caption": MIXED_NOTE + " DRC/LVS were run on the drawn GDS (the unit bank for multi-bank cells)."} if view == "post" else
-               {"caption": f"DRC/LVS were run on the drawn GDS: the complete cell for {N_COMPLETE} cards, one unit bank for the other {N_UNIT}."})})
-    # coverage matrix (heatmap with the old colour code and n/a cells)
-    cols = [(v, k) for v in META["vdds"] for k in ICLS]
-    for view in ("pre", "post"):
-        z, text, cd = [], [], []
-        for t in ORDER:
-            zr, tr, cr = [], [], []
-            for v, k in cols:
-                c = next((x for x in CARDS if x["topo"] == t and x["vdd"] == v and x["iclass"] == k), None)
-                if not c:
-                    zr.append(None); tr.append(""); cr.append(["", ""])
-                    continue
-                if c["status"]["sim"] == "n/a":
-                    zr.append(-1); tr.append("n/a"); cr.append([c["key"], f"{c['key']}: {c['reason']}"])
-                    continue
-                m = mv(c, view)
-                cov = m.get("coverage")
-                zr.append(None if cov is None else 2 if cov > 0.97 else 1 if cov > 0 else 0)
-                tr.append("…" if cov is None else f"{jsround(100 * cov)} %<br>{area_lbl(c, m['area_um2']) if m.get('area_um2') else '…'}")
-                cr.append([c["key"], f"{c['name']}<br>valid {range_txt(m.get('valid'))} · area {area_lbl(c, m.get('area_um2'))}{' (estimated, unit bank drawn)' if est(c) else ''}<br>R_on wc {si(m.get('ron_wc'), 'Ω')} · {grade_txt(m)}"])
-            z.append(zr); text.append(tr); cd.append(cr)
-        cs_ = [[0, "#e5e7eb"], [0.1667, "#e5e7eb"], [0.1667, "#ffd8d6"], [0.5, "#ffd8d6"], [0.5, "#fdeeb8"], [0.8333, "#fdeeb8"], [0.8333, "#cdeed6"], [1, "#cdeed6"]]
-        blocks.append({"type": "chart", "stage": STAGE_OF[view], "alt": "covmx", "title": "Coverage matrix", "height": 700, "link_designs": True,
-                       "caption": "One cell per design card. The value is the valid signal range as a fraction of the supply (green: rail-to-rail, amber: partial, "
-                                  "red: none) and the cell's area (**≈** = the generator's estimate for a multi-bank cell of which only one unit bank is drawn); "
-                                  "grey **n/a**: not applicable (see the table below). Click a cell to open the design. "
-                                  "The built-in *Designs → Matrix* view shows the same grid with any metric.",
-                       "data": [{"type": "heatmap", "z": z, "text": text, "texttemplate": "%{text}", "textfont": {"size": 11, "color": "#1f2937"},
-                                 "x": [f"{v} V<br>{icl_of(k)}" for v, k in cols], "y": [SHORT[t] for t in ORDER], "customdata": cd,
-                                 "hovertemplate": "%{customdata[1]}<extra></extra>", "zmin": -1, "zmax": 2, "colorscale": cs_, "showscale": False,
-                                 "xgap": 3, "ygap": 3}],
-                       "layout": {"yaxis": {"autorange": "reversed", "automargin": True, "showgrid": False}, "xaxis": {"side": "top", "showgrid": False},
-                                  "margin": {"l": 230, "t": 60, "b": 10, "r": 10}}})
+    vdds = META["vdds"]
+    for V in PAGE_VIEWS:
+        for v in vdds:
+            cs = [c for c in CARDS if c["vdd"] == v]
+            dv = [c for c in done if c["vdd"] == v]
+            sub = [c for c in dv if V["cards"](c)]
+            items = [{"label": "design cards", "value": str(sum(1 for c in cs if c["status"]["sim"] != "n/a"))},
+                     {"label": "fully characterised", "value": str(sum(1 for c in cs if c["status"]["sim"] == "done"))}]
+            if V["stage"] != "pre":
+                items.append({"label": "cards in this view", "value": str(len(sub))})
+            items += [{"label": "rail-to-rail valid range", "value": str(sum(1 for c in sub if (mv(c, V["mv"]).get("coverage") or 0) > 0.97))},
+                      {"label": "layouts DRC + LVS clean (drawn GDS)", "value": str(sum(1 for c in cs if c["status"].get("drc") and c["status"].get("lvs")))},
+                      {"label": "meet the R<sub>on</sub> target (grade A/B)", "value": str(sum(1 for c in sub if mv(c, V["mv"]).get("grade") in ("A", "B")))},
+                      {"label": "post-PEX simulated (complete / unit bank)",
+                       "value": f"{sum(1 for c in dv if c.get('mp') and not est(c))} / {sum(1 for c in dv if c.get('mp') and est(c))}"},
+                      {"label": "not applicable (n/a)", "value": str(sum(1 for c in cs if c["status"]["sim"] == "n/a"))}]
+            blk = {"type": "stats", "title": f"Design cards at {v} V", "stage": V["stage"], "alt": f"ovst{v}", "vdd": v, "items": items}
+            if v == vdds[-1]:
+                blk["caption"] = V["note"] or (f"DRC/LVS were run on the drawn GDS: the complete cell for {N_COMPLETE} cards, one unit bank for the "
+                                               f"other {N_UNIT}.")
+            blocks.append(blk)
+    # coverage matrix (heatmap with the old colour code and n/a cells), one trace per supply (follows the global V_DD filter)
+    cs_ = [[0, "#e5e7eb"], [0.1667, "#e5e7eb"], [0.1667, "#ffd8d6"], [0.5, "#ffd8d6"], [0.5, "#fdeeb8"], [0.8333, "#fdeeb8"], [0.8333, "#cdeed6"], [1, "#cdeed6"]]
+    heat = []
+    for V in PAGE_VIEWS:
+        for v in vdds:
+            z, text, cd = [], [], []
+            for t in ORDER:
+                zr, tr, cr = [], [], []
+                for k in ICLS:
+                    c = next((x for x in CARDS if x["topo"] == t and x["vdd"] == v and x["iclass"] == k), None)
+                    if not c:
+                        zr.append(None); tr.append(""); cr.append(["", ""])
+                        continue
+                    if c["status"]["sim"] == "n/a":
+                        zr.append(-1); tr.append("n/a"); cr.append([c["key"], f"{c['key']}: {c['reason']}"])
+                        continue
+                    if not V["cards"](c):
+                        zr.append(-1); tr.append("partial<br>only")
+                        cr.append([c["key"], f"{c['name']}: only a unit-bank (partial) extraction — select Partial post-PEX"])
+                        continue
+                    m = mv(c, V["mv"])
+                    cov = m.get("coverage")
+                    zr.append(None if cov is None else 2 if cov > 0.97 else 1 if cov > 0 else 0)
+                    tr.append("…" if cov is None else f"{jsround(100 * cov)} %<br>{area_lbl(c, m['area_um2']) if m.get('area_um2') else '…'}")
+                    cr.append([c["key"], f"{c['name']}<br>valid {range_txt(m.get('valid'))} · area {area_lbl(c, m.get('area_um2'))}"
+                                         f"{' (estimated, unit bank drawn)' if est(c) else ''}<br>R_on wc {si(m.get('ron_wc'), 'Ω')} · {grade_txt(m)}"
+                                         + ("" if V["stage"] == "pre" else f" · {POST_STAGE[c['key']]} post-PEX")])
+                z.append(zr); text.append(tr); cd.append(cr)
+            heat.append({"type": "chart", "stage": V["stage"], "alt": f"covmx{v}", "vdd": v, "title": f"Coverage matrix · V<sub>DD</sub> = {v} V",
+                         "height": 680, "link_designs": True,
+                         **({"caption": V["note"]} if V["note"] and v == vdds[-1] else {}),
+                         "data": [{"type": "heatmap", "z": z, "text": text, "texttemplate": "%{text}", "textfont": {"size": 11, "color": "#1f2937"},
+                                   "x": [icl_of(k) for k in ICLS], "y": [SHORT[t] for t in ORDER], "customdata": cd,
+                                   "hovertemplate": "%{customdata[1]}<extra></extra>", "zmin": -1, "zmax": 2, "colorscale": cs_, "showscale": False,
+                                   "xgap": 3, "ygap": 3}],
+                         "layout": {"yaxis": {"autorange": "reversed", "automargin": True, "showgrid": False},
+                                    "xaxis": {"side": "top", "showgrid": False, "type": "category"}, "margin": {"l": 200, "t": 40, "b": 10, "r": 10}}})
+    blocks.append({"type": "section", "title": "Coverage matrix", "cols": 2, "blocks": heat,
+                   "intro": "One cell per design card. The value is the valid signal range as a fraction of the supply (green: rail-to-rail, amber: "
+                            "partial, red: none) and the cell's area (**≈** = the generator's estimate for a multi-bank cell of which only one unit bank "
+                            "is drawn); grey **n/a**: not applicable. Click a cell to open the design. The built-in *Designs → Matrix* view shows the "
+                            "same grid with any metric."})
     # R_on point ladder per supply x current class (group headers of the old card list)
     rows = []
-    for v in META["vdds"]:
+    for v in vdds:
         for k, (lo, hi) in ICLS.items():
             rows.append({"vdd": v, "cls": icl_of(k), "imax": hi, **{g: f * v / hi for g, f in GRADES},
                          "n": sum(1 for c in CARDS if c["vdd"] == v and c["iclass"] == k)})
@@ -849,14 +915,13 @@ def page_overview():
                                {"key": "imax", "label": "I<sub>max</sub>", "unit": "A", "si": True}]
                               + [{"key": g, "label": f"{g} ({jsround(100 * f)} %)" + (" target" if f == DROP else ""), "unit": "Ω", "si": True} for g, f in GRADES]
                               + [{"key": "n", "label": "cards"}], "rows": rows})
-    # comparison table (old list "Comparison table") at both stages
-    rows_by = {"pre": [], "post": []}
-    for view in ("pre", "post"):
-        rows = rows_by[view]
-        for c in done:
-            m = mv(c, view)
+    # comparison table (old list "Comparison table"): one row per design and stage; best stage per design
+    rows = []
+    for c in done:
+        for view in ("pre", "post"):
             if view == "post" and not c.get("mp"):
                 continue
+            m = mv(c, view)
             rows.append({"design": {"v": c["key"], "t": f"{c['short']} · {c['vdd']} V · {icl_of(c['iclass'])}"}, "vdd": c["vdd"],
                          "valid": range_txt(m.get("valid")), "cov": 100 * m["coverage"], "ron": m.get("ron_vtest"), "ronwc": m.get("ron_wc"),
                          "grade": {"v": grade_txt(m), "s": grade_s(m.get("grade"))}, "flat": m.get("ron_flat"), "roff": m.get("roff_wc"),
@@ -875,22 +940,21 @@ def page_overview():
              {"key": "iso", "label": "Iso 10M", "unit": "dB", "better": "low"}, {"key": "thd", "label": "THD", "unit": "dB", "better": "low"},
              {"key": "rc", "label": "Ron·Coff", "unit": "s", "si": True, "better": "low"}, {"key": "area", "label": "Area", "unit": "µm²", "digits": 4, "better": "low"},
              {"key": "lay", "label": "Layout", "type": "text"}, {"key": "status", "label": "Status", "type": "text"}, {"key": "stage", "label": "Stage", "type": "text"}]
-    for view in ("pre", "post"):
-        blocks.append({"type": "table", "title": "Comparison table", "stage": STAGE_OF[view], "alt": "cmptab",
-                       "src": write(f"data/compare_table_{view}.json", {"columns": tcols, "rows": rows_by[view]}),
-                       "columns": tcols, "sort": {"key": "design", "dir": "asc"}, "page_size": 400, "csv_name": f"switch_comparison_{view}",
-                       "caption": "Every characterised design in one sortable table (click a header). Rows open the design. Follows the global "
-                                  "*Simulation stage* (Pre-PEX = schematic; post-PEX = extracted layout) and V<sub>DD</sub> filter."
-                                  + (" " + MIXED_NOTE + " The *Stage* column gives each row's extraction coverage." if view == "post" else
-                                     " Areas in grey are the generator's estimates for multi-bank cells.")})
+    blocks.append({"type": "table", "title": "Comparison table", "src": write("data/compare_table.json", {"columns": tcols, "rows": rows}),
+                   "columns": tcols, "stage_column": "stage", "stage_group": "design", "page_size": 400, "csv_name": "switch_comparison",
+                   "caption": "Every characterised design in one sortable table (click a header; default: generator order). Rows open the design. "
+                              "Follows the global *Simulation stage*: each design shows its best available stage ≤ the selected one (with *fill from "
+                              f"earlier stage*), so at Full post-PEX the {N_COMPLETE} complete-cell extractions (full) appear together with the {N_UNIT} "
+                              "unit-bank extractions (partial); the *Stage* column tells which is which. Areas in grey are the generator's estimates for "
+                              "multi-bank cells. Follows the V<sub>DD</sub> filter."})
     blocks.append({"type": "table", "title": "Not applicable cards", "search": False, "csv": False,
-                   "caption": "These matrix positions are part of the generator's grid but are not built: no simulation, layout or results exist, "
-                              "so they are not design records on the hub.",
-                   "columns": [{"key": "key", "label": "Card", "type": "text"}, {"key": "topo", "label": "Topology", "type": "text"},
+                   "caption": "These matrix positions are part of the generator's grid but are not built: no simulation, layout or results exist. They "
+                              "appear as n/a placeholders in the Designs view.",
+                   "columns": [{"key": "key", "label": "Card", "type": "design"}, {"key": "topo", "label": "Topology", "type": "text"},
                                {"key": "vdd", "label": "V<sub>DD</sub>", "unit": "V"}, {"key": "cls", "label": "Current class", "type": "text"},
-                               {"key": "tags", "label": "Tags", "type": "text"}, {"key": "reason", "label": "Reason", "type": "text"}],
+                               {"key": "tags", "label": "Tags", "type": "text", "wrap": True}, {"key": "reason", "label": "Reason", "type": "text", "wrap": True}],
                    "rows": [{"key": c["key"], "topo": c["short"], "vdd": c["vdd"], "cls": icl_of(c["iclass"]), "tags": ", ".join(c.get("tags") or []),
-                             "reason": c.get("reason") or "", "_s": "muted"} for c in na_cards]})
+                             "reason": c.get("reason") or "", "_design": c["key"]} for c in na_cards]})
     tags_of = {t: [] for t in ORDER}
     for c in CARDS:
         for g in c.get("tags") or []:
@@ -898,8 +962,8 @@ def page_overview():
                 tags_of[c["topo"]].append(g)
     blocks.append({"type": "table", "title": "Topologies", "search": False, "csv": False,
                    "columns": [{"key": "t", "label": "Topology", "type": "text"}, {"key": "id", "label": "id", "type": "text"},
-                               {"key": "tags", "label": "Devices / tags", "type": "text"}, {"key": "desc", "label": "Description", "type": "text"},
-                               {"key": "n", "label": "cards"}],
+                               {"key": "tags", "label": "Devices / tags", "type": "text", "wrap": True},
+                               {"key": "desc", "label": "Description", "type": "text", "wrap": True}, {"key": "n", "label": "cards"}],
                    "rows": [{"t": SHORT[t], "id": t, "tags": ", ".join(tags_of[t]), "desc": DESC[t],
                              "n": sum(1 for c in done if c["topo"] == t)} for t in ORDER]})
     intro = ("## Deliverable design cards\n\nThirteen analog-switch topologies (including precision ADC sampling switches) × two supplies (1.8 V, 3.3 V) × "
@@ -910,16 +974,16 @@ def page_overview():
              "card for its schematic with gm/I<sub>D</sub> annotation, simulation results and layout.\n\n"
              "<small>pass-gate · T-switch · clock-boosted · bootstrapped (3 V<sub>T</sub> options) · Spectre PVT · gLayout · GF180MCU-D. "
              "Filters of the old card list map to the hub as follows: V<sub>DD</sub> → global supply filter; current class and topology → chips "
-             "in the Designs view; DRC+LVS clean → global verification filter; rail-to-rail / R<sub>on</sub> grade → search tags "
-             "(`rail-to-rail`, `R_on grade B`) or sort the comparison table.</small>")
+             "in the Designs view; DRC+LVS clean → global verification filter; Status *Rail-to-rail* → search tag `r2r-pre` (schematic) or "
+             "`r2r-post` (extracted), or the matrix colours; R<sub>on</sub> grade → search tag `R_on grade B` or sort the comparison table.</small>")
     return {"intro": intro, "blocks": blocks}
 
 
 # ============================================================================= page: topology comparison
-CMP = [("area_um2", "Layout area (µm²)", "log", 1), ("e_vdd", "Switching energy per cycle (pJ)", "log", 1e12),
-       ("q_absmax", "Max |charge injection| over the range (pC)", "log", 1e12), ("t_on", "Turn-on time (ns)", "log", 1e9),
-       ("coverage", "Valid signal range (% of VDD)", "linear", 100), ("thd_db", "Tracking THD, 1 MHz into I_max load (dB)", "linear", 1),
-       ("ron_coff_fs", "R_on · C_off (fs)", "log", 1), ("ron_flat", "R_on flatness max/min over range", "log", 1)]
+CMP = [("area_um2", "Layout area", "µm²", "log", 1), ("e_vdd", "Switching energy per cycle", "pJ", "log", 1e12),
+       ("q_absmax", "Max |charge injection| over the range", "pC", "log", 1e12), ("t_on", "Turn-on time", "ns", "log", 1e9),
+       ("coverage", "Valid signal range", "% of VDD", "linear", 100), ("thd_db", "Tracking THD, 1 MHz into I_max load", "dB", "linear", 1),
+       ("ron_coff_fs", "R_on · C_off", "fs", "log", 1), ("ron_flat", "R_on flatness max/min over range", "", "log", 1)]
 
 
 def page_compare():
@@ -928,24 +992,27 @@ def page_compare():
     for v in META["vdds"]:
         cs = [c for c in CARDS if c["vdd"] == v and c["status"]["sim"] == "done"]
         blocks = []
-        for view in ("pre", "post"):
-            blocks.append({"type": "stats", "stage": STAGE_OF[view], "alt": "cst", "items": [
-                {"label": f"characterised cards at {v} V", "value": str(len(cs))},
-                {"label": "rail-to-rail", "value": str(sum(1 for c in cs if (mv(c, view).get("coverage") or 0) > 0.97))}]})
+        for V in PAGE_VIEWS:
+            sub = [c for c in cs if V["cards"](c)]
+            blocks.append({"type": "stats", "title": f"Cards at {v} V", "stage": V["stage"], "alt": "cst",
+                           "items": [{"label": f"characterised cards at {v} V", "value": str(len(cs))}]
+                                    + ([{"label": "cards in this view", "value": str(len(sub))}] if V["stage"] != "pre" else [])
+                                    + [{"label": "rail-to-rail", "value": str(sum(1 for c in sub if (mv(c, V["mv"]).get("coverage") or 0) > 0.97))}],
+                           **({"caption": V["note"]} if V["note"] else {})})
         present = [t for t in ORDER if any(c["topo"] == t for c in cs)]
-        blocks.append({"type": "chart", "height": 120, "title": "Topologies",
+        blocks.append({"type": "chart", "height": 150, "title": "Topologies",
                        "data": [{"x": [None], "y": [None], "name": SHORT[t], "mode": "lines+markers", "line": {"color": TCOL[ORDER.index(t)], "width": 2},
                                  "marker": {"size": 6}} for t in present],
                        "layout": {"xaxis": {"visible": False}, "yaxis": {"visible": False}, "margin": {"l": 0, "r": 0, "t": 0, "b": 0},
                                   "legend": {"orientation": "h", "y": 1, "x": 0, "yanchor": "top"}, "showlegend": True},
                        "config": {"displayModeBar": False, "staticPlot": False}})
         charts = []
-        for i, (k, title, ty, f) in enumerate(CMP):
-            for view in ("pre", "post"):
+        for i, (k, title, unit, ty, f) in enumerate(CMP):
+            for V in PAGE_VIEWS:
                 trs = []
                 for j, topo in enumerate(ORDER):
-                    pts = [next((x for x in cs if x["topo"] == topo and x["iclass"] == cl), None) for cl in cls]
-                    ys = [mv(p, view)[k] * f if p and mv(p, view).get(k) is not None else None for p in pts]
+                    pts = [next((x for x in cs if x["topo"] == topo and x["iclass"] == cl and V["cards"](x)), None) for cl in cls]
+                    ys = [mv(p, V["mv"])[k] * f if p and mv(p, V["mv"]).get(k) is not None else None for p in pts]
                     if not any(y is not None for y in ys):
                         continue
                     isarea = k == "area_um2"
@@ -953,22 +1020,28 @@ def page_compare():
                                 "line": {"color": TCOL[j], "width": 2},
                                 "marker": {"size": 6, "color": TCOL[j], **({"symbol": ["circle-open" if p and est(p) else "circle" for p in pts]} if isarea else {})},
                                 "customdata": [p["key"] if p else "" for p in pts],
-                                "text": [("≈ estimated (multi-bank)" if p and est(p) else "drawn layout") if isarea else "" for p in pts],
-                                "hovertemplate": f"{SHORT[topo]}: %{{y:.3g}}{' %{text}' if isarea else ''}<extra></extra>"})
+                                "text": [(("≈ estimated (multi-bank)" if est(p) else "drawn layout") if isarea else "")
+                                         + ("" if V["stage"] == "pre" else f" · {POST_STAGE[p['key']]} post-PEX") if p else "" for p in pts],
+                                "hovertemplate": f"{SHORT[topo]}: %{{y:.3g}} %{{text}}<extra></extra>"})
                 cap = ("Filled markers: drawn layout area (complete cell); open markers: the generator's estimate for a multi-bank cell of which "
                        "only one unit bank is drawn.") if k == "area_um2" else ""
-                if view == "post" and i == 0:
-                    cap = (cap + " " + MIXED_NOTE).strip()
-                charts.append({"type": "chart", "stage": STAGE_OF[view], "alt": f"c{i}", "title": title, "link_designs": True, "height": 340,
-                               **({"caption": cap} if cap else {}),
-                               "data": trs, "layout": {"showlegend": False, "yaxis": {"type": ty}, "xaxis": {"type": "category"}, "hovermode": "closest"}})
+                if i == 0 and V["note"]:
+                    cap = (cap + " " + V["note"]).strip()
+                yax = {"type": ty, "title": {"text": f"{title.split(',')[0]}{f' ({unit})' if unit else ''}"}}
+                if ty == "log":
+                    yax["dtick"] = 1
+                charts.append({"type": "chart", "stage": V["stage"], "alt": f"c{i}", "title": f"{title}{f' ({unit})' if unit else ''}",
+                               "link_designs": True, "height": 340, **({"caption": cap} if cap else {}),
+                               "data": trs, "layout": {"showlegend": False, "yaxis": yax, "hovermode": "closest",
+                                                       "xaxis": {"type": "category", "title": {"text": "load-current class"}}}})
         blocks.append({"type": "section", "cols": 2, "blocks": charts})
         tabs.append({"label": f"{v} V", "vdd": v, "blocks": blocks})
     intro = ("## Topology comparison\n\nKey metrics of all characterised cards against the load-current class, one line per topology. Every card meets "
              "the same on-resistance target (R<sub>on</sub>·I<sub>max</sub> ≤ 5 % VDD over its valid range, worst PVT), so the curves show what each "
              "topology pays for it: area, switching energy, charge injection and speed, and how much of the supply it can actually pass. "
-             "Click a point to open the card; the global *Simulation stage* switches between schematic and extracted-layout values.")
-    return {"intro": intro, "blocks": [{"type": "tabs", "label": "V<sub>DD</sub>", "tabs": tabs}]}
+             "Click a point to open the card. The global *Simulation stage* selects the netlist: Pre-PEX = schematic; Partial post-PEX = all "
+             f"125 extracted cards ({N_UNIT} unit-bank + {N_COMPLETE} complete-cell extractions); Full post-PEX = only the {N_COMPLETE} complete cells.")
+    return {"intro": intro, "blocks": [{"type": "tabs", "id": "vdd", "label": "V<sub>DD</sub>", "tabs": tabs}]}
 
 
 # ============================================================================= page: design-space explorer
@@ -988,7 +1061,7 @@ EXKEYS = {"ron_area": ("ron_wc", "area"), "ron_q": ("ron_wc", "q_absmax"), "ron_
           "cov_fom": ("fom_ra", "coverage"), "thd_cov": ("coverage", "thd_db")}
 EX_PRE = {"ov": "Pareto fronts by topology", "fac_h": "Per-topology design clouds",
           "fac_p": "Grey: sampled designs · coloured line: the topology's Pareto front for this trade-off (filled = R<sub>on</sub> re-simulated at all 5 corners "
-                   "× 3 temperatures stays within 5 % of the sweep's worst-case estimate, open = it does not) · dark diamonds: the delivered design cards. "
+                   "× 3 temperatures stays within 5 % of the sweep's worst-case estimate, open = it does not) · grey diamonds: the delivered design cards. "
                    "Hover any point for its parameters; click a diamond to open the card.",
           "tab_h": "Front designs (all topologies)", "tab_p": "The designs on the combined Pareto front of the selected trade-off and supply, with their knobs."}
 EX_POST = {"ov": "Post-PEX Pareto fronts of the design cards", "fac_h": "Per-topology design cards (post-PEX)",
@@ -1041,13 +1114,17 @@ def combo_pre(preset, vdd):
                         "text": [hov_sample(i) for i in f], "hovertemplate": "%{text}<extra></extra>"})
     trs.append(card_trace(cards, kx, ky, "pre"))
     tag = f"pre_{preset}_{str(vdd).replace('.', 'p')}"
-    blocks = [{"type": "chart", "stage": "pre", "alt": "ov", "title": EX_PRE["ov"], "link_designs": True, "height": 560,
+    blocks = [{"type": "stats", "title": "Sweep fronts (this trade-off and supply)", "stage": "pre", "alt": "cst",
+               "items": [{"label": "samples shown", "value": f"{len(sel):,}"},
+                         {"label": "per-topology front points", "value": str(sum(len(fr(t)) for t in ORDER))},
+                         {"label": "on the combined front", "value": str(len(fr("all")))},
+                         {"label": "design cards (diamonds)", "value": str(len(cards))}]},
+              {"type": "chart", "stage": "pre", "alt": "ov", "title": EX_PRE["ov"], "link_designs": True, "height": 560,
                "caption": f"{EXP[preset][1]} VDD = {vdd} V; {len(sel):,} samples shown." + (
                    " Area of the sweep samples is *estimated* (device + MIM area with a per-topology fit to the delivered cards' layouts); the "
                    f"diamonds use the cards' reported areas — drawn layouts for {N_COMPLETE} cards, generator estimates for the {N_UNIT} multi-bank "
                    "cards of which only one unit bank is drawn." if "area" in (kx, ky) or "fom_ra" in (kx, ky) else ""),
-               "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest",
-                                                                                 "legend": {"orientation": "h", "y": 1.12, "yanchor": "bottom"}}})}]
+               "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest"}})}]
     facets = []
     for j, t in enumerate(ORDER):
         ti = SW["topos"].index(t)
@@ -1081,9 +1158,11 @@ def combo_pre(preset, vdd):
     return blocks
 
 
-def combo_post(preset, vdd):
+def combo_post(preset, vdd, V):
+    """post-PEX trade-off view over the cards of page view V (partial = all extracted cards, full = complete cells only)"""
     kx, ky = EXKEYS[preset]
-    allc = [c for c in done if c.get("mp")]
+    st = V["stage"]
+    allc = [c for c in done if V["cards"](c)]
     cards = [{"c": c, "x": cval(c, kx, "post"), "y": cval(c, ky, "post")} for c in allc if c["vdd"] == vdd]
     cards = [p for p in cards if p["x"] is not None and p["y"] is not None and math.isfinite(p["x"]) and math.isfinite(p["y"])]
     fronts = {t: pareto([p for p in cards if p["c"]["topo"] == t], kx, ky) for t in ORDER}
@@ -1092,8 +1171,9 @@ def combo_post(preset, vdd):
 
     def hov(p):
         v = mv(p["c"], "post")
-        return (f"{p['c']['key']} · {grade_txt(v)}<br>R_on wc {si(v.get('ron_wc'), 'Ω')} · I_max {si(v.get('imax'), 'A')} · range {fx(100 * v['coverage'], 0)} %<br>"
-                f"area {area_lbl(p['c'], v.get('area_um2'))} · t_on {si(v.get('t_on'), 's')} · E {si(v.get('e_vdd'), 'J')}<br>|Q| {si(v.get('q_absmax'), 'C')} · THD {fx(v.get('thd_db'), 1)} dB")
+        return (f"{p['c']['key']} · {grade_txt(v)} · {POST_STAGE[p['c']['key']]} post-PEX<br>R_on wc {si(v.get('ron_wc'), 'Ω')} · I_max {si(v.get('imax'), 'A')} · "
+                f"range {fx(100 * v['coverage'], 0)} %<br>area {area_lbl(p['c'], v.get('area_um2'))} · t_on {si(v.get('t_on'), 's')} · E {si(v.get('e_vdd'), 'J')}<br>"
+                f"|Q| {si(v.get('q_absmax'), 'C')} · THD {fx(v.get('thd_db'), 1)} dB")
 
     def tr(ps, j, name, line):
         return {"x": [p["x"] for p in ps], "y": [p["y"] for p in ps], "type": "scatter", "name": name, "mode": "lines+markers" if line else "markers",
@@ -1105,39 +1185,45 @@ def combo_post(preset, vdd):
         ps = [p for p in cards if p["c"]["topo"] == t]
         if ps:
             trs += [tr(ps, j, SHORT[t], False), tr(fronts[t], j, SHORT[t], True)]
-    tag = f"post_{preset}_{str(vdd).replace('.', 'p')}"
-    blocks = [{"type": "stats", "stage": STAGE_OF["post"], "items": [{"label": "per-topology post-PEX front cards (this view)", "value": str(nfr)},
-                                                          {"label": "on the combined front (this view)", "value": str(len(fall))}]},
-              {"type": "chart", "stage": STAGE_OF["post"], "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
+    tag = f"{st}_{preset}_{str(vdd).replace('.', 'p')}"
+    blocks = [{"type": "stats", "title": "Post-PEX fronts (this trade-off and supply)", "stage": st, "alt": "cst",
+               "items": [{"label": "design cards in this view", "value": str(len(cards))},
+                         {"label": "per-topology post-PEX front cards (this view)", "value": str(nfr)},
+                         {"label": "on the combined front (this view)", "value": str(len(fall))}]},
+              {"type": "chart", "stage": st, "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
                "caption": f"{EXP[preset][1]} VDD = {vdd} V; {len(cards)} design cards, all values from the extracted-layout (post-PEX) simulations. The sweep "
-                          "samples have no layout and are hidden in this view; switch the global *Simulation stage* to Pre-PEX to see them. " + MIXED_NOTE,
-               "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest",
-                                                                                 "legend": {"orientation": "h", "y": 1.12, "yanchor": "bottom"}}})}]
+                          "samples have no layout and are hidden in this view; switch the global *Simulation stage* to Pre-PEX to see them. " + V["note"],
+               "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest"}})}]
     facets = []
     for j, t in enumerate(ORDER):
         ps = [p for p in cards if p["c"]["topo"] == t]
         if not ps:
             facets.append({"type": "note", "tone": "muted", "title": SHORT[t],
-                           "text": "not applicable at this supply" if META["na"].get(t) else "no design card with post-PEX results"})
+                           "text": "not applicable at this supply" if META["na"].get(t) and vdd > 2 else
+                                   ("no complete-cell card at this supply (select Partial post-PEX)" if st == "full" else "no design card with post-PEX results")})
             continue
         facets.append({"type": "chart", "title": SHORT[t], "height": 300, "link_designs": True,
                        "src": write(f"data/dse/{tag}_{t}.json", {"data": [tr(ps, j, "cards", False), tr(fronts[t], j, "front", True)],
                                                                  "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "showlegend": False, "hovermode": "closest",
                                                                             "margin": {"l": 56, "r": 8, "t": 6, "b": 40}}})})
-    blocks.append({"type": "section", "stage": STAGE_OF["post"], "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
+    blocks.append({"type": "section", "stage": st, "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
     rows = []
     for p in fall:
         v = mv(p["c"], "post")
         rows.append({"card": p["c"]["key"], "topo": SHORT[p["c"]["topo"]], "w": v["ws"] * 1e-6, "ron": v.get("ron_wc"),
                      "pt": {"v": grade_txt(v), "s": grade_s(v.get("grade"))}, "imax": v.get("imax"), "cov": 100 * v["coverage"],
-                     "area": v.get("area_um2"), "ton": v.get("t_on"), "e": v.get("e_vdd"), "q": v.get("q_absmax"), "thd": v.get("thd_db"), "_design": p["c"]["key"]})
+                     "area": {"v": v.get("area_um2"), "s": "muted", "title": "estimated full-cell area (only one unit bank is drawn)"} if est(p["c"]) else v.get("area_um2"),
+                     "ton": v.get("t_on"), "e": v.get("e_vdd"), "q": v.get("q_absmax"), "thd": v.get("thd_db"),
+                     "stage": f"{POST_STAGE[p['c']['key']]} post-PEX", "_design": p["c"]["key"]})
     cols = [{"key": "card", "label": "Card", "type": "design"}, {"key": "topo", "label": "Topology", "type": "text"},
             {"key": "w", "label": "W", "unit": "m", "si": True}, {"key": "ron", "label": "R_on wc", "unit": "Ω", "si": True},
             {"key": "pt", "label": "R_on point", "type": "text"}, {"key": "imax", "label": "I_max", "unit": "A", "si": True},
             {"key": "cov", "label": "range", "unit": "%", "digits": 3}, {"key": "area", "label": "area", "unit": "µm²", "digits": 4},
             {"key": "ton", "label": "t_on", "unit": "s", "si": True}, {"key": "e", "label": "E/cycle", "unit": "J", "si": True},
-            {"key": "q", "label": "|Q| max", "unit": "C", "si": True}, {"key": "thd", "label": "THD", "unit": "dB", "digits": 3}]
-    blocks.append({"type": "table", "stage": STAGE_OF["post"], "alt": "tab", "title": EX_POST["tab_h"], "caption": EX_POST["tab_p"],
+            {"key": "q", "label": "|Q| max", "unit": "C", "si": True}, {"key": "thd", "label": "THD", "unit": "dB", "digits": 3},
+            {"key": "stage", "label": "extraction", "type": "text"}]
+    blocks.append({"type": "table", "stage": st, "alt": "tab", "title": EX_POST["tab_h"],
+                   "caption": EX_POST["tab_p"] + " Areas in grey are the generator's estimates for multi-bank cells.",
                    "src": write(f"data/dse/{tag}_tab.json", {"columns": cols, "rows": rows}), "columns": cols})
     return blocks
 
@@ -1154,8 +1240,8 @@ def explorer_data():
     knob_keys = ["kcb", "rp", "fo", "f_aux", "f_dum", "f_shunt", "l_scale"]
     front_set = {i for k, v in SW["fronts"].items() if not k.endswith("|all") for i in v}
     col = {k: [] for k in ["topo", "vdd", "supply", "stage", "source", "lay", "pvt", "front", "cls", "design", "delivered", "label", "ws", "ron_wc", "imax",
-                           "coverage", "area", "fom_ra", "t_on", "e_vdd", "q_absmax", "thd_db", "pvt_ratio", "knobs", "ron_vtest", "t_off", "iso_10m",
-                           "ron_flat", "leak_wc"] + knob_keys}
+                           "imax_cls", "coverage", "area", "fom_ra", "t_on", "e_vdd", "q_absmax", "thd_db", "pvt_ratio", "knobs", "ron_vtest", "t_off",
+                           "iso_10m", "ron_flat", "leak_wc"] + knob_keys}
 
     def add(**kw):
         for k in col:
@@ -1169,18 +1255,20 @@ def explorer_data():
             label=f"{SHORT[t]} · sweep #{i}", ws=C["ws"][i] * 1e-6, ron_wc=C["ron_wc"][i], imax=C["imax"][i], coverage=100 * C["coverage"][i],
             area=C["area"][i], fom_ra=C["fom_ra"][i], t_on=C["t_on"][i], e_vdd=C["e_vdd"][i], q_absmax=C["q_absmax"][i], thd_db=C["thd_db"][i],
             pvt_ratio=C["pvt_ratio"][i], knobs=knobs_txt(C["knobs"][i]), **{k: C["knobs"][i].get(k) for k in knob_keys})
-    for view in ("pre", "post"):
-        for c in done:
+    for c in done:
+        for view in ("pre", "post"):
             if view == "post" and not c.get("mp"):
                 continue
             m = mv(c, view)
+            rating = DROP * c["vdd"] / m["ron_wc"] if m.get("ron_wc") else None   # same rule as the sweep: 5 % VDD / R_on,wc
             add(topo=c["topo"], vdd=c["vdd"], supply=f"{c['vdd']} V", stage="pre" if view == "pre" else POST_STAGE[c["key"]],
                 source="design card", pvt="design card (15 PVT)", lay="unit bank (area estimated)" if est(c) else "complete layout",
-                front="design card", cls=c["iclass"], design=c["key"], delivered=True, label=c["name"], ws=m["ws"] * 1e-6, ron_wc=m.get("ron_wc"),
-                imax=c["imax"], coverage=100 * m["coverage"], area=m.get("area_um2"), fom_ra=cval(c, "fom_ra", view), t_on=m.get("t_on"),
-                e_vdd=m.get("e_vdd"), q_absmax=m.get("q_absmax"), thd_db=m.get("thd_db"), knobs=knobs_txt(c["knobs"]), ron_vtest=m.get("ron_vtest"),
-                t_off=m.get("t_off"), iso_10m=m.get("iso_10m"), ron_flat=m.get("ron_flat"), leak_wc=m.get("leak_wc"),
-                **{k: (c.get("knobs") or {}).get(k) for k in knob_keys})
+                front="design card", cls=c["iclass"], design=c["key"], delivered=True,
+                label=c["name"] + ("" if view == "pre" else " · " + POST_STAGE[c["key"]] + " post-PEX"),
+                ws=m["ws"] * 1e-6, ron_wc=m.get("ron_wc"), imax=rating, imax_cls=c["imax"], coverage=100 * m["coverage"], area=m.get("area_um2"),
+                fom_ra=cval(c, "fom_ra", view), t_on=m.get("t_on"), e_vdd=m.get("e_vdd"), q_absmax=m.get("q_absmax"), thd_db=m.get("thd_db"),
+                knobs=knobs_txt(c["knobs"]), ron_vtest=m.get("ron_vtest"), t_off=m.get("t_off"), iso_10m=m.get("iso_10m"),
+                ron_flat=m.get("ron_flat"), leak_wc=m.get("leak_wc"), **{k: (c.get("knobs") or {}).get(k) for k in knob_keys})
     return col
 
 
@@ -1188,7 +1276,7 @@ def page_explore():
     col = explorer_data()
     dims = [
         {"key": "ron_wc", "label": "R_on, worst PVT", "unit": "Ω", "si": True, "log": True, "better": "low"},
-        {"key": "area", "label": "Layout area (sweep: estimated)", "unit": "µm²", "log": True, "better": "low", "digits": 4},
+        {"key": "area", "label": "Layout area (sweep & multi-bank cards: estimated)", "unit": "µm²", "log": True, "better": "low", "digits": 4},
         {"key": "q_absmax", "label": "Max |charge injection|", "unit": "C", "si": True, "log": True, "better": "low"},
         {"key": "e_vdd", "label": "Switching energy / cycle", "unit": "J", "si": True, "log": True, "better": "low"},
         {"key": "t_on", "label": "Turn-on time", "unit": "s", "si": True, "log": True, "better": "low"},
@@ -1196,6 +1284,7 @@ def page_explore():
         {"key": "fom_ra", "label": "R_on · area", "unit": "Ω·µm²", "log": True, "better": "low"},
         {"key": "thd_db", "label": "Tracking THD (1 MHz)", "unit": "dB", "better": "low"},
         {"key": "imax", "label": "I_max rating (5 % VDD / R_on,wc)", "unit": "A", "si": True, "log": True, "better": "high"},
+        {"key": "imax_cls", "label": "I_max class target (cards)", "unit": "A", "si": True, "log": True},
         {"key": "ws", "label": "Switch width W_s", "unit": "m", "si": True, "log": True},
         {"key": "pvt_ratio", "label": "15-PVT R_on / sweep estimate", "digits": 4, "better": "low"},
         {"key": "ron_vtest", "label": "R_on @ test level (cards)", "unit": "Ω", "si": True, "log": True, "better": "low"},
@@ -1206,7 +1295,8 @@ def page_explore():
         {"key": "kcb", "label": "knob kcb (C_B / C_gate)"}, {"key": "rp", "label": "knob rp (W_p/W_n)"}, {"key": "fo", "label": "knob fo (driver fan-out)"},
         {"key": "f_aux", "label": "knob f_aux (aux scale)"}, {"key": "f_dum", "label": "knob f_dum (dummy size)"},
         {"key": "f_shunt", "label": "knob f_shunt (shunt size)"}, {"key": "l_scale", "label": "knob l_scale (channel length)"},
-        {"key": "topo", "label": "Topology", "type": "cat", "labels": {t: SHORT[t] for t in ORDER}, "order": ORDER},
+        {"key": "topo", "label": "Topology", "type": "cat", "labels": {t: SHORT[t] for t in ORDER}, "order": ORDER,
+         "colors": {t: TCOL[j] for j, t in enumerate(ORDER)}},
         {"key": "supply", "label": "Supply", "type": "cat", "order": ["1.8 V", "3.3 V"]},
         {"key": "cls", "label": "Current class", "type": "cat", "labels": {**ICL, "below": "< 10 µA", "above": "> 1 A"}, "order": ["below", *ICLS, "above"]},
         {"key": "source", "label": "Source", "type": "cat", "order": ["sweep sample", "design card"]},
@@ -1215,48 +1305,53 @@ def page_explore():
          "order": ["within 5 % over 15 PVT", "not within 5 % over 15 PVT", "not re-simulated", "design card (15 PVT)"]},
         {"key": "front", "label": "Pareto front (any trade-off)", "type": "cat", "order": ["Pareto-front point", "off-front sample", "design card"]},
     ]
-    presets = [{"label": EXP[p][0], "x": EXKEYS[p][0], "y": EXKEYS[p][1], "color": "topo"} for p in EXP]
+    presets = [{"label": EXP[p][0], "x": EXKEYS[p][0], "y": EXKEYS[p][1], "color": "topo", "facet": "", "pareto": False} for p in EXP]
     presets += [{"label": "Per-topology clouds (R_on vs area)", "x": "ron_wc", "y": "area", "color": "source", "facet": "topo", "pareto": True},
-                {"label": "PVT robustness of the fronts", "x": "ron_wc", "y": "pvt_ratio", "color": "pvt", "logy": False},
-                {"label": "Bootstrap C_B knob vs R_on·area", "x": "kcb", "y": "fom_ra", "color": "topo", "logx": False},
-                {"label": "Supply comparison", "x": "ron_wc", "y": "area", "color": "supply", "facet": "topo"}]
+                {"label": "PVT robustness of the fronts", "x": "ron_wc", "y": "pvt_ratio", "color": "pvt", "logy": False, "facet": "", "pareto": False},
+                {"label": "Bootstrap C_B knob vs R_on·area", "x": "kcb", "y": "fom_ra", "color": "topo", "logx": False, "facet": "", "pareto": False},
+                {"label": "Supply comparison", "x": "ron_wc", "y": "area", "color": "supply", "facet": "topo", "pareto": False}]
     explorer = {"type": "explorer", "title": "Interactive design-space explorer", "src": write("data/dse_explorer.json", {"columns": col}),
                 "dims": dims, "x": "ron_wc", "y": "area", "color": "topo", "filters": ["topo", "supply", "cls", "source", "lay", "pvt", "front", "coverage", "ron_wc"],
-                "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "label",
-                "hover": ["topo", "ws", "imax", "coverage", "area", "t_on", "e_vdd", "q_absmax", "thd_db", "pvt_ratio", "knobs"],
+                "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "label", "stage_group": "design",
+                "hover": ["topo", "ron_wc", "ws", "imax", "coverage", "area", "fom_ra", "t_on", "e_vdd", "q_absmax", "thd_db", "pvt_ratio", "knobs"],
                 "presets": presets, "height": 560,
                 "intro": "All 2,025 sweep samples (schematic simulations) plus the 125 delivered design cards. The explorer follows the global options: at "
-                         "**Pre-PEX** it shows the sweep and the cards' schematic results, at **Full post-PEX** only the cards' extracted-layout results "
-                         "(the sweep has no layout). Pick any axes, colour, symbol and facet, filter by chips / ranges and toggle the Pareto front; click a "
-                         "highlighted point to open its card.",
+                         "**Pre-PEX** it shows the sweep and the cards' schematic results; at a post-PEX stage it shows each card's best available "
+                         f"extraction ≤ the selected stage (at Full post-PEX with *fill from earlier stage*: the {N_COMPLETE} complete-cell extractions plus "
+                         f"the {N_UNIT} unit-bank extractions; without it only the {N_COMPLETE}). The sweep has no layout and is hidden at post-PEX stages. "
+                         "Pick any axes, colour, symbol and facet, filter by chips / ranges and toggle the Pareto front; click a highlighted point to "
+                         "open its card.",
                 "caption": "Area of the sweep samples is **estimated** from the sample's device and MIM area with a per-topology fit to the delivered cards' "
                            f"layouts; the cards' areas are drawn layout areas for {N_COMPLETE} cards and the generator's multi-bank estimates for the other "
-                           f"{N_UNIT} (see *Layout* in the filters). Card points follow the per-design extraction coverage: at **Full post-PEX** the "
-                           f"{N_COMPLETE} complete-cell extractions, at **Partial post-PEX** the {N_UNIT} unit-bank extractions. I_max = 5 % VDD / R_on,wc. "
-                           "Metrics marked *(cards)* exist only for the design cards. Knobs that a topology does not have are empty."}
-    blocks = []
+                           f"{N_UNIT} (see *Layout* in the filters). I_max rating = 5 % VDD / R_on,wc for samples and cards alike; *I_max class target* is "
+                           "the card's sizing current. Metrics marked *(cards)* exist only for the design cards. Knobs that a topology does not have are empty."}
+    blocks = [{"type": "note", "tone": "info",
+               "text": "The design-space **sweep** (2,025 schematic samples, sweep fronts, design clouds, front-design tables) is shown at the *Pre-PEX* "
+                       "stage: [show the schematic sweep](#/switch?page=explore&stage=pre). Post-PEX stages show only the design cards (the sweep has no "
+                       "layout)."}]
     nfr = len({i for k, v in SW["fronts"].items() if not k.endswith("|all") for i in v})
-    blocks.append({"type": "stats", "stage": "pre", "alt": "exst", "items": [
+    blocks.append({"type": "stats", "title": "Design-space sweep", "stage": "pre", "alt": "exst", "items": [
         {"label": "designs simulated", "value": f"{SW['n_total']:,}"}, {"label": "with a valid signal range", "value": f"{SW['n_feasible']:,}"},
         {"label": "Pareto-front points", "value": f"{nfr:,}"},
         {"label": "front points within 5 % of R_on over all 15 PVT corners", "value": f"{SW['n_robust']}/{SW['n_front']}" if SW.get("n_front") else "—"}]})
-    allc = [c for c in done if c.get("mp")]
-    blocks.append({"type": "stats", "stage": STAGE_OF["post"], "alt": "exst", "items": [
-        {"label": "design cards with post-PEX results", "value": str(len(allc))},
-        {"label": "meet the R_on target post-PEX (grade A/B)", "value": str(sum(1 for c in allc if c["mp"].get("grade") in ("A", "B")))}],
-        "caption": "Front counts for the selected trade-off and supply are shown with each view below. " + MIXED_NOTE})
+    for V in PAGE_VIEWS[1:]:
+        sub = [c for c in done if V["cards"](c)]
+        blocks.append({"type": "stats", "title": "Post-PEX design cards", "stage": V["stage"], "alt": "exst", "items": [
+            {"label": "design cards with post-PEX results (this view)", "value": str(len(sub))},
+            {"label": "meet the R_on target post-PEX (grade A/B)", "value": str(sum(1 for c in sub if c["mp"].get("grade") in ("A", "B")))}],
+            "caption": "Front counts for the selected trade-off and supply are shown with each view below. " + V["note"]})
     blocks.append(explorer)
     tabs = []
     for p in EXP:
         inner = []
         for v in META["vdds"]:
-            inner.append({"label": f"{v} V", "vdd": v, "blocks": combo_pre(p, v) + combo_post(p, v)})
+            inner.append({"label": f"{v} V", "vdd": v, "blocks": combo_pre(p, v) + combo_post(p, v, PAGE_VIEWS[1]) + combo_post(p, v, PAGE_VIEWS[2])})
         tabs.append({"label": EXP[p][0], "blocks": [{"type": "note", "tone": "muted", "text": EXP[p][1]},
-                                                     {"type": "tabs", "label": "V<sub>DD</sub>", "default": 1, "tabs": inner}]})
+                                                     {"type": "tabs", "id": "exvdd", "label": "V<sub>DD</sub>", "default": 1, "tabs": inner}]})
     blocks.append({"type": "section", "title": "Trade-off views", "intro": "The fixed views of the original explorer page: pick the trade-off, then the "
-                   "supply (default 3.3 V). The global *Simulation stage* switches between the sweep fronts (Pre-PEX) and the post-PEX fronts of the "
-                   "design cards (tagged *Partial post-PEX* because they mix complete-cell and unit-bank extractions; shown as fallback at Full "
-                   "post-PEX).", "blocks": [{"type": "tabs", "tabs": tabs}]})
+                   "supply (default 3.3 V). The global *Simulation stage* selects the data: Pre-PEX = the sweep fronts with the cards' schematic results; "
+                   f"Partial post-PEX = the post-PEX fronts of all 125 extracted cards ({N_UNIT} unit-bank + {N_COMPLETE} complete-cell extractions); "
+                   f"Full post-PEX = the {N_COMPLETE} complete cells only.", "blocks": [{"type": "tabs", "id": "tradeoff", "tabs": tabs}]})
     intro = ("## Design-space explorer\n\nA random and structured known-design-point sweep of all thirteen topologies over both supplies: log-uniform switch "
              "width (1 µm – 100 mm, so every load-current class from 10 µA to 1 A is covered) and continuous knobs — P/N ratio, bootstrap / pump capacitor "
              "ratio, auxiliary-device scale, driver fan-out, switch channel length, dummy and shunt size. Every sample is simulated on the compute farm with "
@@ -1304,7 +1399,8 @@ FLOW = [
     "extracted device is mapped back to its schematic device (switch arrays by cell name, auxiliary devices by size and connectivity), so the "
     "schematic tab shows the gm/I<sub>D</sub> the extracted circuit actually reaches. The header switch selects schematic or extracted results; the "
     "post-PEX view shows nothing simulated on the schematic, only design data (sizing, test conditions, layout area) is shared. *(On the hub the "
-    "header switch is the global Simulation stage option: Pre-PEX = schematic, Full post-PEX = extracted.)*",
+    "header switch is the global Simulation stage option: Pre-PEX = schematic; post-PEX = extracted — Full post-PEX for the cards whose "
+    "complete cell is drawn and extracted, Partial post-PEX for the multi-bank cards whose unit bank is extracted and scaled to full width.)*",
     "**R<sub>on</sub> points (grades).** Each card is a sample of the design space at one R<sub>on</sub> point, and its result is reported on a fixed "
     "ladder of points rather than as pass / fail: the worst-PVT drop I<sub>max</sub>·R<sub>on</sub> over the valid range, as a fraction of VDD, graded "
     "A ≤ 2 % (precision), B ≤ 5 % (the design target), C ≤ 10 % (relaxed), D ≤ 20 % (loose), or below D. The grade is computed from the schematic and "
@@ -1340,16 +1436,15 @@ def page_method():
     blocks = [
         {"type": "section", "cols": 2, "blocks": [
             {"type": "markdown", "title": "Flow", "text": "\n".join(f"{i + 1}. {s}" for i, s in enumerate(FLOW))},
-            {"type": "section", "blocks": [
-                {"type": "markdown", "title": "Testbenches", "text": "\n".join(f"- {s}" for s in TBS)},
-                {"type": "table", "title": "Devices", "search": False, "csv": False,
-                 "columns": [{"key": "m", "label": "Model", "type": "text"}, {"key": "d", "label": "Description", "type": "text"},
-                             {"key": "l", "label": "L<sub>min</sub>", "unit": "µm"}, {"key": "w", "label": "W<sub>min</sub>", "unit": "µm"},
-                             {"key": "r", "label": "Rating", "unit": "V"}],
-                 "rows": [{"m": k, "d": v["desc"], "l": v["lmin"], "w": v.get("wmin"), "r": v["rating"]} for k, v in D.items()]}]}]},
+            {"type": "markdown", "title": "Testbenches", "text": "\n".join(f"- {s}" for s in TBS)}]},
+        {"type": "table", "title": "Devices", "search": False, "csv": False,
+         "columns": [{"key": "m", "label": "Model", "type": "text"}, {"key": "d", "label": "Description", "type": "text", "wrap": True},
+                     {"key": "l", "label": "L<sub>min</sub>", "unit": "µm"}, {"key": "w", "label": "W<sub>min</sub>", "unit": "µm"},
+                     {"key": "r", "label": "Rating", "unit": "V"}],
+         "rows": [{"m": k, "d": v["desc"], "l": v["lmin"], "w": v.get("wmin"), "r": v["rating"]} for k, v in D.items()]},
         {"type": "section", "title": "gm/I<sub>D</sub> of the GF180 devices (saturation, L<sub>min</sub>)",
          "intro": f"From `data/gmid.json` (W = {G[devs[0]]['w_um']} µm, L = L<sub>min</sub> per device).",
-         "blocks": [{"type": "tabs", "label": "V<sub>SB</sub>", "tabs": tabs}]},
+         "blocks": [{"type": "tabs", "id": "vsb", "label": "V<sub>SB</sub>", "tabs": tabs}]},
         {"type": "downloads", "title": "Data files",
          "items": [{"label": "Card index (meta + all cards, pre/post metrics)", "file": "data/index.json"},
                    {"label": "Design-space sweep (2,025 samples + Pareto fronts)", "file": "data/sweep.json"},
@@ -1393,14 +1488,16 @@ comp = {
               {"label": "complete-cell / unit-bank layouts", "value": f"{N_COMPLETE} / {N_UNIT}"},
               {"label": "R_on grade A/B pre / post", "value": f"{sum(1 for c in done if c['m'].get('grade') in ('A', 'B'))} / "
                                                          f"{sum(1 for c in done if (c.get('mp') or {}).get('grade') in ('A', 'B'))}"}],
-    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=s or None, digits=dg if dg != 3 else None, better=b).items() if v is not None}
+    "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=s or None, digits=dg if dg != 3 else None, better=b,
+                                       desc=METRIC_DESC.get(k)).items() if v is not None}
                 for k, l, u, s, dg, b, _f, _sc in METRICS],
     "axes": {
         "topology": {"label": "Topology", "values": [{"id": t, "label": SHORT.get(t, t)} for t in ORDER]},
         "class": {"label": "Current class", "values": [{"id": k, "label": icl_of(k)} for k in ICLS]},
     },
     "matrix": {"rows": ["topology"], "cols": ["class"], "metrics": ["coverage", "ron_wc"],
-               "presets": [{"label": "Valid range & layout area (old matrix; area only for complete layouts)", "metrics": ["coverage", "area"]},
+               "status": {"metric": "coverage", "good": 97, "warn": 0.01},
+               "presets": [{"label": "Valid range & area", "metrics": ["coverage", "area"]},
                            {"label": "R_on worst PVT & drop", "metrics": ["ron_wc", "drop"]},
                            {"label": "R_on @ test level & flatness", "metrics": ["ron_vtest", "ron_flat"]},
                            {"label": "Charge injection & pedestal", "metrics": ["q_absmax", "ped_absmax"]},
@@ -1409,7 +1506,8 @@ comp = {
                            {"label": "R_on·C_off & C_off", "metrics": ["ron_coff", "coff"]},
                            {"label": "Leakage & R_off", "metrics": ["leak_wc", "roff_wc"]},
                            {"label": "Device stress & gate drive", "metrics": ["stress", "vgs_on"]}]},
-    "card_metrics": ["coverage", "ron_vtest", "ron_wc", "t_on", "e_vdd", "q_vtest"],
+    "card_metrics": ["coverage", "ron_vtest", "ron_wc", "t_on", "t_off", "e_vdd", "q_vtest", "q_absmax", "area"],
+    "cards_group_by": "class",
     "pages": [{"id": pid, "title": title, "src": write(f"pages/{pid}.json", doc)} for pid, title, doc in pages],
     "designs": designs,
 }

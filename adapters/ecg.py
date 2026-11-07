@@ -91,7 +91,7 @@ def metric_decl(m):
     return d
 
 
-def stage_metrics(scalar, ctx, pre_stage):
+def stage_metrics(scalar, ctx, pre_stage, fh=None, thd_floor=False):
     out = {}
     for m in METRICS + (MODEL_METRICS if MODEL_IN_RESULTS else []):
         key, getter, pre_only = m[0], m[6], m[7]
@@ -99,7 +99,11 @@ def stage_metrics(scalar, ctx, pre_stage):
             continue
         v = getter(scalar, ctx)
         if v is not None:
-            out[key] = B.r(v)
+            out[key] = B.rv(v)          # full precision: the hub rounds to the declared digits
+    if fh and fh["affected"]:
+        out["f_h"] = B.rv(fh["sim"])    # repo value is sim.py's conditioned f_H -> recovered simulated value
+    if thd_floor:
+        out.pop("thd", None)            # stored value is sim.py's 0.005 % floor, not a measurement
     return out
 
 
@@ -120,17 +124,19 @@ def main():
         ctx = {"area": ph.get("area_um2"), "pvt": pvt, "mc": mc}
 
         results = {}
+        fh, floor = D["fh"][cid], D["thd_floor"][cid]
         if c.get("pre"):
             results["pre"] = {
-                "metrics": stage_metrics(c["pre"], ctx, True),
+                "metrics": stage_metrics(c["pre"], ctx, True, fh["pre"], floor["pre"]),
                 "pvt": {"pass": hub["pvt_ok"], "total": hub["pvt_total"]},
                 "mc": {"pass": hub["mc_ok"], "total": hub["mc_total"]},
                 "robust": hub["robust"],
-                "note": B.pre_note(c, hub),
+                "note": B.pre_note(c, hub, fh["pre"], floor["pre"]),
             }
         post_nom = (card.get("post_pex") or {}).get("nominal") or {}
         if c.get("post") and post_nom.get("ok", True):
-            results["partial"] = {"metrics": stage_metrics(c["post"], ctx, False), "note": B.partial_note(c, card)}
+            results["partial"] = {"metrics": stage_metrics(c["post"], ctx, False, fh["partial"], floor["partial"]),
+                                  "note": B.partial_note(c, card, D["pex_inj"][cid], fh["partial"], floor["partial"])}
 
         base = f"designs/{cid}"
         files = {k: f"{base}/{v}" for k, v in (
@@ -157,6 +163,17 @@ def main():
             "Routed wirelength / vias": f"{ph.get('wirelength_um', 0):g} µm / {ph.get('vias', 0)}",
             "Extracted parasitic caps": ph.get("parasitic_c_count"),
         }
+        uses = [{"component": "opa", "design": f"{B.OTA_LOAD}-{rb['core_ota_id']}", "role": "core LNA OTA"}]
+        if rb.get("aux_ota_id"):
+            uses.append({"component": "opa", "design": f"{B.OTA_LOAD}-{rb['aux_ota_id']}",
+                         "role": {"ccia_dsl": "DC-servo-loop OTA", "ccia_2stage_pga": "PGA OTA", "ccia_precharge": "precharge buffer OTA",
+                                  "ccia_buf_ibl": "IBL buffer OTA"}.get(c["arch"], "aux OTA")})
+        if rb.get("chop_sw_key") == rb.get("sh_sw_key"):
+            uses.append({"component": "switch", "design": rb["chop_sw_key"], "role": "chopper & S&H switch"})
+        else:
+            uses += [{"component": "switch", "design": rb["chop_sw_key"], "role": "chopper switch"},
+                     {"component": "switch", "design": rb["sh_sw_key"], "role": "bootstrapped S&H switch"}]
+        uses.append({"component": "sa", "design": rb["comp_key"], "role": "ADC comparator"})
         detail_rel = f"designs/{cid}.json"
         B.write_json(out / detail_rel, {"blocks": B.detail_blocks(D, c, card)})
         designs.append({
@@ -164,7 +181,7 @@ def main():
             "title": f"{c['arch_name']} · {c['arch_short']} · {c['vdd']:g} V · {c['tier'].upper()} {c['tier_short']}",
             "summary": B.design_summary(c, card),
             "vdd": c["vdd"],
-            "axes": {"topology": c["arch"], "tier": c["tier"]},
+            "axes": {"topology": c["arch"], "ibl": f"ibl_{c['arch']}", "tier": c["tier"]},
             "tags": [t for t in (c.get("arch_title"), c.get("ibl_type"), c.get("hpf_type"), c.get("tier_label"),
                                  f"core {rb.get('core_ota_id')}", f"aux {rb['aux_ota_id']}" if rb.get("aux_ota_id") else None,
                                  f"f_chop {c['f_chop_hz'] / 1e3:g} kHz") if t],
@@ -173,6 +190,7 @@ def main():
             "results": results,
             "params": {k: v for k, v in params.items() if v is not None},
             "files": files,
+            "uses": uses,
             "detail": f"hub/{detail_rel}",
         })
 
@@ -202,21 +220,27 @@ def main():
         "metrics": [metric_decl(m) for m in METRICS + (MODEL_METRICS if MODEL_IN_RESULTS else [])],
         "axes": {
             "topology": {"label": "Chopping + IBL architecture", "values": archs},
+            "ibl": {"label": "Impedance-boost mechanism", "values": [{"id": f"ibl_{a['id']}", "label": a["ibl_type"]} for a in meta["architectures"]]},
             "tier": {"label": "Power tier", "values": tiers},
         },
         "matrix": {
-            "rows": ["topology"], "cols": ["tier"], "metrics": ["zin", "power"],
+            "rows": ["topology", "ibl"], "cols": ["tier"], "metrics": ["zin", "power", "a_lna", "boost", "f_h"],
             "presets": [
-                {"label": "|Z_in| & total power (default)", "metrics": ["zin", "power"]},
+                {"label": "|Z_in|, power, LNA gain, boost, f_H (default)", "metrics": ["zin", "power", "a_lna", "boost", "f_h"]},
                 {"label": "LNA gain & f_H", "metrics": ["a_lna", "f_h"]},
                 {"label": "Z_in boost & IBL-off |Z_in|", "metrics": ["boost", "zin_off"]},
                 {"label": "THD & SFDR", "metrics": ["thd", "sfdr"]},
-                {"label": "Worst-PVT |Z_in| & power", "metrics": ["zin_min", "p_pvt_max"]},
-                {"label": "PVT f_H range", "metrics": ["fh_pvt_min", "fh_pvt_max"]},
+                {"label": "Worst-PVT |Z_in| & power (pre-PEX only)", "metrics": ["zin_min", "p_pvt_max"]},
+                {"label": "PVT f_H range (pre-PEX only)", "metrics": ["fh_pvt_min", "fh_pvt_max"]},
+                {"label": "Monte Carlo σ(f_H) & 5th-pct |Z_in| (pre-PEX only)", "metrics": ["fh_mc_std", "zin_mc_p5"]},
                 {"label": "Layout area & power", "metrics": ["area", "power"]},
             ],
         },
-        "card_metrics": ["zin", "power", "a_lna", "f_h", "thd", "area"],
+        "card_metrics": ["zin", "power", "a_lna", "f_h", "f_l", "boost", "zin_off", "thd", "area"],
+        "cards_group_by": "topology",
+        "builds_on": [{"id": "opa", "role": "core LNA OTA + DSL / PGA / buffer OTAs (200 fF library)"},
+                      {"id": "switch", "role": "input chopper & bootstrapped S&H switches"},
+                      {"id": "sa", "role": "ADC clocked comparator"}],
         "pages": pages,
         "designs": designs,
     }

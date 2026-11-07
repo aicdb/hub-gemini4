@@ -278,7 +278,9 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 **Charts** are plain Plotly (v2.35) figures. Write traces exactly as you would for
 `Plotly.newPlot`:
 - Colours, fonts and backgrounds are themed by the hub. Only set them when they carry
-  meaning (e.g. pass/fail colours).
+  meaning (e.g. pass/fail colours). For colours that must follow light/dark mode, use the
+  tokens `"theme:ink"`, `"theme:muted"`, `"theme:line"`, `"theme:paper"`, `"theme:brand"`,
+  `"theme:accent"`, `"theme:good"`, `"theme:warn"` and `"theme:bad"` anywhere in traces or layout.
 - A trace with `meta: {vdd: 1.8}` is hidden when the global V<sub>DD</sub> filter selects
   another supply. A trace with `meta: {stage: "pre"}` is a stage alternative inside one chart:
   only the traces of the resolved stage are drawn (traces without a stage are always drawn).

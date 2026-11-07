@@ -387,7 +387,15 @@
   function themeColors() {
     const cs = getComputedStyle(document.documentElement);
     const v = (n, d) => (cs.getPropertyValue(n) || d).trim();
-    return { ink: v('--ink', '#162232'), muted: v('--muted', '#5a6b7e'), line: v('--line', '#d9e1ea'), paper: v('--paper', '#fff') };
+    return { ink: v('--ink', '#2b1a17'), muted: v('--muted', '#7a5c52'), line: v('--line', '#f0dccd'), paper: v('--paper', '#fff'),
+      brand: v('--brand', '#d9423a'), accent: v('--accent', '#c4372f'), soft: v('--soft', '#fff1e6'), good: v('--good', '#166534'), warn: v('--warn', '#854d0e'), bad: v('--bad', '#991b1b') };
+  }
+  /** replace "theme:<token>" strings anywhere in a figure with the current theme colour */
+  function themeify(x, t = themeColors()) {
+    if (typeof x === 'string') return x.startsWith('theme:') ? (t[x.slice(6)] || x) : x;
+    if (Array.isArray(x)) return x.map((y) => themeify(y, t));
+    if (x && typeof x === 'object') { const o = {}; for (const [k, v] of Object.entries(x)) o[k] = themeify(v, t); return o; }
+    return x;
   }
   const COLORWAY = ['#d9423a', '#2563eb', '#16a34a', '#e8a33d', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#4f46e5', '#0d9488', '#9333ea', '#a16207', '#64748b', '#be185d'];
   function deepMerge(base, over) {
@@ -437,9 +445,9 @@
     el.innerHTML = `${head(b)}<div class="chart"></div>${caption(b)}`;
     const div = el.querySelector('.chart');
     const height = +b.height || +fig.layout?.height || 380;
-    const layout = deepMerge(baseLayout(height), fig.layout || {});
+    const layout = deepMerge(baseLayout(height), themeify(fig.layout || {}));
     layout.height = height;
-    const traces = filterTraces(fig.data, ctx);
+    const traces = themeify(filterTraces(fig.data, ctx));
     if (!traces.length) { div.innerHTML = '<div class="note muted">No data for the current options.</div>'; return; }
     await plot(div, traces, layout, b, ctx);
   };
