@@ -205,7 +205,7 @@ EX_PRESETS = [
     ("sym", "Rise vs fall", "tplh_ps", "tphl_ps", "sym", "Minimise both rising delay tpLH and falling delay tpHL (1:1 diagonal = symmetric edges)."),
     ("drv", "Drive vs FoM", "s_drv", "fom", None, "How input/pull-down drive strength s_drv shapes energy–delay efficiency."),
 ]
-EX_ARCH_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#c98500", "#8c564b", "#52514e", "#3b6ea5", "#b55d19", "#1a7f37", "#cf222e", "#6b5b7b"]
+EX_ARCH_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#c98500", "#8c564b", "#8a8780", "#3b6ea5", "#b55d19", "#1a7f37", "#cf222e", "#8f7aa8"]
 DSE_TO_DESIGN = {"1v2_to_3v3": "shared_1v2_to_3v3", "0v6_to_3v3": "subvt_0v6_to_3v3", "split_0_1v2_to_1v0_1v8": "split_0_1v2_to_1v0_1v8",
                  "disj_dn_1v8_3v3_to_0_1v0": "disjoint_dn_1v8_3v3_to_0_1v0", "hvt_1v2_to_4v5": "hv_1v2_to_4v5"}
 
@@ -258,7 +258,7 @@ def ex_overlay(c, dom, preset):
     ok = lambda r: r.get(xk) is not None and r.get(yk) is not None and r[xk] > 0 and r[yk] > 0  # noqa: E731
     cloud = [r for r in feas if ok(r)]
     tr = [{"type": "scatter", "mode": "markers", "name": "feasible sizing sample", "x": [r[xk] for r in cloud], "y": [r[yk] for r in cloud],
-           "customdata": [ex_cd(r) for r in cloud], "marker": {"color": "#74726c", "opacity": 0.35, "size": 4},
+           "customdata": [ex_cd(r) for r in cloud], "marker": {"color": "theme:muted", "opacity": 0.4, "size": 4},
            "hovertemplate": EX_HT}]
     for k, topo in enumerate(archs):
         col = EX_ARCH_COLORS[k % len(EX_ARCH_COLORS)]
@@ -283,7 +283,7 @@ def ex_overlay(c, dom, preset):
                    "text": [ex_hover(r) for r in fr], "hovertemplate": "%{text}<extra></extra>"})
     cards = [r for r in feas if r.get("card_target") and ok(r)]
     tr.append({"type": "scatter", "mode": "markers", "name": "delivered sizing card (ULP / BAL / HS)", "x": [r[xk] for r in cards],
-               "y": [r[yk] for r in cards], "marker": {"symbol": "diamond", "size": 10, "color": "#111111", "line": {"color": "#ffffff", "width": 1.3}},
+               "y": [r[yk] for r in cards], "marker": {"symbol": "diamond", "size": 10, "color": "theme:ink", "line": {"color": "theme:paper", "width": 1.3}},
                "text": [ex_hover(r) for r in cards], "hovertemplate": "%{text}<extra></extra>"})
     xr, yr = ex_range([r[xk] for r in feas if r.get(xk) is not None], X[2]), ex_range([r[yk] for r in feas if r.get(yk) is not None], Y[2])
     lay = {"xaxis": {"type": "log" if X[2] else "linear", "range": xr, "title": {"text": X[1]}},
@@ -342,7 +342,7 @@ def ex_explorer(c, dom):
            "fom": [r.get("fom") for r in recs], "swing": [r.get("swing_pct") for r in recs],
            "s_drv": [r.get("s_drv") for r in recs], "s_latch": [r.get("s_latch") for r in recs], "s_res": [r.get("s_res") for r in recs],
            "s_cap": [r.get("s_cap") for r in recs], "s_out": [r.get("s_out") for r in recs], "wc_tpd": [mul(r.get("wc_tpd_ps"), PS) for r in recs],
-           "design_id": [r.get("design_id") for r in recs], "delivered": [bool(r.get("card_target")) for r in recs],
+           "design_id": [r.get("design_id") for r in recs], "linked": [bool(x) for x in links],
            "design": links, "stage": ["pre"] * len(recs), "vdd": [vdd] * len(recs)}
     dims = [{"key": "psw", "label": "Switching power Psw (@10 MHz)", "unit": "W", "si": True, "log": True, "better": "low"},
             {"key": "fmax", "label": "Max toggle speed Fmax = 1/(2·tpd)", "unit": "Hz", "si": True, "log": True, "better": "high"},
@@ -362,16 +362,19 @@ def ex_explorer(c, dom):
             {"key": "s_out", "label": "s_out (output buffer ×)"},
             {"key": "topology", "label": "Architecture", "type": "cat", "order": archs,
              "colors": {a: EX_ARCH_COLORS[k % len(EX_ARCH_COLORS)] for k, a in enumerate(archs)}},
-            {"key": "card", "label": "Sizing card", "type": "cat", "order": ["ULP", "BAL", "HS", "sample"]},
+            {"key": "card", "label": "Sizing card", "type": "cat", "order": ["ULP", "BAL", "HS", "sample"],
+             "symbols": {"ULP": "triangle-down", "BAL": "diamond", "HS": "triangle-up", "sample": "circle"}},
             {"key": "pvt", "label": "PVT status", "type": "cat", "order": list(PVT_COLORS), "colors": PVT_COLORS}]
     src = c.o.put(f"data/dse/explorer_{dom}.json", {"columns": col}, 5)
     xmap = {"p_sw_nw": "psw", "fmax_mhz": "fmax", "e_dyn_fj": "edyn", "tpd_ps": "tpd", "area_um2": "area", "fom": "fom",
             "p_stat_nw": "pstat", "tplh_ps": "tplh", "tphl_ps": "tphl", "s_drv": "s_drv"}
     zero = [a for a in archs if not any(r["topology"] == a for r in recs)]
     zero_txt = (f" No panel for {', '.join(f'`{a}`' for a in zero)}: 0 feasible designs on `{dom}`." if zero else "")
-    presets = [{"label": p[1], "x": xmap[p[2]], "y": xmap[p[3]], "color": "topology", "facet": "", "pareto": "color" if p[4] else "",
-                "desc": f"{p[5]} Colour = architecture; red line = each architecture's Pareto front for these axes."} for p in EX_PRESETS]
-    presets += [{"label": f"{p[1]} · 11 facets", "x": xmap[p[2]], "y": xmap[p[3]], "facet": "topology", "color": "pvt",
+    presets = [{"label": p[1], "x": xmap[p[2]], "y": xmap[p[3]], "color": "topology", "symbol": "card", "facet": "",
+                "pareto": "color" if p[4] else "",
+                "desc": f"{p[5]} Colour = architecture" + ("; each architecture's Pareto front for these axes is drawn as a line in its colour."
+                                                         if p[4] else " (no Pareto front for the drive sweep).")} for p in EX_PRESETS]
+    presets += [{"label": f"{p[1]} · 11 facets", "x": xmap[p[2]], "y": xmap[p[3]], "facet": "topology", "color": "pvt", "symbol": "card",
                  "pareto": "all" if p[4] else "",
                  "desc": f"Old 2.2 small-multiple grid for *{p[1]}*: one panel per architecture, shared axis limits, colour = PVT status "
                          f"of the sample, line = the panel's Pareto front{'' if p[4] else ' (none for the drive sweep)'}." + zero_txt}
@@ -379,17 +382,18 @@ def ex_explorer(c, dom):
     skipped_txt = (" BAL cards whose DSE delay differs by more than 5 % from the linked pilot design are not linked: "
                    + "; ".join(skipped) + " — the TOP4 DSE run (like its PVT/MC runs) used an earlier netlist revision.") if skipped else ""
     return {"type": "explorer", "title": "2.2 Per-Architecture Design Clouds — interactive explorer", "src": src, "dims": dims,
-            "x": "psw", "y": "fmax", "color": "topology", "symbol": "", "filters": ["topology", "card", "pvt", "tpd", "area"],
-            "highlight": "delivered", "highlight_label": "delivered sizing card (ULP / BAL / HS)", "design_key": "design",
+            "x": "psw", "y": "fmax", "color": "topology", "symbol": "card", "filters": ["topology", "card", "pvt", "tpd", "area"],
+            "highlight": "linked", "highlight_label": "BAL card with a hub design page (click)", "design_key": "design",
             "label_key": "design_id", "hover": ["topology", "card", "pvt", "tpd", "tplh", "tphl", "fmax", "edyn", "psw", "pstat", "fom",
                                                 "area", "mos_area", "passive_area", "s_drv", "s_latch", "s_res", "s_cap", "s_out", "wc_tpd"],
             "presets": presets, "preset_default": 0, "height": 520, "fixed_axes": True, "pareto_include_highlight": True,
             "intro": "Every feasible sizing sample (swing ≥ 85 %) of this domain. Points are coloured by architecture (or by PVT status in "
                      "the *11 facets* presets: blue = PVT-robust across the extreme corners, orange = fails a corner, grey = not "
-                     "PVT-checked); the line is the Pareto front for the current axes (per architecture, or per panel); black rings "
-                     "mark the delivered ULP / BAL / HS cards. Hover a point for its knobs and metrics.",
+                     "PVT-checked); lines are the Pareto fronts for the current axes (per architecture, or per panel). Symbols mark the "
+                     "delivered sizing cards (▼ ULP, ◆ BAL, ▲ HS; ● = other samples); a ring marks a BAL card whose hub design page "
+                     "opens on click. Hover a point for its knobs and metrics.",
             "caption": "Old-report legend of this figure: *" + c.sec_desc_by_id("ex-facets-p").replace("*", "") + "* — the *11 facets* presets "
-                       "reproduce that grid (one per trade-off) with the encoding described above. Only the BAL rings (1× baseline "
+                       "reproduce that grid (one per trade-off) with the encoding described above. Only ringed BAL cards (1× baseline "
                        "sizing, i.e. the benchmarked cell) open a hub design page; ULP / HS cards are listed in 2.3 and on each design "
                        "page's *DSE sizing cards* tab. DSE values come from the separate DSE run; for TOP7 / TOP8 the linked pilot "
                        "reports Edyn = 0 fJ while the DSE run reports a finite Edyn." + skipped_txt}
@@ -448,20 +452,21 @@ def p_explore(c):
                 r = next((x for x in recs if x["topology"] == topo and x.get("card_target") == tgt), None)
                 if not r:
                     continue
-                badge = {"ULP": "ULP (Compact/Low-Energy)", "HS": "HS (High-Speed)", "BAL": "BAL (Balanced Baseline)"}[tgt]
+                badge = {"ULP": "**ULP**<br><small>Compact/Low-Energy</small>", "HS": "**HS**<br><small>High-Speed</small>",
+                         "BAL": "**BAL**<br><small>Balanced Baseline</small>"}[tgt]
                 pv = ({"v": "Nominal Fail", "s": "bad"} if not r["pass"] else
                       {"v": f"PVT Robust (WC {fx(r.get('wc_tpd_ps'), 0)}ps)", "s": "good"} if r.get("pvt_robust") is True else
                       {"v": "Nominal Only", "s": "bad"} if r.get("pvt_checked") else {"v": "Nominal Pass", "s": "muted"})
                 link, _why = bal_link(c, r, dom)
                 rows.append({"topo": {"v": link, "t": topo} if link else topo, "card": badge,
-                             "knobs": f"{r['s_drv']}× · {r['s_latch']}× · {r['s_res']}× · {r['s_cap']}× · {r['s_out']}×",
+                             "knobs": f"<small>{r['s_drv']}× · {r['s_latch']}× · {r['s_res']}×<br>{r['s_cap']}× · {r['s_out']}×</small>",
                              "area": r.get("area_um2"), "status": st_cell(r["pass"], f"{'PASS' if r['pass'] else 'FAIL'} ({fx(r.get('swing_pct'), 0)}%)"),
                              "tpd": mul(r.get("tpd_ps"), PS) if r["pass"] else None, "fmax": mul(r.get("fmax_mhz"), MHZ) if r["pass"] else None,
                              "edyn": mul(r.get("e_dyn_fj"), FJ) if r["pass"] else None, "psw": mul(r.get("p_sw_nw"), NW) if r["pass"] else None,
                              "pstat": mul(r.get("p_stat_nw"), NW), "fom": r.get("fom") if r["pass"] else None, "pvt": pv})
         b.append(table_src(c, f"data/dse/cards_{dom}.json", c.h3("2.3"), [
-            {"key": "topo", "label": "Topology", "type": "design"}, {"key": "card", "label": "Target Card", "type": "text", "wrap": True},
-            {"key": "knobs", "label": "Sizing Multipliers (drv·latch·res·cap·out)", "type": "text", "wrap": True},
+            {"key": "topo", "label": "Topology", "type": "design"}, {"key": "card", "label": "Target Card", "type": "text", "md": True},
+            {"key": "knobs", "label": "Sizing Multipliers<br><small>drv·latch·res · cap·out</small>", "type": "text", "md": True},
             {"key": "area", "label": "Active Area", "unit": "µm²", "digits": 4}, {"key": "status", "label": "Status", "type": "text"},
             {"key": "tpd", "label": "tpd", "unit": "s", "si": True, "digits": 4}, {"key": "fmax", "label": "Fmax", "unit": "Hz", "si": True, "digits": 4},
             {"key": "edyn", "label": "Edyn", "unit": "J", "si": True, "digits": 4}, {"key": "psw", "label": "Psw", "unit": "W", "si": True, "digits": 4},
@@ -558,9 +563,9 @@ def hv_summary(c, st):
         t = c.T.get(tid, {})
         a, pm = t.get("area") or {}, t.get("pex_meta") or {}
         g = [r for r in S.get("hvt_grid") or [] if r["topology"] == tid]
-        row = {"topo": {"v": tid}, "stack": stack, "sarea": a.get("total_area_um2"),
-               "split": f"{fx(a.get('mos_area_um2'))} + {fx(a.get('passive_area_um2'))}", "larea": karea(pm),
-               "cpar": f"Cpar={pm.get('total_cap_ff')}fF"}
+        row = {"topo": tid.replace("_", "\\_"), "stack": stack,
+               "sarea": f"{fx(a.get('total_area_um2'))} µm²<br><small>{fx(a.get('mos_area_um2'))} + {fx(a.get('passive_area_um2'))}</small>",
+               "larea": f"{karea(pm)} µm²<br><small>Cpar={pm.get('total_cap_ff')}fF</small>"}
         if not g:
             rows.append(row)
             continue
@@ -579,18 +584,19 @@ def hv_summary(c, st):
         else:
             fmax = "10 MHz (Grid)" if st == "pre" else "N/A"
         row.update(safe=f"{len(safe)} / {len(g)}", maxvh=maxvh, vox=bestmax.get("max_vox_v") if bestmax else None,
-                   mos=bestmax.get("worst_mos") if bestmax else None, tpd=mul(mint.get("tpd_ps"), PS) if mint else None,
-                   at=f"{fx(mint['vddl'], 2)}→{fx(mint['vddh'], 2)}V" if mint else None, fmax=fmax)
+                   mos=f"<small>{bestmax.get('worst_mos')}</small>" if bestmax else None,
+                   tpd=f"{fx(mint.get('tpd_ps'), 1)} ps<br><small>({fx(mint['vddl'], 2)}→{fx(mint['vddh'], 2)}V)</small>" if mint else None,
+                   fmax=fmax.replace(" (", "<br><small>(").replace("ps)", "ps)</small>") if "(" in fmax else fmax)
         rows.append(row)
     return {"type": "table", "title": c.h3("4.1"), "search": False, "rows": rows, "columns": [
-        {"key": "topo", "label": "Topology", "type": "text"}, {"key": "stack", "label": "Stack Architecture", "type": "text", "wrap": True},
-        {"key": "sarea", "label": "Schematic Area", "unit": "µm²", "digits": 4}, {"key": "split", "label": "MOS + passive", "type": "text"},
-        {"key": "larea", "label": "gLayout Area", "unit": "µm²", "type": "text"}, {"key": "cpar", "label": "Cpar", "type": "text"},
+        {"key": "topo", "label": "Topology", "type": "text", "md": True}, {"key": "stack", "label": "Stack Architecture", "type": "text", "wrap": True},
+        {"key": "sarea", "label": "Schematic Area<br><small>MOS + passive</small>", "type": "text", "md": True},
+        {"key": "larea", "label": "gLayout Area", "type": "text", "md": True},
         {"key": "safe", "label": "Safe Grid Points (<1.80V)", "type": "text"}, {"key": "maxvh", "label": "Max Safe VDDH", "unit": "V", "si": True, "digits": 3},
         {"key": "vox", "label": "Peak |Vox| @ Max VDDH", "unit": "V", "si": True, "digits": 4},
-        {"key": "mos", "label": "Worst MOSFET @ Max VDDH", "type": "text", "wrap": True},
-        {"key": "tpd", "label": "Fastest Safe tpd", "unit": "s", "si": True, "digits": 5}, {"key": "at", "label": "at (VDDL→VDDH)", "type": "text"},
-        {"key": "fmax", "label": "Max Safe f_max", "type": "text", "wrap": True}]}
+        {"key": "mos", "label": "Worst MOSFET @ Max VDDH", "type": "text", "md": True},
+        {"key": "tpd", "label": "Fastest Safe tpd", "type": "text", "md": True},
+        {"key": "fmax", "label": "Max Safe f_max", "type": "text", "md": True}]}
 
 
 def hv_freq_chart(c, st):
@@ -600,7 +606,7 @@ def hv_freq_chart(c, st):
     curves = [("TOP9_HVT_CASC_DCVS", 1.5, 2.5, "#2a78d6", "TOP9 (2-Stack DCVS @ 1.5→2.5V)"),
               ("TOP10_HVT_BOOTSTRAP_DYNAMIC", 1.2, 3.0, "#1baf7a", "TOP10 (2-Stack Cap-Boost @ 1.2→3.0V)"),
               ("TOP10_HVT_BOOTSTRAP_DYNAMIC", 1.5, 3.5, "#eb6834", "TOP10 (2-Stack Cap-Boost @ 1.5→3.5V)"),
-              ("TOP11_HVT_TRIPLE_STACK", 1.5, 4.5, "#52514e", "TOP11 (3-Stack Cascode @ 1.5→4.5V)"),
+              ("TOP11_HVT_TRIPLE_STACK", 1.5, 4.5, "#8f7aa8", "TOP11 (3-Stack Cascode @ 1.5→4.5V)"),
               ("TOP11_HVT_TRIPLE_STACK", 1.5, 4.8, "#9a6700", "TOP11 (3-Stack Cascode @ 1.5→4.8V)")]
     tr = []
     for tid, vl, vh, col, lab in curves:
@@ -612,12 +618,12 @@ def hv_freq_chart(c, st):
                 pts.append(r)
         tr.append({"type": "scatter", "mode": "lines+markers", "name": lab, "x": [r["freq_mhz"] for r in pts], "y": [r["max_vox_v"] for r in pts],
                    "line": {"color": col, "width": 2},
-                   "marker": {"size": [8 if r["oxide_safe_1v8"] else 10 for r in pts], "color": [col if r["oxide_safe_1v8"] else "#cf222e" for r in pts],
+                   "marker": {"size": [8 if r["oxide_safe_1v8"] else 10 for r in pts], "color": [col if r["oxide_safe_1v8"] else "theme:bad" for r in pts],
                               "line": {"color": "#ffffff", "width": 1}},
                    "text": [f"{lab} @ {r['freq_mhz']}MHz | max(|Vox|)={fx(r['max_vox_v'], 3)}V | tpd={fx(r.get('tpd_ps'))}ps | Safe={str(r['pass']).lower()}"
                             for r in pts], "hovertemplate": "%{text}<extra></extra>"})
     tr.append({"type": "scatter", "mode": "lines", "name": "1.80V Gate-Oxide Limit", "x": [25, 500], "y": [1.8, 1.8],
-               "line": {"color": "#cf222e", "dash": "dash", "width": 1.6}, "hoverinfo": "skip"})
+               "line": {"color": "theme:bad", "dash": "dash", "width": 1.6}, "hoverinfo": "skip"})
     return {"type": "chart", "title": c.h3("4.3"), "height": 380, "data": tr, "layout": {
         "xaxis": {"title": {"text": "Operating Frequency f (MHz) [Valid Rail-to-Rail Output Swing >= 85%]"}, "range": [15, 510],
                   "tickvals": [25, 100, 200, 333, 500]},
@@ -630,26 +636,25 @@ def hv_pvt_table(c, st):
     for b in c.PRE.get("hvt_pvt_summary") or []:
         r = c.ix[st]["hvt_pvt"].get((b["topology"], b["domain_label"]))
         did = f"{b['topology']}.{c.L.hv_id(b['domain_label'])}"
-        row = {"design": {"v": did, "t": b["topology"]}, "dom": f"0-{fx(b['vddl'], 2)}V → 0-{fx(b['vddh'], 2)}V ({b['domain_label']})",
+        row = {"design": {"v": did, "t": b["topology"]}, "dom": f"0-{fx(b['vddl'], 2)}V → 0-{fx(b['vddh'], 2)}V<br><small>({b['domain_label']})</small>",
                "vdd": b["vddh"]}
         if r:
             row.update(lp=f"{r['n_logic_pass']} / {r['n_total']}", ox=f"{r['n_oxide_safe']} / {r['n_total']}",
                        y={"v": f"{r['n_pass']}/{r['n_total']} ({fv(r['yield_pct'])}%)", "s": "good" if r["n_pass"] >= 12 else "bad"},
-                       ntpd=mul(r.get("nom_tpd_ps"), PS), nvox=r.get("nom_vox_v"), nmos=r.get("nom_worst_mos"), wcd=r.get("wc_dly_corner"),
-                       wtpd=mul(r.get("wc_tpd_ps"), PS), wco=r.get("wc_vox_corner"), wvox=r.get("wc_vox_v"),
-                       wmos=(r.get("wc_worst_mos") or "").split(":")[0])
+                       ntpd=mul(r.get("nom_tpd_ps"), PS), nvox=f"{fx(r.get('nom_vox_v'), 3)} V<br><small>{r.get('nom_worst_mos') or ''}</small>",
+                       wcd=r.get("wc_dly_corner"), wtpd=mul(r.get("wc_tpd_ps"), PS), wco=r.get("wc_vox_corner"),
+                       wvox=f"{fx(r.get('wc_vox_v'), 3)} V<br><small>({(r.get('wc_worst_mos') or '').split(':')[0]})</small>")
         else:
             row["y"] = {"v": "N/A", "s": "muted"}
         rows.append(row)
     return {"type": "table", "title": c.h3("4.5"), "search": False, "rows": rows, "columns": [
-        {"key": "design", "label": "Topology", "type": "design"}, {"key": "dom", "label": "Domain (VDDL → VDDH)", "type": "text", "wrap": True},
+        {"key": "design", "label": "Topology", "type": "design"}, {"key": "dom", "label": "Domain (VDDL → VDDH)", "type": "text", "md": True},
         {"key": "vdd", "label": "VDDH", "unit": "V", "si": True},
         {"key": "lp", "label": "15-Corner Logic Pass", "type": "text"}, {"key": "ox", "label": "15-Corner Oxide Safe (<1.80V)", "type": "text"},
         {"key": "y", "label": "Combined Yield", "type": "text"}, {"key": "ntpd", "label": "Nom tpd", "unit": "s", "si": True, "digits": 5},
-        {"key": "nvox", "label": "Nom Peak |Vox|", "unit": "V", "si": True, "digits": 4}, {"key": "nmos", "label": "Nom worst MOSFET", "type": "text", "wrap": True},
+        {"key": "nvox", "label": "Nom Peak |Vox|<br><small>worst MOSFET</small>", "type": "text", "md": True},
         {"key": "wcd", "label": "Worst-Case Delay Corner", "type": "text"}, {"key": "wtpd", "label": "WC tpd", "unit": "s", "si": True, "digits": 5},
-        {"key": "wco", "label": "Worst-Case Oxide Corner", "type": "text"}, {"key": "wvox", "label": "WC Peak |Vox|", "unit": "V", "si": True, "digits": 4},
-        {"key": "wmos", "label": "WC MOSFET", "type": "text"}]}
+        {"key": "wco", "label": "Worst-Case Oxide Corner", "type": "text"}, {"key": "wvox", "label": "WC Peak |Vox|", "type": "text", "md": True}]}
 
 
 HV_ROW_COLS = [{"key": "topo", "label": "Topology", "type": "text"}, {"key": "vddl", "label": "VDDL", "unit": "V", "si": True},
@@ -694,7 +699,7 @@ def p_hvt(c):
     raw = []
     for k, lab in (("hvt_grid", "Complete HV grid sweep (VDDL × VDDH, 25 MHz)"), ("hvt_speed", "Complete HV frequency sweep (25 → 500 MHz)")):
         raw += alts(lambda st, k=k, lab=lab: table_src(c, f"data/hv/{st}_{k}.json", lab, HV_ROW_COLS,
-                                                        [hv_row(r) for r in c.S[st].get(k) or []]) if c.S[st].get(k) else None, f"raw-{k}")
+                                                        [hv_row(r) for r in c.S[st].get(k) or []], vdd_filter=True) if c.S[st].get(k) else None, f"raw-{k}")
     blocks.append({"type": "section", "title": "Raw HV sweep records (all simulated points behind 4.1–4.3)", "collapsed": True, "blocks": raw})
     return {"blocks": [{"type": "section", "title": c.h2("sec-hvt"), "intro": c.sec_desc("sec-hvt"), "blocks": blocks}]}
 
@@ -738,9 +743,9 @@ PROFILE = {
     "TOP11_HVT_TRIPLE_STACK": (0.87, 0.46, 0.38, 0.75, "3-stack HV + 5× MIM bootstrap/dynamic-gate caps + R-div"),
 }
 TOPO_COLORS = {"TOP1_DCVS": "#2a78d6", "TOP2_WILSON_CM": "#eb6834", "TOP3_NVT_CASC": "#1baf7a", "TOP4_CAP_BOOST": "#9a6700",
-               "TOP5_SPLITRAIL_CLAMP": "#8c564b", "TOP6_ENVELOPE_UNIVERSAL": "#52514e", "TOP7_AC_DIFF_KEEPER": "#cf222e",
+               "TOP5_SPLITRAIL_CLAMP": "#8c564b", "TOP6_ENVELOPE_UNIVERSAL": "#8a8780", "TOP7_AC_DIFF_KEEPER": "#cf222e",
                "TOP8_AC_HYST_TRIP": "#1a7f37", "TOP9_HVT_CASC_DCVS": "#3b6ea5", "TOP10_HVT_BOOTSTRAP_DYNAMIC": "#b55d19",
-               "TOP11_HVT_TRIPLE_STACK": "#6b5b7b"}
+               "TOP11_HVT_TRIPLE_STACK": "#8f7aa8"}
 
 
 def prof(tid):
@@ -853,12 +858,12 @@ class UI:
             if ff:
                 tr.append({"type": "scatter", "mode": "markers", "name": f"{short_tid(tid)} FAIL", "legendgroup": tid, "showlegend": False,
                            "x": [p[0] for p in ff], "y": [p[1] for p in ff],
-                           "marker": {"size": 8, "color": "rgba(0,0,0,0)", "line": {"color": "#cf222e", "width": 1.4}},
+                           "marker": {"size": 8, "color": "rgba(0,0,0,0)", "line": {"color": "theme:bad", "width": 1.4}},
                            "text": [f"{tid} @ VDD={fx(v, 1)}V ({self.nk}): FAIL (180nm Swing={fx(r.get('swing_pct'), 1)}%, Psw={fx(val, 1)}x)"
                                     for v, val, r in ff], "hovertemplate": "%{text}<extra></extra>"})
                 groups.append(tid)
         tr.append({"type": "scatter", "mode": "lines", "name": f"1.0x Unit Inverter ({self.nk})", "x": [0.6, 1.8], "y": [1, 1],
-                   "line": {"color": "#1a7f37", "dash": "dash", "width": 1.5}, "hoverinfo": "skip"})
+                   "line": {"color": "theme:good", "dash": "dash", "width": 1.5}, "hoverinfo": "skip"})
         groups.append("REF")
         hv = lambda t: t.startswith(("TOP9", "TOP10", "TOP11"))  # noqa: E731
         vis = lambda f: [True if g == "REF" else f(g) for g in groups]  # noqa: E731
@@ -889,7 +894,7 @@ class UI:
                        "x": [(r.get(key) if r and r.get("pass") and (r.get(key) or 0) > 0 else None) for r in rows], "marker": {"color": col},
                        "hovertemplate": f"%{{y}} @ {fx(v, 1)}V ({self.nk}): %{{x:.1f}}x<extra>{name}</extra>"})
         tr.append({"type": "scatter", "mode": "lines", "name": "1.0x", "x": [1, 1], "y": [labs[0], labs[-1]], "showlegend": False,
-                   "line": {"color": "#1a7f37", "dash": "dash", "width": 1.5}, "hoverinfo": "skip"})
+                   "line": {"color": "theme:good", "dash": "dash", "width": 1.5}, "hoverinfo": "skip"})
         ann = []
         for lab, r in zip(labs, rows):
             if not r:
@@ -897,7 +902,7 @@ class UI:
             if not r.get("pass"):
                 t = f" (Attempted Psw={fx(r.get('psw_mult'), 1)}x, Swing={fx(r.get('swing_pct'), 1)}%)" if r.get("psw_mult") is not None else ""
                 ann.append({"xref": "paper", "x": 0.01, "xanchor": "left", "y": lab, "showarrow": False, "text": f"FAIL @ {fx(v, 1)}V{t}",
-                            "font": {"color": "#cf222e", "size": 10}})
+                            "font": {"color": "theme:bad", "size": 10}})
             else:
                 ann.append({"xref": "paper", "x": 1.01, "xanchor": "left", "y": lab, "showarrow": False,
                             "text": f"{fx(r.get('psw_mult'), 1)}x | {fx(r.get('rise_mult'), 1)}x | {fx(r.get('fall_mult'), 1)}x", "font": {"size": 9}})
@@ -1221,7 +1226,8 @@ def p_opregion(c):
     raw = alts(lambda st: table_src(c, f"data/opr/{st}_grid.json", "All 770 shared-ground grid simulations", [
         {"key": "topo", "label": "Topology", "type": "text"}, {"key": "vddl", "label": "VDDL", "unit": "V", "si": True},
         {"key": "vdd", "label": "VDDH", "unit": "V", "si": True}] + c.L.CORNER_COLS[2:],
-        [dict(c.L.corner_row(r), topo=r["topology"], vddl=r["vddl"], vdd=r["vddh"]) for r in c.S[st].get("shared_grid") or []], page_size=100)
+        [dict(c.L.corner_row(r), topo=r["topology"], vddl=r["vddl"], vdd=r["vddh"]) for r in c.S[st].get("shared_grid") or []], page_size=100,
+        vdd_filter=True)
         if c.S[st].get("shared_grid") else None, "oprraw")
     return {"blocks": [{"type": "section", "title": c.h2("sec-opregion"), "intro": c.sec_desc("sec-opregion"), "blocks": [
         {"type": "tabs", "style": "select", "label": "Topology", "id": "opr_topo", "tabs": tabs,
@@ -1234,15 +1240,15 @@ def split_tables(c):
     for r in c.PRE.get("split_matrix") or []:
         if r["domain_label"] not in [d[0] for d in doms]:
             doms.append((r["domain_label"], r.get("domain_title") or r["domain_label"],
-                         f"[{fx(r['vssl'], 1)}, {fx(r['vddl'], 1)}V] → [{fx(r['vssh'], 1)}, {fx(r['vddh'], 1)}V]"))
+                         f"[{fx(r['vssl'], 1)}, {fx(r['vddl'], 1)}V] → [{fx(r['vssh'], 1)}, {fx(r['vddh'], 1)}V]", r["vddh"]))
     modes = [("status_tpd", "Pass/Fail + Propagation Delay tpd (ps)"), ("tplh_tphl", "Turn-On / Turn-Off Delay (tpLH / tpHL ps)"),
              ("p_stat_nw", "Static Power Pstat (nW)"), ("e_dyn_fj", "Dynamic Energy Edyn (fJ)")]
     tabs = []
     for mode, lab in modes:
         def tab(st, mode=mode):
             rows = []
-            for did, title, rails in doms:
-                row = {"dom": f"**{title.replace('->', '→')}**", "rails": rails}
+            for did, title, rails, vh in doms:
+                row = {"dom": f"**{title.replace('->', '→')}**", "rails": rails, "vdd": vh}
                 for t in c.topos:
                     it = c.ix[st]["split_matrix"].get((t["id"], did))
                     if not it:
@@ -1258,16 +1264,17 @@ def split_tables(c):
                     else:
                         row[t["id"]] = {"v": f"{fx(it.get('e_dyn_fj'), 1)} fJ", "s": "good"}
                 rows.append(row)
-            cols = [{"key": "dom", "label": "Split / Non-Overlapping Domain", "md": True, "type": "text"}, {"key": "rails", "label": "Rails", "type": "text"}]
-            cols += [{"key": t["id"], "label": t["short_name"], "type": "text", "md": True, "wrap": True, "title": t["id"]} for t in c.topos]
-            return {"type": "table", "rows": rows, "columns": cols, "search": False, "title": lab}
+            cols = [{"key": "dom", "label": "Split / Non-Overlapping Domain", "md": True, "type": "text"}, {"key": "rails", "label": "Rails", "type": "text"},
+                    {"key": "vdd", "label": "VDDH", "unit": "V", "si": True}]
+            cols += [{"key": t["id"], "label": t["short_name"].replace(" ", "<br>", 1), "type": "text", "md": True, "title": t["id"]} for t in c.topos]
+            return {"type": "table", "rows": rows, "columns": cols, "search": False, "title": lab, "vdd_filter": True}
         tabs.append({"label": lab, "key": mode, "blocks": alts(tab, f"split-{mode}")})
     raw = alts(lambda st: table_src(c, f"data/split/{st}_all.json", "All 176 split-rail simulations", [
         {"key": "topo", "label": "Topology", "type": "text"}, {"key": "dom", "label": "Domain", "type": "text"},
         {"key": "vssl", "label": "VSSL", "unit": "V", "si": True}, {"key": "vddl", "label": "VDDL", "unit": "V", "si": True},
         {"key": "vssh", "label": "VSSH", "unit": "V", "si": True}, {"key": "vdd", "label": "VDDH", "unit": "V", "si": True}] + c.L.CORNER_COLS[2:],
         [dict(c.L.corner_row(r), topo=r["topology"], dom=(r.get("domain_title") or r["domain_label"]).replace("->", "→"),
-              vssl=r["vssl"], vddl=r["vddl"], vssh=r["vssh"], vdd=r["vddh"]) for r in c.S[st].get("split_matrix") or []], page_size=100), "splitraw")
+              vssl=r["vssl"], vddl=r["vddl"], vssh=r["vssh"], vdd=r["vddh"]) for r in c.S[st].get("split_matrix") or []], page_size=100, vdd_filter=True), "splitraw")
     return tabs, raw
 
 

@@ -28,6 +28,8 @@ FLAGS = {  # (family, source field) -> (predicate, short tag, tooltip)
     ("bm_iref", "tc_ppm_c"): (lambda v: v in (8.0, 450.0), "clip limit", "generator clips TC to 8–450 ppm/°C"),
     ("bm_iref", "line_sens_pct_v"): (lambda v: v in (0.03, 3.5), "clip limit", "generator clips line sensitivity to 0.03–3.5 %/V"),
     ("bm_iref", "startup_ns"): (lambda v: v == 1450.0, "estimate", "did not settle; generator RC estimate clipped at 1450 ns"),
+    ("ro", "t_start_ns"): (lambda v: v <= 0.0, "not measured", "start-up reported as 0"),
+    ("cml_ro", "t_start_ns"): (lambda v: v <= 0.0, "not measured", "start-up reported as 0"),
 }
 
 
@@ -497,8 +499,17 @@ def sim_charts(d):
     if pq:
         tr4.append({"type": "bar", "x": labels, "y": [p.get("val") for p in pq], "name": f"Post-PEX PVT ({pv.get('unit', '')})", "marker": {"color": POST_C, "opacity": 0.85}})
     if pp:
-        out.append(_chart(f"4. 15-Corner PVT Profile & 30-Run Mismatch Monte Carlo ({pv.get('metric_label') or 'Primary'})",
-                          f"Pre-PEX (blue) vs Post-PEX (orange) across 5 corners × 3 temperatures; MC CV = {num(mc.get('cv_pct'), 2)}%", tr4,
+        mq = d.get("mc_post") or {}
+        if fam == "clk_div":
+            t4 = f"4. 15-Corner PVT Profile ({pv.get('metric_label') or 'Primary'})"
+            c4 = "Pre-PEX (blue) vs Post-PEX (orange) across 5 corners × 3 temperatures. (The retired title also named a 30-run Monte Carlo; its f_max statistics were synthetic and are not shown.)"
+        else:
+            na, nb = mc.get("n_runs", 30), mq.get("n_runs", 30)
+            runs = f"{na}" if na == nb else f"{na}/{nb}"
+            t4 = f"4. 15-Corner PVT Profile & {runs}-Run Mismatch Monte Carlo ({pv.get('metric_label') or 'Primary'})"
+            c4 = (f"Pre-PEX (blue) vs Post-PEX (orange) across 5 corners × 3 temperatures; MC CV = {num(mc.get('cv_pct'), 2)}% pre"
+                  + (f", {num(mq.get('cv_pct'), 2)}% post" if mq else "") + f" ({runs} runs)")
+        out.append(_chart(t4, c4, tr4,
                           {"barmode": "group", "xaxis": {"title": {"text": "PVT Corner & Temperature"}, "tickangle": -35},
                            "legend": {"orientation": "h", "x": 0, "y": 1.02, "yanchor": "bottom"}, "margin": {"t": 40},
                            "yaxis": {"title": {"text": f"{pv.get('metric_label') or 'Value'} ({pv.get('unit', '')})"}}}))
@@ -516,7 +527,9 @@ def extra_charts(d):
         tr = [{"type": "histogram", "x": mp["samples"], "name": f"Pre-PEX ({mp.get('n_runs', len(mp['samples']))} runs)", "marker": {"color": PRE_C}, "opacity": 0.7}]
         if mq.get("samples"):
             tr.append({"type": "histogram", "x": mq["samples"], "name": f"Post-PEX ({mq.get('n_runs', len(mq['samples']))} runs)", "marker": {"color": POST_C}, "opacity": 0.7})
-        out.append(_chart(f"Monte Carlo distribution of {mp.get('metric_label', 'primary metric')}", "30 per-finger mismatch samples per stage (`mc_pre.samples` / `mc_post.samples`).",
+        out.append(_chart(f"Monte Carlo distribution of {mp.get('metric_label', 'primary metric')}",
+                          f"{len(mp['samples'])} pre-PEX" + (f" and {len(mq['samples'])} post-PEX" if mq.get("samples") else "")
+                          + " per-finger mismatch samples (`mc_pre.samples` / `mc_post.samples`).",
                           tr, {"barmode": "overlay", "xaxis": {"title": {"text": f"{mp.get('metric_label', '')} ({mp.get('unit', '')})"}}, "yaxis": {"title": {"text": "Count"}}}, 320))
     if fam == "tcap":
         out.append(_chart("Quality factor Q(f) vs frequency", "`q_vs_freq` from the broadband AC extraction.", [
@@ -815,13 +828,13 @@ def build(d, files, sch_design):
     blocks.append({"type": "section", "title": "Design knobs, sizing summary & downloadable artifacts", "blocks": kb})
     gal = []
     if files.get("schematic"):
-        gal.append({"label": "Target → simulated g<sub>m</sub>/I<sub>D</sub> operating-point view (pre-PEX)", "src": files["schematic"]})
+        gal.append({"label": "Op-point view (pre-PEX)", "src": files["schematic"]})
     if sch_design:
-        gal.append({"label": "Design sizing view (targets)", "src": sch_design})
+        gal.append({"label": "Sizing view (targets)", "src": sch_design})
     if gal:
         blocks.append({"type": "section", "title": "Full-connection annotated schematic", "blocks": [
             {"type": "gallery", "items": gal, "bg": "white", "max_height": 720,
-             "caption": "Two views of the same schematic. The retired site showed the operating-point view in *Schematic* mode and the "
+             "caption": "Two views of the same schematic: annotated target → simulated g<sub>m</sub>/I<sub>D</sub> operating point (pre-PEX) and the design-sizing targets. The retired site showed the operating-point view in *Schematic* mode and the "
                         "design-sizing view in *Post-layout* mode (neither carries post-PEX data). Click to open full size (zoom/pan in the browser)."}]})
     blocks.append({"type": "section", "title": "Transistor operating point", "blocks": [op_table(d)]})
     pt = passive_table(d)

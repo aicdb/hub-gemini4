@@ -34,9 +34,9 @@ Legend: ✓ reproduced (location) · ≈ reproduced with a different control · 
 17. ≈ Domain segmented filter (5 domains) → tabs. Tabs `id=dse_dom` with domain keys (deep link `t.dse_dom=<domain>`), `vdd` = the domain's VDDH.
 18. ≈ Trade-off segmented filter (6 presets) → tabs `id=dse_trade` (keys speed/energy/area/leakage/sym/drv) for 2.1 + 6 unfaceted and 6 faceted explorer presets for 2.2.
 19. ✓ 2.1 Pareto-front overlay per domain × trade-off (grey feasible cloud, per-architecture hv-step fronts, filled = PVT-robust / open = fails corner, dashed for arch ≥ 7, black diamonds = ULP/BAL/HS cards, legend with feasible counts, shared log ranges, drv preset = s_drv-bin upper envelope) → 30 Plotly charts (`data/dse/overlay_*.json`), dynamic title + caption.
-20. ✓ 2.2 11-panel per-architecture clouds → explorer per domain (`data/dse/explorer_*.json`): one *“<trade-off> · 11 facets”* preset per trade-off (facet = architecture, fixed shared axes, colour = PVT status blue/orange/grey, per-panel front incl. the delivered cards like the old fronts, per-facet point/front counts, preset text naming the architectures with 0 feasible samples); delivered cards ringed, BAL rings open the hub design; architecture colours equal the 2.1 palette. The old per-panel captions are in the *2.2 Per-architecture panel summary* table, per trade-off (samples plotted · front · PVT-robust). Hub-encoding intro; old legend text kept in the caption.
+20. ✓ 2.2 11-panel per-architecture clouds → explorer per domain (`data/dse/explorer_*.json`): one *“<trade-off> · 11 facets”* preset per trade-off (facet = architecture, fixed shared axes, colour = PVT status blue/orange/grey, per-panel front incl. the delivered cards like the old fronts, per-facet point/front counts, preset text naming the architectures with 0 feasible samples); delivered cards ringed, BAL rings open the hub design; architecture colours equal the 2.1 palette. The old per-panel captions are in the *2.2 Per-architecture panel summary* table, per trade-off (samples plotted · front · PVT-robust). Hub-encoding intro; old legend text kept in the caption. Round 3: delivered cards drawn with their own symbols (▼ ULP, ◆ BAL, ▲ HS, as the old diamonds) and only BAL cards with a hub design are ringed, so the explorer's “click a ringed point” line is accurate; preset texts describe the per-colour front lines; TOP6/TOP11 colours changed to mid-tones that are visible in dark mode (also in 2.1 and the unit-inverter charts).
 21. ✓ Hover text of every point (topology, card, tpd/tpLH/tpHL/Fmax, Edyn/Psw/Pstat/FoM, areas, 5 knobs, PVT status) → 2.1 front/card hovers + explorer hover dims. Grey cloud points now carry the full old hover text too (compact `customdata`); explorer hover adds tpLH/tpHL/Fmax/MOS/passive area.
-22. ✓ 2.3 deliverable sizing cards table (12 columns incl. badges, knobs, status+swing, PVT robustness) → per-domain table. BAL links only when the DSE delay agrees with the linked pilot within 5 % (TOP4 BAL cards are not linked: earlier netlist revision; stated in the caption).
+22. ✓ 2.3 deliverable sizing cards table (12 columns incl. badges, knobs, status+swing, PVT robustness) → per-domain table. BAL links only when the DSE delay agrees with the linked pilot within 5 % (TOP4 BAL cards are not linked: earlier netlist revision; stated in the caption). Card / knob cells are two-line markdown (table no longer forced wide).
 23. ✓ 2.4 4-objective non-dominated table, sortable, default FoM desc → per-domain table (+ WC tpd and sample id columns).
 24. ≈ 2.4 "Only PVT-checked & robust" checkbox → type `robust` in the filter box (caption); "Show all / top 60" → page_size 60 + "Show more".
 25. ✓ Post-PEX mode notice ("DSE is pre-PEX only") → stage `pre` on the domain tabs (fallback badge / not-available note) + caption.
@@ -58,14 +58,14 @@ Legend: ✓ reproduced (location) · ≈ reproduced with a different control · 
 
 ## 4. HV-tolerant explorer (`hvt`)
 39. ✓ Title + problem-statement prose.
-40. ✓ 4.1 highest-voltage / highest-speed summary (6 architectures; stack, schematic area, gLayout area + Cpar, safe grid points, max safe VDDH, peak |Vox|, worst MOSFET, fastest safe tpd with VDDL→VDDH, max safe f_max string) → table, stage alternatives (JS ported; values verified against the old page). Areas printed with 2 decimals as on the old page.
+40. ✓ 4.1 highest-voltage / highest-speed summary (6 architectures; stack, schematic area, gLayout area + Cpar, safe grid points, max safe VDDH, peak |Vox|, worst MOSFET, fastest safe tpd with VDDL→VDDH, max safe f_max string) → table, stage alternatives (JS ported; values verified against the old page). Areas printed with 2 decimals as on the old page. Round 3: merged two-line cells (area + split, area + Cpar, tpd + rails, f + delay) to narrow the table.
 41. ✓ 4.2 architecture select → select-tabs `id=hv_arch` (default TOP10); option labels derived per stage from the data (highest oxide-safe VDDH / frequency) instead of the old hard-coded, partly wrong ones.
 42. ✓ 4.2 four VDDL×VDDH heatmaps (peak oxide stress with green/yellow/red classes and worst-MOS labels; Psw µW/nW + Edyn; tpLH; tpHL with blue gradient, ">1.8V" and FAIL cells; per-cell tooltips) → Plotly heatmaps (`data/hvgrid/`), stage alternatives.
 43. ✓ 4.2 metrics bar (safe points, highest safe VDDH, fastest tpd, peak stress) → note, stage alternatives.
 44. ✓ 4.3 frequency sweep chart (5 curves, peak |Vox| vs f, red markers for oxide-unsafe points, 1.80 V limit line, tooltips; N/A in post if no data) → Plotly chart, stage alternatives.
 45. ✓ 4.4 HV waveform viewer (8 operating points select, |Vox| in the label, waveform, info line) → select-tabs `id=hv_wave` with stage-dependent labels (pre / post |Vox|) + charts + notes, stage alternatives.
-46. ✓ 4.5 15-corner PVT table (logic pass, oxide safe, combined yield pill ≥12, nominal tpd/|Vox|, WC delay corner/tpd, WC oxide corner/|Vox| + MOS) → table with design links (+ nominal worst MOS), stage alternatives.
-47. ✓ (added) raw hvt_grid (432) and hvt_speed (576) records → collapsed tables. Raw tables carry a numeric VDDH (`vdd`) column for the global VDD option.
+46. ✓ 4.5 15-corner PVT table (logic pass, oxide safe, combined yield pill ≥12, nominal tpd/|Vox|, WC delay corner/tpd, WC oxide corner/|Vox| + MOS) → table with design links (+ nominal worst MOS), stage alternatives. Round 3: |Vox| and worst MOSFET merged into two-line cells.
+47. ✓ (added) raw hvt_grid (432) and hvt_speed (576) records → collapsed tables. Raw tables carry a numeric VDDH (`vdd`) column for the global VDD option. Round 3: `vdd_filter: true` so the sweep VDDH values follow the global VDD option.
 
 ## 5. Single-domain comparison vs unit inverter (`unitinv`)
 48. ✓ Title + intro prose (with link to the appendix page).
@@ -90,13 +90,13 @@ Legend: ✓ reproduced (location) · ≈ reproduced with a different control · 
 65. ✓ Title + intro prose.
 66. ≈ Topology select (default TOP6) + metric select (6 metrics) → nested select-tabs. Tabs `id=opr_topo` / `opr_metric` (keys = topology / metric).
 67. ✓ 10×7 VDDL×VDDH grid with ✓/✗ swing labels or values / FAIL, pass/fail colouring, tooltips (VDDL, VDDH, pass, tpd, Pstat …) → Plotly heatmaps, stage alternatives (passing cells additionally shaded by value).
-68. ✓ (added) raw 770-point grid table.
+68. ✓ (added) raw 770-point grid table. Round 3: `vdd_filter: true` on the raw grid.
 
 ## 7. Split-rail matrix (`splitrail`)
 69. ✓ Title + intro prose.
 70. ≈ Cell-metric select (4 modes) → select-tabs. Tabs `id=split_metric`; cells as two-line markdown so the 11 topology columns wrap.
-71. ✓ 16 domains × 11 topologies matrix (title, rails, PASS·tpd / tpLH/tpHL / Pstat / Edyn, FAIL, N/A) → tables, stage alternatives.
-72. ✓ (added) long-form table of all 176 runs with every metric.
+71. ✓ 16 domains × 11 topologies matrix (title, rails, PASS·tpd / tpLH/tpHL / Pstat / Edyn, FAIL, N/A) → tables, stage alternatives. Round 3: VDDH column + `vdd_filter: true`; topology columns no longer forced to 160 px.
+72. ✓ (added) long-form table of all 176 runs with every metric. Round 3: `vdd_filter: true`.
 
 ## 8. Waveform viewer (`waveforms`)
 73. ✓ Title + intro prose.
@@ -139,7 +139,7 @@ Legend: ✓ reproduced (location) · ≈ reproduced with a different control · 
 ## Designs view / design records
 99. ✓ 72 designs = 11 topologies × 6 flagship crossings + 6 HV operating points (TOP9–11); `vdd` = output VDDH; axes topology / domain / crossing type / direction / coupling.
 100. ✓ Matrix topology × domain (VDDH groups), default cell = tpd / PVT yield / output swing, presets (static power & energy, rise/fall, worst-case PVT, MC µ+3σ, oxide stress, area); hard nominal failures carry `results.<stage>.status = "fail"` (red cell instead of amber); card metrics tpd / PVT yield / Edyn / Pstat / swing / area, cards grouped by topology; metric descriptions; card thumbnail = layout PNG.
-101. ✓ Results per stage (pre = schematic dataset, full = Magic RC full-cell PEX): nominal pilot (or 25 MHz HV) metrics, PVT yield & worst case, MC yield/µ/σ/µ+3σ, oxide stress, layout area; PVT/MC counts; robust = all corners pass and MC 3σ pass; notes for nominal failures, PVT-vs-pilot netlist mismatch, Edyn = 0, HV oxide violations. When the PVT/MC runs used an earlier netlist revision than the pilot (TOP4, TOP6–TOP11 pre-PEX) the note says so for PVT **and** Monte Carlo, including the MC mean, and that the worst-case/MC/robust figures describe that revision. Layout area is passed unrounded (the hub formatter shows values ≥ 10⁴ as integers).
+101. ✓ Results per stage (pre = schematic dataset, full = Magic RC full-cell PEX): nominal pilot (or 25 MHz HV) metrics, PVT yield & worst case, MC yield/µ/σ/µ+3σ, oxide stress, layout area; PVT/MC counts; robust = all corners pass and MC 3σ pass; notes for nominal failures, PVT-vs-pilot netlist mismatch, Edyn = 0, HV oxide violations. When the PVT/MC runs used an earlier netlist revision than the pilot (TOP4, TOP6–TOP11 pre-PEX) the note says so for PVT **and** Monte Carlo, including the MC mean, and that the worst-case/MC/robust figures describe that revision. Layout area is passed unrounded (the hub formatter shows values ≥ 10⁴ as integers). Round 3: negative output swings (failed outputs) and negative MC µ−3σ swings are not reported as metrics; the stage note states the raw value.
 102. ✓ Detail doc per design: topology/origin/references, nominal benchmark kv (all fields) or HV nominal + 15-corner kv + per-point frequency sweep, transient waveforms (9 corners) or HV waveform, PVT kv + chart + 20-corner table, MC kv + histogram + seeds, layout & PEX kv + PNG, netlists (pre/PEX), sibling crossings, and "across the rest of the report" tabs (op-region maps, split-rail, VSS2D, unit-inverter row, DSE sizing cards, HV grid + HV waveforms where applicable).
 103. ✗ DRC / LVS status — `drc_clean` / `lvs_clean` are null in report_data.json, so `physical.drc/lvs` are null (no DRC+LVS-clean designs in the hub filter).
 104. ✗ GDS files / hub-rendered layout thumbnails — no GDS in docs/; the published layout PNGs are hosted instead.
@@ -147,3 +147,4 @@ Legend: ✓ reproduced (location) · ≈ reproduced with a different control · 
 105. ✓ Block hierarchy (BUILDERS §4.5): the level shifters are leaf cells — no topology instantiates a design of another hub component (switch, sa, opa, aux …), so neither `builds_on` nor `uses` is emitted.
 
 Review round (27 gaps): all 23 adapter-side gaps fixed; the 4 renderer issues (front markers, tab-select overflow, Hz tick suffix, modebar overlap) were fixed in the hub, and the adapter adds explicit PVT/architecture colours for the explorer.
+Round 3: annotation and guide colours use theme tokens (`theme:muted/good/warn/bad/ink/paper`) so rail labels, µ / µ+3σ markers, FAIL labels and card diamonds stay readable in dark mode. Tabs keep their `vdd` (the hub now explains an all-hidden tab group).

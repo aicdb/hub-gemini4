@@ -150,3 +150,16 @@ Fixed in the adapter (all renderer_issue=false gaps):
   methodology catalogue and topology tables wrap.
 Not adopted: star symbol for post-PEX in the interactive explorer (renderer has no per-value symbol mapping; ✕ is used, ★ in static charts).
 Hierarchy (BUILDERS §4.5): aux blocks instantiate no cells from other hub components (transistor-level generators) → leaves, no `builds_on`/`uses`.
+
+## Round 3 (final verification) — remaining items
+- clk_div: chart-4 title/caption no longer quote the synthetic MC; `mc_cv` removed from the clk_div metrics/card metrics.
+- "All aux blocks" master table: headline / secondary / primary-value cells flagged amber where they sit on a placeholder, clip limit,
+  floor or sweep bound (36 rows), same rules as the family pages.
+- Explorer: delivered-card values that are placeholders / clip limits / "not measured" (e.g. ro t_start = 0) are not plotted;
+  duplicate quantities removed (t_rise/tr, C target, C LSB, R target, target current, accuracy-vs-current error); curated labels
+  (knobs as W_n, C_load …); Point kind uses `symbols` (◆ pre-PEX, ★ post-PEX, as the retired site) and `theme:ink` for pre-PEX (dark-mode safe).
+- MC run counts: chart-4 titles/captions and the MC histogram caption use the real run counts.
+- Phone width: shorter matrix preset label ("Headline (retired site)") and schematic gallery tab labels.
+- Pre→post shift tables: family metric labels, alias keys dropped.
+Renderer-side (not adapter): explorer power axes `minexponent` (prefix/decimal mix), design-page "Partial post-PEX" column,
+thumbnail vs physical dims, search over design summaries (generator notes are in `summary`, not added as long tag chips).

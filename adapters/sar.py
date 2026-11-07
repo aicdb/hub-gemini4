@@ -240,10 +240,11 @@ SUB_LABEL = {
 METRICS = [
     # key, label, unit, si, better, digits
     ("enob", "ENOB", "bit", False, "high", 4,
-     "Effective number of bits from the coherent 16/32-point SPICE FFT incl. the generator's analytical thermal-noise term; "
-     "short FFTs can give ENOB at or above N (accuracy about ±0.3 b). Not reported for loop-unrolled cards (synthesized codes)."),
+     "Effective number of bits from the coherent 16/32-point SPICE FFT incl. the generator's analytical thermal-noise term. "
+     "Optimistic: estimated from 8–16 independent non-integer codes. Not reported where it exceeds N (44 cards, physically impossible), "
+     "for loop-unrolled cards (synthesized codes) and for the two failed FFTs."),
     ("enob_loss", "ENOB shortfall", "bit", False, "low", 3,
-     "N − ENOB (nominal resolution minus SPICE ENOB). The generator's own feasibility criterion is ≤ 1.8 b; negative values are short-FFT artefacts."),
+     "N − ENOB (nominal resolution minus SPICE ENOB). The generator's own feasibility criterion is ≤ 1.8 b. Cards whose short FFT gives ENOB > N have no value."),
     ("sndr", "SNDR", "dB", False, "high", 4, "SPICE FFT SNDR incl. the analytical thermal-noise term."),
     ("sfdr", "SFDR", "dB", False, "high", 4, "Spurious-free dynamic range of the SPICE FFT."),
     ("thd", "THD", "dB", False, "low", 4, "Total harmonic distortion (HD2–HD5) of the SPICE FFT."),
@@ -358,10 +359,24 @@ def raw_fft(codes, n, m):
             "thd_db": R(10 * math.log10(max(harm, 1e-18) / max(ps, 1e-18)), 4), "spec_dbc": [R(x, 4) for x in spec]}
 
 
+def over_of(c, d):
+    """ENOB above the nominal resolution (SNDR above the ideal N-bit quantization limit) — physically impossible;
+    artefact of the 16/32-point FFT on non-integer reconstructed codes (see SHORT_FFT)"""
+    fp = d["spice"].get("fft_post") or {}
+    return fft_ok_of(d) and not synth_of(d) and num(fp.get("enob")) is not None and fp["enob"] > c["nbits"]
+
+
+SHORT_FFT = ("The SPICE FFT uses only 16 (high-speed cards) or 32 (ULP/UHS) coherent samples, i.e. 8–16 independent code "
+             "values for a symmetric sine, and the output codes are reconstructed from the extracted (non-integer) step weights, "
+             "so they are not quantized to whole LSBs. The error power is therefore estimated from very few samples and is not "
+             "bounded by the ideal LSB²/12 quantization floor; ENOB/SNDR come out optimistic, on 44 cards above the converter's "
+             "nominal resolution (SNDR > 6.02·N + 1.76 dB), which is physically impossible.")
+
+
 def partial_stage(c, d):
     fp = d["spice"]["fft_post"]
     fs_hz = fp["fs_msps"] * 1e6
-    ok = fft_ok_of(d) and not synth_of(d)
+    ok = fft_ok_of(d) and not synth_of(d) and not over_of(c, d)
     sndr = fp.get("sndr_db") if ok else None
     enob = fp.get("enob") if ok else None
     p_leak = None
@@ -399,6 +414,9 @@ def partial_stage(c, d):
     }
     nt = PARTIAL_NOTE + (f"; {fp.get('n_fft', 32)}-point coherent FFT — SNDR/ENOB/FoMs include an analytical thermal-noise "
                          "term (kT/C + comparator noise) added to the SPICE spectrum, and short FFTs can put ENOB at or above N (±0.3 b)")
+    if over_of(c, d):
+        nt += (f"; **ENOB/SNDR/FoMs not reported**: the {fp.get('n_fft')}-point FFT gives ENOB {fp.get('enob')} b above the "
+               f"nominal {c['nbits']} b (short-FFT artefact; published values in the parameters)")
     if synth_of(d):
         nt += ("; **dynamic metrics not reported**: the published calibrated codes of loop-unrolled cards are synthesized by the "
                "generator (fit to an ideal sine + hard-coded HD2/HD3), so 'ENOB (raw codes)' gives the uncalibrated SPICE result instead")
@@ -475,6 +493,12 @@ def detail_doc(c, d):
                            f"ENOB {fp.get('enob')} b, SNDR {fp.get('sndr_db')} dB. The hub reports no dynamic metrics.",
                            "bad", "FFT failed."))
     syn = synth_of(d)
+    over = over_of(c, d)
+    if over:
+        blocks.append(note(f"The {fp.get('n_fft')}-point SPICE FFT of this card gives ENOB {fp.get('enob')} b and SNDR {fp.get('sndr_db')} dB, above "
+                           f"the ideal {d['nbits']}-bit limit ({6.02 * d['nbits'] + 1.76:.2f} dB). " + SHORT_FFT +
+                           " The hub therefore reports no ENOB, SNDR or FoMs for this card; the published values stay visible in tab 2 and the parameters.",
+                           "warn", "ENOB above the nominal resolution."))
     raw = raw_fft(fp.get("codes_uncalibrated"), fp.get("n_fft"), fp.get("m_bin")) if syn else None
     if syn:
         blocks.append(note(
@@ -596,7 +620,9 @@ def detail_doc(c, d):
         t2.append(fft_chart(fp, "Published spectrum — synthesized by the generator's calibration fit (not SPICE)",
                             note_="Old-site spectrum, shown for completeness: the codes are an ideal sine plus a hard-coded HD2/HD3 term."))
     elif ok:
-        t2.append(fft_chart(fp, "Coherent transistor-level SPICE FFT spectrum (partial post-PEX)", stage="partial"))
+        t2.append(fft_chart(fp, "Coherent transistor-level SPICE FFT spectrum (partial post-PEX)", stage="partial",
+                            note_=(f"**ENOB/SNDR above the {d['nbits']}-bit limit — short-FFT artefact, not reported as a result.**" if over else
+                                   f"{fp.get('n_fft')}-point FFT: ENOB/SNDR are optimistic estimates (few, non-integer codes).")))
     else:
         t2.append(note("No FFT spectrum: the SPICE FFT run failed for this card.", "bad"))
     # pre / post / full summary table
@@ -608,14 +634,14 @@ def detail_doc(c, d):
            col("full", "Full-chip PEX — model estimate", type_="text", title="post − 0.18 dB SNDR, ×1.018 power; never simulated")]
     if sleep:
         hdr.append(col("rec", "Post-CDAC-PEX — recomputed from SPICE energy (hub)", type_="text"))
-    fail = " (synthesized)" if syn else "" if ok else " (fallback, FFT failed)"
+    fail = " (synthesized)" if syn else " (above N-bit limit)" if over else "" if ok else " (fallback, FFT failed)"
 
     def rowp(label, kp, unit="", d_=4, scale=1.0, siu=None, rec=None):
         f = (lambda v: si(mul(v, scale), siu, d_)) if siu else (lambda v: fx(v, unit, d_))
         sfx = fail if kp not in ("fs_msps", "power_uw") else ""
-        r = [label, f(fpre.get(kp)) + sfx, {"v": f(fp.get(kp)) + sfx, "s": "good" if ok and not syn else "warn"}, f(ffull.get(kp)) + sfx]
+        r = [label, f(fpre.get(kp)) + sfx, {"v": f(fp.get(kp)) + sfx, "s": "good" if ok and not syn and not over else "warn"}, f(ffull.get(kp)) + sfx]
         if sleep:
-            r.append(rec if rec is not None else "—")
+            r.append((rec + sfx if rec not in (None, "—") else rec) if rec is not None else "—")
         return r
     rec_fom_w = rec_fom_s = None
     if u and ok:
@@ -715,7 +741,8 @@ def detail_doc(c, d):
         if syn:
             rc = tt.get(f"cyc{i}_code")
             ex = cy.get("expected_code_nbits", cy.get("ideal_code"))
-            cyc[-1] += [rc, {"v": R(rc - ex, 4) if num(rc) is not None and num(ex) is not None else None, "s": "bad"}]
+            re_ = R(rc - ex, 4) if num(rc) is not None and num(ex) is not None else None
+            cyc[-1] += [rc, {"v": re_, "s": "good" if re_ is not None and abs(re_) <= 1 else "warn"}]
     cyc_cols = [col("c", "Cycle", type_="text"), col("v", "Differential input (VIP − VIN)", "V", digits=5),
                 col("n", "Input", "% FS", digits=3), col("b", "Redundant output bit stream", type_="text"),
                 col("m", "Measured code" + (" (post-fit)" if syn else ""), "LSB", digits=6), col("e", "Expected code", "LSB", digits=6),
@@ -837,17 +864,17 @@ def detail_doc(c, d):
                      col("rf", "Switching failure", type_="text", group="Redundant CDAC"),
                      col("be", "ENOB", "b", digits=4, group="Binary CDAC"), col("berr", "Max error", "LSB", digits=4, group="Binary CDAC"),
                      col("bf", "Switching failure", type_="text", group="Binary CDAC"), col("fr", "Final residue", "LSB", digits=3),
+                     col("ru", "Red. ENOB (uncal.)", "b", digits=4), col("rmc", "Red. missing codes", digits=3),
                      col("l", "Injected perturbation", type_="text", wrap=True), col("d", "Description", type_="text", wrap=True),
                      col("s", "σ mult.", digits=3), col("bp", "ΔC_B,p", "%", digits=3), col("bn", "ΔC_B,n", "%", digits=3),
-                     col("at", "Atten. (SPICE)", digits=5), col("cmb", "CM bounce", "mV", digits=4),
-                     col("ru", "Redundant ENOB (uncal.)", "b", digits=4), col("rmc", "Redundant missing codes", digits=3)],
+                     col("at", "Atten. (SPICE)", digits=5), col("cmb", "CM bounce", "mV", digits=4)],
                     [[co.get("corner_id"), co.get("redundant_enob"), co.get("max_code_err_lsb"),
                       {"v": "FAIL" if co.get("switching_failure") else "0 fail (pass)", "s": "bad" if co.get("switching_failure") else "good"},
                       co.get("binary_enob"), co.get("binary_max_err_lsb"),
                       {"v": "FAIL" if co.get("binary_switching_failure") else "pass", "s": "bad" if co.get("binary_switching_failure") else "good"},
-                      co.get("final_residue_lsb"), co.get("label"), co.get("description"), co.get("sigma_mult"), mul(co.get("bridge_rel_p"), 100),
-                      mul(co.get("bridge_rel_n"), 100), co.get("atten_spice"), co.get("cm_bounce_mv"),
-                      (co.get("redundant_uncal") or {}).get("enob"), (co.get("redundant_cal") or {}).get("missing_codes")] for co in corners],
+                      co.get("final_residue_lsb"), (co.get("redundant_uncal") or {}).get("enob"), (co.get("redundant_cal") or {}).get("missing_codes"),
+                      co.get("label"), co.get("description"), co.get("sigma_mult"), mul(co.get("bridge_rel_p"), 100),
+                      mul(co.get("bridge_rel_n"), 100), co.get("atten_spice"), co.get("cm_bounce_mv")] for co in corners],
                     caption=f"Worst redundant ENOB **{pv.get('worst_redundant_enob')} b** vs. binary under variance **{pv.get('worst_binary_enob')} b**. "
                             f"Record of macro `{pv.get('ckey')}` (SPICE run with card `{pv_src}`).", search=False)))
     vt = pv.get("traces") or {}
@@ -882,8 +909,8 @@ def detail_doc(c, d):
             line("Uncalibrated binary bridge-split SAR", bs.get("cb_delta_pct"), bs.get("enob_binary_uncal"), GRAY, "dash")],
             "Bridge capacitor variation ΔC_B / C_B (%)", "ENOB (bits)", height=300, caption=beh),
         table("Per-step sub-binary correction window",
-              [col("s", "Bit step", type_="text"), col("w", "Step weight", digits=5), col("r", "Sum of remaining lower weights", digits=5),
-               col("c", "Correction range ±", "LSB", digits=5), col("p", "Correction range ±", "%", digits=3)],
+              [col("s", "Step", type_="text"), col("w", "Weight", digits=5), col("r", "Remaining sum", digits=5, title="Sum of the remaining lower weights"),
+               col("c", "Correction ±", "LSB", digits=5), col("p", "Correction ±", "%", digits=3)],
               red_rows, search=False, csv=False, max_height=330),
     ], cols=2))
     tabs.append({"label": "4 · Variation resilience (redundancy)", "blocks": t4})
@@ -1089,8 +1116,8 @@ for c in order:
         "C_top single-ended (fF)": c.get("c_top_ff"),
         "Comparator (sa-gen)": c["comp_key"],
         "S/H switch (switch-gen)": c["sw_key"],
-        "VCM op-amp (opa-gen)": c["opa_vcm_key"],
-        "Input driver op-amp (opa-gen)": c["opa_in_key"],
+        "VCM op-amp (opa-gen)": c["opa_vcm_key"].replace("/", " / "),
+        "Input driver op-amp (opa-gen)": c["opa_in_key"].replace("/", " / "),
         "Sample-rate tier": c.get("tier_label"),
         "FFT": f"{fp.get('n_fft')}-point coherent, f_in = {si(fp.get('fin_mhz', 0) * 1e6, 'Hz')}",
         "Thermal-noise ENOB ceiling (analytical)": (d.get("budget") or {}).get("enob_thermal_ceiling"),
@@ -1111,6 +1138,9 @@ for c in order:
         params["Published ENOB / FoM (fallback, FFT failed)"] = f"{c.get('enob_post')} b / {c.get('fom_walden_fj')} fJ"
     if fp.get("enob_noiseless") is not None:
         params["SPICE-only ENOB / SNDR (without the added thermal-noise term)"] = f"{fp.get('enob_noiseless')} b / {fp.get('sndr_noiseless_db')} dB"
+    if over_of(c, d):
+        params["Published ENOB / SNDR / Walden / Schreier FoM (exceed the N-bit limit; short-FFT artefact)"] = (
+            f"{fp.get('enob')} b / {fp.get('sndr_db')} dB / {fp.get('fom_walden_fj')} fJ / {fp.get('fom_schreier_db')} dB")
     if synth_of(d):
         params["Published ENOB / SNDR / Walden FoM (generator-synthesized, not SPICE)"] = (
             f"{fp.get('enob')} b / {fp.get('sndr_db')} dB / {fp.get('fom_walden_fj')} fJ")
@@ -1196,7 +1226,7 @@ overview = {
 
 | item | how it was obtained | hub stage |
 |---|---|---|
-| ENOB, SNDR, SFDR, THD, SNR, total power, energy, FoMs | transistor-level SPICE (ngspice) with the Magic-extracted CDAC and the sibling repos' extracted switch / comparator / VCM op-amp; SAR logic as standard-cell schematic; no top-level routing extraction | **Partial post-PEX** (`results.partial`) |
+| ENOB, SNDR, SFDR, THD, total power, energy, FoMs (no ENOB/SNDR/FoMs for the 12 loop-unrolled cards, the 2 failed FFTs and the 44 cards whose short FFT exceeds N bits) | transistor-level SPICE (ngspice) with the Magic-extracted CDAC and the sibling repos' extracted switch / comparator / VCM op-amp; SAR logic as standard-cell schematic; no top-level routing extraction | **Partial post-PEX** (`results.partial`) |
 | "Pre-layout" and "full-chip PEX" columns of the old site | post value + fixed offsets (pre: +0.12–0.16 dB SNDR, ×0.96–0.97 power; full: −0.18 dB SNDR, ×1.018 power) | model estimate — shown labelled on each design page, never as a result |
 | DNL / INL | static analysis of the extracted CDAC step weights | partial |
 | injected-variance switching-failure check (5 corners) | SPICE on the extracted CDAC with injected capacitor variance | partial (drives *robust*) |
@@ -1212,7 +1242,8 @@ overview = {
 - **PVT:** the corner PASS flag is hard-coded true and only 6 anchor cards simulate non-TT corners, so the hub does not report a PVT pass count.
 - **Annotated gm/Id "simulated" values** are target × fixed factors, not simulation outputs.
 - **Loop-unrolled cards (12):** the published FFT codes are synthesized by the generator's calibration fit (an exact fit to an ideal sine plus a hard-coded HD2/HD3 term) and the 3-cycle table is gain/offset-fitted. The hub reports no ENOB/SNDR/FoM for them; *ENOB (raw codes)* gives the uncalibrated SPICE result (3.4–8 b).
-- **Noise model in ENOB:** SNDR/ENOB/FoMs add an analytical thermal-noise term (kT/C + comparator noise) to the 16/32-point SPICE FFT; short FFTs can give ENOB at or above N (±0.3 b). The SPICE-only values of the high-speed cards are listed in their parameters. The old site's SNR column is not ported.
+- **Noise model in ENOB:** SNDR/ENOB/FoMs add an analytical thermal-noise term (kT/C + comparator noise) to the SPICE FFT; the SPICE-only values of the high-speed cards are listed in their parameters. (An SNR metric the hub had added earlier was removed.)
+- **ENOB above N on 44 cards:** """ + SHORT_FFT + """ The hub does not report ENOB, SNDR or FoMs for those 44 cards (values kept, labelled, on their pages); the remaining ENOB values are optimistic for the same reason.
 - **CDAC group weights:** the old site paired post-PEX step weights with capacitor groups by row index; the hub matches them by step.""", "warn", "Data caveats."),
     ],
 }
@@ -1314,8 +1345,8 @@ def scat(name, xs, ys, ids=None, color=None, size=5, opacity=0.8, text=None):
 cl = SWEEP.get("cloud_points") or []
 deliv = [(c["card_id"], hub_vals[c["card_id"]]) for c in order]
 missing_enob = [cid for cid, h in deliv if h.get("enob") is None]
-miss_txt = ("Not plotted (no hub ENOB): the 12 loop-unrolled cards (synthesized FFT codes) and the two failed-FFT cards "
-            "`sar_12b_3v3_ulp100k_mom`, `sar_12b_3v3_ulp1m_mom`.")
+miss_txt = ("Not plotted where ENOB is needed (no hub ENOB): the 12 loop-unrolled cards (synthesized FFT codes), the two failed-FFT cards "
+            "`sar_12b_3v3_ulp100k_mom`, `sar_12b_3v3_ulp1m_mom`, and the 44 cards whose 16/32-point FFT gives ENOB above N (short-FFT artefact).")
 VDDS = (1.8, 3.3)
 
 
@@ -1385,10 +1416,10 @@ asum = SWEEP.get("arch_summary") or {}
 pareto_rows = []
 for g in sorted(SWEEP.get("pareto_by_group") or {}):
     for p in SWEEP["pareto_by_group"][g]:
-        pareto_rows.append([g, p["nbits"], p["vdd"], p["arch"], p["fs_tier"], p["cap_type"].upper(),
-                            R(mul(p.get("cu_ff"), 1e-15)), p.get("comp"), p.get("sw"), p.get("opa"), p.get("enob"), p.get("sndr_db"),
-                            R(p["fs_msps"] * 1e6), R(mul(p.get("power_uw"), 1e-6)), R(mul(p.get("p_dyn_uw"), 1e-6)), R(mul(p.get("p_leak_nw"), 1e-9)),
-                            R(mul(p.get("e_dyn_pj"), 1e-12)), p.get("fom_walden_fj"), p.get("fom_schreier_db"), p.get("area_mm2")])
+        pareto_rows.append([g, p["vdd"], p["arch"], p.get("enob"), p.get("fom_walden_fj"), R(p["fs_msps"] * 1e6), R(mul(p.get("power_uw"), 1e-6)),
+                            p.get("sndr_db"), p.get("fom_schreier_db"), p["cap_type"].upper(), R(mul(p.get("cu_ff"), 1e-15)),
+                            R(mul(p.get("p_dyn_uw"), 1e-6)), R(mul(p.get("p_leak_nw"), 1e-9)), R(mul(p.get("e_dyn_pj"), 1e-12)), p.get("area_mm2"),
+                            p.get("comp"), p.get("sw"), p.get("opa"), p["nbits"], p["fs_tier"]])
 hs_feas = (rs.get("hs") or {}).get("count_feasible")
 
 
@@ -1463,12 +1494,12 @@ explore = {
               caption="sweep.py accumulates `arch_summary` only for points in the `hs` regime (the old site titled it 'across 13,063,680 evaluated "
                       "combinations'); the feasible counts add up to the high-speed regime's count."),
         table("Pareto-front points per group (sweep.json pareto_by_group)",
-              [col("g", "Group", type_="text"), col("nb", "Bits", digits=2), col("vdd", "V_DD", "V", digits=2), col("a", "Arch", type_="text"),
-               col("t", "Regime", type_="text"), col("c", "Cap", type_="text"), col("cu", "C_u", "F", True), col("cmp", "Comparator", type_="text"),
-               col("sw", "Switch", type_="text"), col("op", "Op-amp", type_="text"), col("e", "ENOB", "b", digits=3), col("s", "SNDR", "dB", digits=4),
-               col("fs", "f_s", "S/s", True), col("p", "Power", "W", True), col("pd", "P_dyn", "W", True), col("pl", "P_leak", "W", True),
-               col("ed", "E_dyn", "J", True), col("fw", "Walden FoM", "fJ/step", digits=3), col("fsc", "Schreier FoM", "dB", digits=4),
-               col("ar", "Area", "mm²", digits=3)],
+              [col("g", "Group", type_="text"), col("vdd", "V_DD", "V", digits=2), col("a", "Arch", type_="text"),
+               col("e", "ENOB", "b", digits=3), col("fw", "Walden FoM", "fJ/step", digits=3), col("fs", "f_s", "S/s", True), col("p", "Power", "W", True),
+               col("s", "SNDR", "dB", digits=4), col("fsc", "Schreier FoM", "dB", digits=4), col("c", "Cap", type_="text"), col("cu", "C_u", "F", True),
+               col("pd", "P_dyn", "W", True), col("pl", "P_leak", "W", True), col("ed", "E_dyn", "J", True), col("ar", "Area", "mm²", digits=3),
+               col("cmp", "Comparator", type_="text"), col("sw", "Switch", type_="text"), col("op", "Op-amp", type_="text"),
+               col("nb", "Bits", digits=2), col("t", "Regime", type_="text")],
               pareto_rows, page_size=200, caption="Not displayed by the old site (it is in docs/data/sweep.json). Follows the global supply filter; "
                                                   "the explorer preset *Sweep Pareto fronts* plots these points per group."),
     ],
@@ -1481,11 +1512,12 @@ for k in sorted(MACROS, key=lambda k: (MACROS[k]["nbits"], MACROS[k]["cap_type"]
     m = MACROS[k]
     src = PV_BY_MACRO.get(k, (None, {}))[0]
     users = sorted(cid for cid, c in CARDS.items() if c["cdac_key"] == k)
-    mac_rows.append([f"`{k}`", m["nbits"], m["cap_type"].upper(), m["scheme"].upper(), mul(m.get("cu_ff"), 1e-15), mul(m.get("cb_ff"), 1e-15),
+    mac_rows.append([f"`{k}`", {"v": "5/5 pass" if m.get("all_redundant_corners_pass") else "CHECK", "s": "good" if m.get("all_redundant_corners_pass") else "bad",
+                                 "title": "5 injected-variance corners, 0 redundant switching failures" if m.get("all_redundant_corners_pass") else None},
                      m.get("nom_enob"), m.get("worst_redundant_enob"), {"v": m.get("worst_binary_enob"), "s": "bad"},
                      m.get("max_redundant_err_lsb"), {"v": m.get("max_binary_err_lsb"), "s": "bad"},
-                     {"v": "5/5 PASS (0 switching failures)" if m.get("all_redundant_corners_pass") else "CHECK", "s": "good" if m.get("all_redundant_corners_pass") else "bad"},
-                     len(users), f"[`{src}`](#/sar/{src}?t.pane=3)" if src else "—"])
+                     len(users), f"[record](#/sar/{src}?t.pane=3)" if src else "—",
+                     f"{m['nbits']} b {m['cap_type'].upper()} {m['scheme'].upper()}", mul(m.get("cu_ff"), 1e-15), mul(m.get("cb_ff"), 1e-15)])
 mac_tabs = []
 for nb in (8, 10, 12):
     tr_ = []
@@ -1550,11 +1582,12 @@ resil = {
               "switching failures.** Settling, comparator-offset and bridge-variation sweeps are behavioural-model results."),
     "blocks": [
         table(f"Post-PEX artificially injected CDAC variance & switching-failure verification (all {n_mac} extracted macros)",
-              [col("k", "Extracted CDAC macro", type_="text", md=True), col("nb", "Bits", digits=2), col("c", "Cap", type_="text"), col("s", "Scheme", type_="text"),
-               col("cu", "Unit C_u", "F", True), col("cb", "Bridge C_B", "F", True), col("ne", "Nominal post-PEX ENOB", "b", digits=4),
-               col("wr", "Worst 4σ redundant ENOB", "b", digits=4, better="high"), col("wb", "Worst binary ENOB (switching fail)", "b", digits=4),
-               col("er", "Max error redundant", "LSB", digits=3), col("eb", "Max error binary", "LSB", digits=4),
-               col("st", "5-corner SPICE status", type_="text", wrap=True), col("u", "Cards using it", digits=3), col("src", "Detailed record from", type_="text", md=True)],
+              [col("k", "CDAC macro", type_="text", md=True), col("st", "5-corner SPICE", type_="text"), col("ne", "Nominal ENOB", "b", digits=4),
+               col("wr", "Worst redundant", "b", digits=4, better="high", group="ENOB under 4σ variance"),
+               col("wb", "Worst binary", "b", digits=4, group="ENOB under 4σ variance"),
+               col("er", "Redundant", "LSB", digits=3, group="Max error"), col("eb", "Binary", "LSB", digits=4, group="Max error"),
+               col("u", "Cards", digits=3), col("src", "Corner table", type_="text", md=True),
+               col("sp", "Spec", type_="text"), col("cu", "C_u", "F", True), col("cb", "C_B", "F", True)],
               mac_rows, search=False,
               caption="From docs/data/index.json `postpex_variance_macros`. 48 card records in docs point at the `*_uhs` macro instead of their own; the hub "
                       "links every card to its own macro."),
@@ -1657,7 +1690,8 @@ for c in order:
                      "opai": mdlink("opa", c["opa_in_key"]),
                      "enob_p": {"v": c["enob_post"], "s": "warn" if (not fft_ok_of(DATA[cid]) or synth_of(DATA[cid])) else None,
                                 "title": "fallback value — FFT failed" if not fft_ok_of(DATA[cid]) else "synthesized by the generator's calibration fit" if synth_of(DATA[cid]) else None},
-                     "fom_p": {"v": c["fom_walden_fj"], "s": "warn" if pub_bad else None, "title": "uses placeholder energy / failed FFT" if pub_bad else None},
+                     "fom_p": {"v": c["fom_walden_fj"], "s": "warn" if pub_bad else None, "title": ("synthesized FFT codes (loop-unrolled)" if synth_of(DATA[cid]) else "FFT failed — fallback ENOB" if not fft_ok_of(DATA[cid])
+                                                                             else "uses the ULP placeholder energy") if pub_bad else None},
                      "enob_h": h["enob"], "fom_h": h["fom_w"], "enob_r": h.get("enob_raw")})
 reuse = []
 for kind, comp_id, key in (("Comparator", "sa", "comp_key"), ("S/H switch", "switch", "sw_key"), ("VCM op-amp", "opa", "opa_vcm_key"), ("Input driver op-amp", "opa", "opa_in_key")):
@@ -1738,7 +1772,7 @@ comp = {
         "tier": {"label": "Sample-rate tier", "values": [{"id": a, "label": l} for a, l in TIERS]},
         "cap": {"label": "CDAC capacitor", "values": [{"id": a, "label": l} for a, l in CAPS]},
     },
-    "matrix": {"rows": ["topology"], "cols": ["nbits", "cap"], "metrics": ["enob", "fom_w", "power"],
+    "matrix": {"rows": ["topology", "cap"], "cols": ["nbits"], "metrics": ["enob", "fom_w", "power"],
                "status": {"metric": "enob_loss", "good": 1.8, "warn": 3},
                "presets": [{"label": "Power & sample rate", "metrics": ["power", "fs", "e_conv"]},
                            {"label": "SNDR, SFDR & THD", "metrics": ["sndr", "sfdr", "thd"]},
@@ -1748,7 +1782,7 @@ comp = {
                            {"label": "ULP power & sleep leakage", "metrics": ["power", "p_leak", "e_conv"]},
                            {"label": "Loop-unrolled: raw-code ENOB", "metrics": ["enob_raw", "power", "fs"]},
                            {"label": "Area", "metrics": ["area", "enob"]}]},
-    "card_metrics": ["enob", "sndr", "fom_w", "fs", "power", "p_leak", "sfdr", "e_conv", "enob_raw", "enob_var", "fom_s", "area"],
+    "card_metrics": ["enob", "sndr", "fom_w", "fs", "power", "p_leak", "sfdr", "e_conv", "enob_var", "fom_s", "area"],
     "builds_on": [{"id": "sa", "role": "comparator"},
                   {"id": "switch", "role": "S/H switch"},
                   {"id": "opa", "role": "VCM buffer"}, {"id": "opa", "role": "input driver"}],

@@ -406,14 +406,14 @@ class Ctx:
             shapes, ann = [], []
             if m.get("tpd_mean_ps") is not None:
                 shapes.append({"type": "line", "x0": m["tpd_mean_ps"], "x1": m["tpd_mean_ps"], "yref": "paper", "y0": 0, "y1": 1,
-                               "line": {"color": "#1a7f37", "dash": "dash", "width": 1.8}})
+                               "line": {"color": "theme:good", "dash": "dash", "width": 1.8}})
                 ann.append({"x": m["tpd_mean_ps"], "yref": "paper", "y": 0.99, "yanchor": "top", "xanchor": "left", "showarrow": False,
-                            "text": f"µ={fx(m['tpd_mean_ps'], 0)}ps", "font": {"color": "#1a7f37", "size": 11}})
+                            "text": f"µ={fx(m['tpd_mean_ps'], 0)}ps", "font": {"color": "theme:good", "size": 11}})
             if m.get("tpd_3sigma_ps") is not None:
                 shapes.append({"type": "line", "x0": m["tpd_3sigma_ps"], "x1": m["tpd_3sigma_ps"], "yref": "paper", "y0": 0,
-                               "y1": 1, "line": {"color": "#9a6700", "dash": "dash", "width": 1.8}})
+                               "y1": 1, "line": {"color": "theme:warn", "dash": "dash", "width": 1.8}})
                 ann.append({"x": m["tpd_3sigma_ps"], "yref": "paper", "y": 0.9, "xanchor": "right", "showarrow": False,
-                            "text": f"µ+3σ = {fx(m['tpd_3sigma_ps'])} ps", "font": {"color": "#9a6700", "size": 11}})
+                            "text": f"µ+3σ = {fx(m['tpd_3sigma_ps'])} ps", "font": {"color": "theme:warn", "size": 11}})
             hist = {"data": [{"type": "bar", "x": xs, "y": bins, "width": w * 0.85, "text": [str(b) if b else "" for b in bins],
                               "textposition": "outside", "marker": {"color": "#e3eefb", "line": {"color": "#2a78d6", "width": 1}},
                               "name": "MC runs",
@@ -701,6 +701,12 @@ def stage_result(c: Ctx, st, tid, dom, area):
         if nom and nom.get("pass") and (nom.get("e_dyn_fj") == 0):
             notes.append("Edyn reported as 0 fJ by the repo's energy extraction (static current dominates the supply integral)")
     m["area"] = area
+    if m.get("swing") is not None and m["swing"] < 0:
+        notes.append(f"output never toggles (raw swing {fx(m['swing'], 2)} %, not reported)")
+        m["swing"] = None
+    if m.get("mc_swing3s") is not None and m["mc_swing3s"] < 0:
+        notes.append(f"Monte Carlo µ−3σ swing is negative ({fx(m['mc_swing3s'], 1)} %, far below the 85 % limit; not reported)")
+        m["mc_swing3s"] = None
     res = {"metrics": {k: m.get(k) for k, *_ in METRICS if m.get(k) is not None}}
     if summ:
         res["pvt"] = {"pass": summ["n_pass"], "total": summ["n_total"]}

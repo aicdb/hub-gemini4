@@ -178,8 +178,9 @@ P_RATIO = (_PR[0], _PR[len(_PR) // 2], _PR[-1])
 # old-site verification views; both PEX views are *partial* layout coverage on the hub (see STAGE_NOTES)
 VIEWS = ("pre", "post", "full")
 VIEW_LABEL = {"pre": "1. Pre-Layout", "post": "2. Post-Cap-PEX", "full": "3. Full-Chip PEX"}
-VIEW_TAB = {"full": "3. Full-Chip PEX view (assembled: sub-block PEX + cap PEX + routing C)",
-            "post": "2. Post-Cap-PEX view (cap array only)"}
+VIEW_TAB = {"full": "3. Full-Chip PEX (assembled)", "post": "2. Post-Cap-PEX (cap only)"}
+VIEW_TABS_NOTE = ("Old verification views: **3. Full-Chip PEX** = sibling sub-block PEX netlists + cap-array PEX + extracted routing "
+                  "capacitances (compact sdm2bin controller); **2. Post-Cap-PEX** = cap-array PEX only, sub-blocks schematic.")
 
 MODEL_NOTE = (
     "**Model figures.** ENOB, SNDR, SNR, SFDR, THD, DR, MSA, power and FoMs come from the generator's *analytical* "
@@ -259,7 +260,7 @@ def staged(alt, make, title=None, cols=1, caption=None, intro=None, span=None):
         b0 = section(title, pre, cols=cols, stage="pre", alt=alt)
         if text:
             b0["intro"] = text
-    b1 = {"type": "tabs", "id": "view", "stage": "partial", "alt": alt,
+    b1 = {"type": "tabs", "id": f"view_{alt}", "stage": "partial", "alt": alt, "caption": VIEW_TABS_NOTE,
           "tabs": [{"label": VIEW_TAB[v], "key": v, "blocks": pack(v)} for v in ("full", "post")]}
     if title:
         b1["title"] = title
@@ -514,21 +515,21 @@ def gmid_table(d):
         o = co.get(k)
         if not o:
             continue
-        rows.append([f"{role} gm/I<sub>D</sub> annotation", opa_link(o["key"]), f"{o['gmid_target']}", fx(o["gmid_sim"]),
-                     "—", f"{o['inversion']} inversion", f"I<sub>ref</sub> = {fx(o['iref_ua'], 4)} µA", o.get("arch_title", "")])
+        rows.append([role, opa_link(o["key"]), f"{o['gmid_target']} → {fx(o['gmid_sim'])}",
+                     f"{o['inversion']} inversion · I<sub>ref</sub> = {fx(o['iref_ua'], 4)} µA", o.get("arch_title", "")])
     cp = co["comp"]
-    rows.append(["Quantizer latch gm/I<sub>D</sub> annotation", sa_link(cp["key"]), f"{cp['gmid_target']}",
-                 fx((cp.get("gmid_sim") or {}).get("n")), fx((cp.get("gmid_sim_pex") or {}).get("n")),
-                 f"{cp.get('idd_band')}", f"{cp['arch'].upper()} dynamic latch, reset {cp.get('reset_out')}", cp.get("subckt", "")])
+    rows.append(["Quantizer latch", sa_link(cp["key"]),
+                 f"{cp['gmid_target']} → {fx((cp.get('gmid_sim') or {}).get('n'))} (PEX {fx((cp.get('gmid_sim_pex') or {}).get('n'))})",
+                 f"{cp.get('idd_band')} · {cp['arch'].upper()} dynamic latch, reset {cp.get('reset_out')}", cp.get("subckt", "")])
     si, ss = co["sw_in"], co["sw_sc"]
-    rows.append(["SC sampling & summing switches", f"{sw_link(si['key'])} / {sw_link(ss['key'])}", "—", "—", "—",
-                 f"{si['iclass']} / {ss['iclass']}", f"Input: `{si['topo']}` · Summing: `{ss['topo']}`",
+    rows.append(["SC sampling & summing switches", f"{sw_link(si['key'])}<br>{sw_link(ss['key'])}", "—",
+                 f"{si['iclass']} / {ss['iclass']} · input `{si['topo']}`, summing `{ss['topo']}`",
                  f"{si.get('name', '')}; {ss.get('name', '')}"])
     return table("gm/I<sub>D</sub> annotation summary (targets & simulated operating points)",
-                 [col("b", "Block", type="text", md=True), col("k", "Library key", type="text", md=True),
-                  col("t", "gm/I<sub>D</sub> target (V⁻¹)", type="text"), col("s", "Simulated (V⁻¹)", type="text"),
-                  col("sp", "Simulated, PEX (V⁻¹)", type="text"), col("inv", "Regime / class", type="text"),
-                  col("x", "Bias / topology", type="text", md=True, wrap=True), col("n", "Design", type="text", wrap=True)], rows, search=False,
+                 [col("b", "Block", type="text", wrap=True), col("k", "Library key", type="text", md=True, wrap=True),
+                  col("t", "gm/I<sub>D</sub> target → simulated (V⁻¹)", type="text", wrap=True),
+                  col("x", "Regime / bias / topology", type="text", md=True, wrap=True), col("n", "Design", type="text", wrap=True)],
+                 rows, search=False, csv=False,
                  caption="Old site: “Target → Post-PEX Simulated”. The op-amp records carry a single `gmid_sim` value "
                          "(equal to the target for all cards); the comparator carries schematic and PEX values.")
 
@@ -1096,14 +1097,14 @@ MASTER_COLS = [col("id", "Card ID", type="design"), col("res", "Res", type="text
 def model_matrix(v):
     """the old coverage matrix (VDD × architecture rows, resolution × cap columns) with its model cell contents"""
     by = {c["card_id"]: c for c in CARDS}
-    cols = [col("row", "V<sub>DD</sub> · loop architecture", type="text", md=True, wrap=True)]
     combos = [(n, t) for n in NBITS for t in IDX["cap_types"]]
-    cols += [col(f"c{n}{t}", f"{n}b · {t.upper()}<br><small>OSR {RES_SPECS[str(n)]['osr']}</small>", type="text", md=True, wrap=True)
+    cols = [col("row", "V<sub>DD</sub> · arch", type="text", md=True), col("vdd", "V<sub>DD</sub>", unit="V", digits=2)]
+    cols += [col(f"c{n}{t}", f"{n}b {t.upper()}", type="text", md=True, title=f"{n}-bit, OSR {RES_SPECS[str(n)]['osr']}, {t.upper()}")
              for n, t in combos]
-    rows = []
+    rows, nclean = [], 0
     for vt, vdd in (("1v8", 1.8), ("3v3", 3.3)):
         for a in ARCH_ORDER:
-            r = {"row": f"**{vdd} V** · {ARCH_ROW[a]}", "vdd": vdd}
+            r = {"row": f"**{vdd} V**<br>{ARCH_SPECS[a]['short']}", "vdd": vdd}
             for n, t in combos:
                 cid = f"sdm_{n}b_{vt}_{t}_{a}"
                 c = by.get(cid)
@@ -1111,14 +1112,17 @@ def model_matrix(v):
                     r[f"c{n}{t}"] = "—"
                     continue
                 m = c["metrics"][v]
-                r[f"c{n}{t}"] = (f"[**{m['enob']:.2f} b**](#/sdm/{cid}) · {m['sndr_db']:.1f} dB<br>{m['power_uw']:.1f} µW · "
-                                 f"{m['fom_schreier_db']:.1f} dB<br><small>PVT ≥ {c['variation']['pvt_min_enob']:.2f} b · DRC/LVS "
-                                 f"{'✓' if DATA[cid]['layout'].get('drc_clean') and DATA[cid]['layout'].get('lvs_match') else '✗'}</small>")
+                lay = DATA[cid]["layout"]
+                ok = lay.get("drc_clean") and lay.get("lvs_match")
+                nclean += bool(ok)
+                r[f"c{n}{t}"] = (f"[**{m['enob']:.2f} b**](#/sdm/{cid})<br>{m['sndr_db']:.1f} dB<br>{m['power_uw']:.1f} µW<br>"
+                                 f"{m['fom_schreier_db']:.1f} dB<br><small>PVT ≥ {c['variation']['pvt_min_enob']:.2f}{'' if ok else ' · DRC/LVS ✗'}</small>")
             rows.append(r)
-    cols.insert(1, col("vdd", "V<sub>DD</sub>", unit="V", digits=2))
     return table(f"Coverage matrix — model figures, view {VIEW_LABEL[v]}", cols, rows, search=False, csv=True,
-                 caption="Old cell contents: ENOB (model) · SNDR / power · FoM<sub>S</sub> / worst PVT ENOB (full-chip model view) · "
-                         "DRC/LVS. Click an ENOB value to open the card.")
+                 caption="Old cell contents, top to bottom: ENOB · SNDR · power · FoM<sub>S</sub> (all model, this view) · worst PVT ENOB "
+                         f"(full-chip model view). DRC = 0 and LVS match for {nclean}/{len(CARDS)} cards (only failures would be marked). "
+                         "Columns: resolution (OSR 32/64/128/512/1024/2048 for 8/10/12/16/18/20 b) × capacitor. Click an ENOB value to "
+                         "open the card.")
 
 
 def comp_summary_rows():
@@ -1127,12 +1131,12 @@ def comp_summary_rows():
         cs = c["components_summary"]
         var = c["variation"]
         rows.append({"id": c["card_id"], "vdd": c["vdd"],
-                     "o1": f"{cs['opa1_arch']} (`gm/Id {cs['opa1_gmid_target']}→{cs['opa1_gmid_sim']}`) {opa_link(cs['opa1_key'])}",
-                     "o2": f"{cs['opa2_arch']} (`gm/Id {cs['opa2_gmid_target']}→{cs['opa2_gmid_sim']}`) {opa_link(cs['opa2_key'])}",
-                     "ov": opa_link(cs.get("opa_vcm_key")),
-                     "q": f"{sa_link(cs['comp_key'])} (`gm/Id {cs['comp_gmid_target']}`)",
-                     "sw": f"{cs['sw_in_topo']}: {sw_link(cs['sw_in_key'])} + {sw_link(cs.get('sw_sc_key'))}",
-                     "dig": f"`{c['dig_key']}`", "capm": f"`{c['cap_key']}`",
+                     "opa": f"S1: {opa_link(cs['opa1_key'])} ({cs['opa1_arch']}, gm/Id {cs['opa1_gmid_target']}→{cs['opa1_gmid_sim']})<br>"
+                            f"S2: {opa_link(cs['opa2_key'])} ({cs['opa2_arch']}, gm/Id {cs['opa2_gmid_target']}→{cs['opa2_gmid_sim']})<br>"
+                            f"VCM: {opa_link(cs.get('opa_vcm_key'))}",
+                     "q": f"{sa_link(cs['comp_key'])}<br>gm/Id {cs['comp_gmid_target']}",
+                     "sw": f"{cs['sw_in_topo']}: {sw_link(cs['sw_in_key'])}<br>SC: {sw_link(cs.get('sw_sc_key'))}",
+                     "dig": f"{mesc(c['dig_key'])}<br>{mesc(c['cap_key'])}",
                      "pvt": var["pvt_min_enob"], "mcs": var["mc_enob_std"], "_design": c["card_id"]})
     return rows
 
@@ -1162,11 +1166,13 @@ summary_page = {"intro": "Old-site landing view of the **Switched-Capacitor ΣΔ
                 + [
                     table("Deliverable card component summary (old card-grid contents)",
                           [col("id", "Card", type="design"), col("vdd", "V<sub>DD</sub>", unit="V", digits=2),
-                           col("o1", "Stage-1 OPA", type="text", md=True, wrap=True), col("o2", "Stage-2 OPA", type="text", md=True, wrap=True),
-                           col("ov", "VCM OPA", type="text", md=True, wrap=True), col("q", "Quantizer", type="text", md=True, wrap=True),
-                           col("sw", "Switches", type="text", md=True, wrap=True), col("dig", "Decimator", type="text", md=True, wrap=True),
-                           col("capm", "Cap macro", type="text", md=True, wrap=True), col("pvt", "9-PVT min (model)", unit="bits", digits=4),
-                           col("mcs", "MC σ (model)", unit="bits", digits=3)], comp_summary_rows(), page_size=100,
+                           col("opa", "Op-amps (stage 1 / stage 2 / VCM)", type="text", md=True, wrap=True),
+                           col("q", "Quantizer", type="text", md=True),
+                           col("sw", "Switches (input / SC)", type="text", md=True),
+                           col("dig", "Decimator / cap macro", type="text", md=True),
+                           col("pvt", "PVT min", unit="b", digits=4, title="Worst 9-corner PVT ENOB (full-chip model view)"),
+                           col("mcs", "MC σ", unit="b", digits=3, title="Monte Carlo ENOB σ (full-chip model view)")],
+                          comp_summary_rows(), page_size=100,
                           caption="Click any card to open the Deep-Dive Inspector (Schematic + Simulation + Layout) — on the hub, the "
                                   "design page. Op-amp / comparator / switch keys link to the reused designs in the sibling tabs."),
                     kv("Provenance (old-site footer)", [
@@ -1493,15 +1499,17 @@ for g in ["all"] + GROUPS:
                     "Both charts follow the global V<sub>DD</sub> filter."}]))
 
 # columnar explorer data (cloud + global Pareto + extra per-group Pareto + delivered cards; exact duplicates dropped)
+GROUP_PARETO_KEYS = {}
 ex = {k: [] for k in ("enob", "sndr", "power", "fom_w", "fom_s", "area", "fs", "fb", "osr", "nbits", "cu_scale", "cu", "a0", "leak", "tau",
                       "t_phi2", "settle_ratio", "sigma_c", "yield", "arch", "cap", "supply", "set", "feasible", "group", "res", "vdd",
-                      "design", "delivered", "label", "opa1", "opa2", "comp")}
+                      "design", "delivered", "label", "opa1", "opa2", "comp", "gpar")}
 pkey = lambda p: (p["nbits"], p["osr"], p["vdd"], p["cap_type"], p["arch_id"], p.get("cu_scale"), p["enob"], p["power_uw"],
                   p.get("opa1_id"), p.get("opa2_id"), p.get("comp_id"))
 pkey0 = lambda p: (p["nbits"], p["osr"], p["vdd"], p["cap_type"], p["arch_id"], p.get("cu_scale"), p["enob"], p["power_uw"])
 pset = {pkey(p) for p in pareto}
 pset0 = {pkey0(p) for p in pareto}
 group_extra, _seen = [], set(pset)
+GROUP_PARETO_KEYS = {(g, pkey(p)) for g in GROUPS for p in SW["pareto_by_group"][g]}
 for g in GROUPS:
     for p in SW["pareto_by_group"][g]:
         if pkey(p) not in _seen:
@@ -1523,6 +1531,8 @@ def ex_add(p, setname, design=None):
                  ("res", f"{p['nbits']}b"), ("vdd", p["vdd"]), ("design", design), ("delivered", design is not None),
                  ("label", design or pt_label(p)), ("opa1", p.get("opa1_id")), ("opa2", p.get("opa2_id")), ("comp", p.get("comp_id"))):
         E[k].append(v)
+    E["gpar"].append("n/a" if setname == "delivered" else
+                     ("yes" if (f"{vt}_{p['cap_type']}_{p['arch_id']}", pkey(p)) in GROUP_PARETO_KEYS else "no"))
     if setname == "delivered" and str(p.get("nbits")) in RES_SPECS:   # exact sampling rate (sweep rounds fs_mhz)
         E["fs"][-1] = RES_SPECS[str(p["nbits"])]["fs_hz"]
         E["fb"][-1] = RES_SPECS[str(p["nbits"])]["fb_hz"]
@@ -1565,6 +1575,7 @@ DSE_DIMS = [
      "labels": {"cloud": "Sampled cloud", "pareto": "Global Pareto", "group_pareto": "Group Pareto (not global)", "delivered": "Delivered card"},
      "order": ["cloud", "pareto", "group_pareto", "delivered"]},
     {"key": "feasible", "label": "Feasible", "type": "cat", "order": ["yes", "no", "n/a (not in sweep)"]},
+    {"key": "gpar", "label": "Pareto of its group (old facet selector)", "type": "cat", "order": ["yes", "no", "n/a"]},
     {"key": "group", "label": "Group (V_DD × cap × arch)", "type": "cat", "order": GROUPS},
     {"key": "res", "label": "Resolution", "type": "cat", "order": [f"{n}b" for n in sorted({p['nbits'] for p in cloud} | set(NBITS))]},
 ]
@@ -1760,7 +1771,7 @@ dse_page = {"intro": "Exhaustive design-space exploration across OSR, sampling r
                       caption="Click a row to open the card. The old C<sub>u</sub> column was always “—” (not stored) and is omitted."),
                 {"type": "explorer", "title": "Design-space explorer (all stored points)", "src": write("data/dse_explorer.json", {"columns": ex}),
                  "dims": DSE_DIMS, "x": "power", "y": "enob", "color": "arch", "symbol": "set",
-                 "filters": ["set", "arch", "cap", "supply", "feasible", "res", "group", "enob", "power"],
+                 "filters": ["set", "arch", "cap", "supply", "feasible", "gpar", "res", "group", "enob", "power"],
                  "highlight": "delivered", "highlight_label": "Delivered cards", "design_key": "design", "label_key": "label",
                  "hover": ["sndr", "fom_w", "fom_s", "osr", "fs", "cu_scale", "set", "feasible", "opa1", "opa2", "comp"], "height": 540,
                  "pareto_on": {"feasible": ["yes"]}, "fixed_axes": False,
@@ -1789,8 +1800,9 @@ dse_page = {"intro": "Exhaustive design-space exploration across OSR, sampling r
                             f"Pareto points + {len(sel_cards)} delivered cards"
                             f"{f' ({n_dup} cloud duplicates of Pareto points dropped)' if n_dup else ''}. Highlighted rings = delivered cards "
                             "(click to open; they were not evaluated by the sweep, so *Feasible* = n/a). The optional Pareto front is computed "
-                            "over the feasible sweep points only. *Group* + *Point set* (Global / Group Pareto) chips select the points of the "
-                            "old facet selector; the per-group charts above reproduce it exactly."},
+                            "over the feasible sweep points only. To reproduce one entry of the old facet selector, keep a single *Group* chip "
+                            "and only *yes* under *Pareto of its group* (that is exactly the group's stored Pareto set); the per-group charts "
+                            "above show the same sets."},
                 {"type": "tabs", "id": "facet", "style": "select", "label": "Facet", "title": "The 12 stored facets of sweep.json",
                  "tabs": [facet_tab(k) for k in F],
                  "caption": "`sweep.json` stores twelve facet views; the old page drew only the two charts above. All twelve are reproduced here."},
@@ -1876,11 +1888,11 @@ comp = {
     "metrics": [{k: v for k, v in dict(key=k, label=l, unit=u or None, si=si or None, better=b, digits=dg, desc=ds).items() if v is not None}
                 for k, l, u, si, b, dg, ds in METRICS],
     "axes": {
-        "topology": {"label": "Loop architecture", "values": [{"id": a, "label": ARCH_ROW.get(a, ARCH_SPECS[a]["short"])} for a in ARCH_ORDER]},
+        "topology": {"label": "Loop architecture", "values": [{"id": a, "label": ARCH_SPECS[a]["short"]} for a in ARCH_ORDER]},
         "resolution": {"label": "Resolution", "values": [{"id": f"{n}b", "label": f"{n}-bit · OSR {RES_SPECS[str(n)]['osr']}"} for n in NBITS]},
         "cap": {"label": "Cap array", "values": [{"id": t, "label": CAP_LABEL.get(t, t)} for t in IDX["cap_types"]]},
     },
-    "matrix": {"rows": ["topology", "cap"], "cols": ["resolution"], "metrics": ["p_spice", "swing1", "swing2", "a1_eff"],
+    "matrix": {"rows": ["resolution", "cap"], "cols": ["topology"], "metrics": ["p_spice", "swing1", "swing2", "a1_eff"],
                "presets": [{"label": "Analog I_DD & power (SPICE)", "metrics": ["idd", "p_spice"]},
                            {"label": "Integrator swings (SPICE)", "metrics": ["swing1", "swing2"]},
                            {"label": "Extracted cap array (C_u, a1, a2)", "metrics": ["cu_eff", "a1_eff", "a2_eff"]}]},

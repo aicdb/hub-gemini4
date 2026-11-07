@@ -147,7 +147,20 @@ stage tags (dse `stage` column, replica traces `meta.stage`, SPICE blocks `stage
 null: only the CDAC is extracted); cloud sampling and 11–14 b infeasibility explained; explorer hover extended; detail tabs
 `id: pane` + deep links `?t.pane=3`, per-macro tabs ids; operating-mode axis (grouped ULP filter); presets reset Pareto;
 Pareto `group` column + preset; short metric labels with `desc`; floorplan short labels.
-Renderer issues (4) were fixed in the hub. New: `builds_on` + per-design `uses` (comparator, S/H switch, VCM buffer,
+Renderer issues (4) were fixed in the hub.
+
+## Round 3 (sar-round3.json)
+
+- **ENOB above N (hub issue):** 44 cards' 16/32-point SPICE FFTs (8–16 independent, non-integer reconstructed codes) give
+  ENOB > N / SNDR above the ideal N-bit limit. ENOB, SNDR and FoMs of these cards are no longer in `results`; the values stay,
+  labelled, in the parameters, a warning note, the FFT caption and the tab-2 summary table. The metric description no longer claims ±0.3 b.
+- Tables: 24-macro table regrouped (fits at 1440 px); Pareto and 5-corner tables put the key result columns first (still
+  scroll for the descriptive tail); per-step table labels shortened. Matrix: rows Architecture × CDAC, columns resolution
+  (fits at 1440 px). Long op-amp keys in Parameters get spaces around "/" (420 px overflow).
+- Overview stage row/caveat (SNR, loop-unrolled exclusions) corrected; published-FoM tooltips per reason; raw-error colouring
+  uses the ±1 LSB threshold; `enob_raw` removed from card metrics. Preset `show` leak fixed in the renderer.
+- Not changed: `physical.pex` stays null ("PEX n/a") — only the CDAC is extracted and the schema has no partial-PEX state;
+  the coverage is stated in the Parameters ("PEX coverage"). New: `builds_on` + per-design `uses` (comparator, S/H switch, VCM buffer,
 input driver; all 432 resolve against the sa/switch/opa builds).
 
 ## Results / honesty mapping

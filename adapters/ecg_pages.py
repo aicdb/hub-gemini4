@@ -105,16 +105,16 @@ def explore_page(D, out: Path):
         "presets": [
             {"label": "Chopped IRN vs power (old default)", "x": "power", "y": "irn", "color": "arch", "symbol": "kind"},
             {"label": "Colour by point type (DSE vs deliverable)", "x": "power", "y": "irn", "color": "kind", "symbol": "arch"},
-            {"label": "|Z_in| vs power", "x": "power", "y": "zin"},
-            {"label": "NEF vs power", "x": "power", "y": "nef"},
-            {"label": "A_mid vs power", "x": "power", "y": "gain"},
-            {"label": "DR vs chopped IRN", "x": "irn", "y": "dr"},
-            {"label": "f_H vs power", "x": "power", "y": "f_h"},
-            {"label": "|Z_in| vs C_pf (β_IBL knob)", "x": "cpf_um", "y": "zin", "logx": False},
-            {"label": "Power vs I_ref,core", "x": "iref", "y": "power"},
-            {"label": "Pareto: |Z_in| vs power", "x": "power", "y": "zin", "pareto": True},
-            {"label": "Per architecture", "x": "power", "y": "zin", "facet": "arch"},
-            {"label": "Per supply", "x": "power", "y": "irn", "facet": "supply"},
+            {"color": "arch", "symbol": "kind", "label": "|Z_in| vs power", "x": "power", "y": "zin"},
+            {"color": "arch", "symbol": "kind", "label": "NEF vs power", "x": "power", "y": "nef"},
+            {"color": "arch", "symbol": "kind", "label": "A_mid vs power", "x": "power", "y": "gain"},
+            {"color": "arch", "symbol": "kind", "label": "DR vs chopped IRN", "x": "irn", "y": "dr"},
+            {"color": "arch", "symbol": "kind", "label": "f_H vs power", "x": "power", "y": "f_h"},
+            {"color": "arch", "symbol": "kind", "label": "|Z_in| vs C_pf (β_IBL knob)", "x": "cpf_um", "y": "zin", "logx": False},
+            {"color": "arch", "symbol": "kind", "label": "Power vs I_ref,core", "x": "iref", "y": "power"},
+            {"color": "arch", "symbol": "kind", "label": "Pareto: |Z_in| vs power", "x": "power", "y": "zin", "pareto": True},
+            {"color": "arch", "symbol": "kind", "label": "Per architecture", "x": "power", "y": "zin", "facet": "arch"},
+            {"color": "arch", "symbol": "kind", "label": "Per supply", "x": "power", "y": "irn", "facet": "supply"},
         ],
         "caption": "*Old caption: “" + T.EX_PLOT_CAP + "”* — **Hub encoding:** colour = architecture (same palette as the charts below), symbol = point type "
                    "(circle = DSE candidate, ✕ = pre-PEX deliverable, ◆ = partial post-PEX deliverable), ring = delivered card (click to open). The deliverable points "
@@ -155,19 +155,19 @@ def explore_page(D, out: Path):
             ln = [c[key]["irn_rms_chopped_uv"] for c in cs if c["tier"] == "ln"]
             ota = B.link(c0.get("core_ota_id"), B.opa_href(c0.get("core_ota_id"))) + (
                 f"<br><small>Aux: {B.link(c0['aux_ota_id'], B.opa_href(c0['aux_ota_id']))}</small>" if c0.get("aux_ota_id") else "")
-            rows.append({"arch": f"<b>{a['name']}</b><br><small>{a['title']}</small>", "ibl": a["ibl_type"], "hpf": a["hpf_type"], "ota": ota,
+            rows.append({"arch": f"<b>{a['name']}</b><br><small>{a['title']}</small>", "mech": f"{a['ibl_type']}<br><small>HPF: {a['hpf_type']}</small>", "ota": ota,
                          "gain": B.r(mean("a_mid_db")), "zin": B.r(mean("zin_50hz_ibl_on_mohm") * 1e6), "boost": B.r(mean("zin_boost_factor")),
                          "irn": B.r(min(ln) * 1e-6) if ln else None, "nef": B.r(min(c[key]["nef"] for c in cs)),
                          "area": B.r(sum((c.get("physical") or {}).get("area_um2") or 0 for c in cs) / len(cs))})
         return B.table("", [
-            B.col("arch", "Architecture", md=True, wrap=True), B.col("gain", "Mean gain (model)", "dB", digits=4),
-            B.col("zin", "Mean |Z<sub>in</sub>(50Hz)|", "Ω", si=True, digits=3, better="high"), B.col("boost", "Boost factor", "×", digits=3, better="high"),
-            B.col("irn", "LN chopped IRN (model)", "Vrms", si=True, digits=3, better="low"), B.col("nef", "Best NEF (model)", digits=3, better="low"),
-            B.col("area", "Mean area", "μm²", digits=5, better="low"),
-            B.col("ibl", "Impedance-Boosting Mechanism", wrap=True), B.col("hpf", "High-Pass / DC Offset Mechanism", wrap=True),
-            B.col("ota", "Reused Core / Aux OTAs", md=True)], rows, stage=stage, alt="archtab", search=False,
-            caption="Means over the 6 cards of each architecture (both supplies, all tiers); LN IRN and NEF are the best values. Core/aux OTAs of the first card "
-                    "(1.8 V); OTA links open the reused op-amp on the hub.")
+            B.col("arch", "Architecture", md=True, wrap=True), B.col("gain", "Gain* (dB)", digits=4, title="mean AFE gain (model: sim LNA + ideal VGA)"),
+            B.col("zin", "|Z<sub>in</sub>(50Hz)|", "Ω", si=True, digits=3, better="high", title="mean"), B.col("boost", "Boost (×)", digits=3, better="high", title="mean"),
+            B.col("irn", "LN IRN*", "Vrms", si=True, digits=3, better="low", title="best chopped IRN of the LN cards (model)"),
+            B.col("nef", "NEF*", digits=3, better="low", title="best NEF (model)"), B.col("area", "Area (μm²)", digits=5, better="low", title="mean"),
+            B.col("mech", "Impedance-boosting / high-pass mechanism", md=True, wrap=True),
+            B.col("ota", "Reused core / aux OTAs", md=True, wrap=True)], rows, stage=stage, alt="archtab", search=False,
+            caption="Means over the 6 cards of each architecture (both supplies, all tiers) for gain, |Z_in|, boost and area; LN IRN and NEF are the best values; "
+                    "* = model-derived. Core/aux OTAs of the first card (1.8 V); OTA links open the reused op-amp on the hub.")
 
     blocks = [
         B.section("Interactive Pareto trade-off explorer", [B.note("<b>Data provenance of the sweep (hub check):</b> in `data/sweep.json` the fields `a_mid_db`, `a_ol_db`, `nef`, `pef`, `irn_rms_uv` and `dr_db` were "
@@ -245,7 +245,7 @@ def sens_page(D, out: Path):
         if not lst:
             continue
         x = [s["short"] for s in lst]
-        card_tabs.append({"label": f"{k} — {cc.get('arch_short', '')} (VDD={cc.get('vdd')}V, {str(cc.get('tier', '')).upper()})", "vdd": cc.get("vdd"), "blocks": [B.chart(T.SE_CHARTS[3][0], [
+        card_tabs.append({"label": f"{k} — {cc.get('arch_short', '')} (VDD={cc.get('vdd')}V, {str(cc.get('tier', '')).upper()})", "vdd": cc.get("vdd"), "key": k, "blocks": [B.chart(T.SE_CHARTS[3][0], [
             B.bar(x, [s.get("sigma3_zin_pct") for s in lst], "Spectre 3σ Δ|Zin| (%)", "#225bb2"),
             B.bar(x, [(hsS.get(s["id"]) or {}).get("sigma3_zin_pct", s.get("sigma3_zin_pct")) for s in lst], "HSPICE 3σ Δ|Zin| (%)", "#0d8499"),
             B.bar(x, [s.get("sigma3_fh_pct") for s in lst], "Spectre 3σ ΔfH (%)", "#d96b27"),
@@ -255,28 +255,28 @@ def sens_page(D, out: Path):
     rows = []
     for s in top:
         a, h = s.get("spectre_mean") or {}, s.get("hspice_mean") or {}
-        rows.append({"rank": f"#{s.get('rank')}", "src": f"<b>{s.get('name')}</b><br><small>{s.get('category', '')}</small>", "spec": f"`{s.get('sigma3_spec', '')}`",
+        rows.append({"rank": f"#{s.get('rank')}", "src": f"<b>{s.get('name')}</b><br><small>{s.get('category', '')} · 3σ spread `{s.get('sigma3_spec', '')}`</small>",
                      "szin": B.r(a.get("S_zin")), "dzin": B.r(a.get("sigma3_zin_pct")), "dzinh": B.r(h.get("sigma3_zin_pct")), "sfh": B.r(a.get("S_fh")),
                      "dfh": B.r(a.get("sigma3_fh_pct")), "dfl": B.r(a.get("sigma3_fl_pct")), "daol": B.r(a.get("sigma3_aol_db")), "dv": B.r(a.get("sigma3_vout_mv")),
-                     "cell": f"<b>`{s.get('cal_cell', '')}`</b><br><small>{s.get('cal_target', '')}</small>",
-                     "bits": f"<b>{s.get('cal_bits')}-bit</b><br><small>{s.get('cal_range', '')}</small>",
-                     "post": f"ΔZin {B.nf(a.get('post_cal_zin_pct'), 1)}% · ΔfH {B.nf(a.get('post_cal_fh_pct'), 1)}% · ΔVout {B.nf(a.get('post_cal_vout_mv'), 1)} mV"})
+                     "cell": f"<b>`{s.get('cal_cell', '')}`</b><br><small><b>{s.get('cal_bits')}-bit</b>, {s.get('cal_range', '')} — {s.get('cal_target', '')}</small>",
+                     "post": f"ΔZin {B.nf(a.get('post_cal_zin_pct'), 1)}%<br>ΔfH {B.nf(a.get('post_cal_fh_pct'), 1)}%<br>ΔVout {B.nf(a.get('post_cal_vout_mv'), 1)} mV"})
     cal_table = B.table(T.SE_TABLES[0][0], [
-        B.col("rank", "Rank"), B.col("src", "Variation source", md=True, wrap=True), B.col("cell", "Tunability / calibration cell architecture", md=True, wrap=True),
-        B.col("bits", "Bits & tuning range", md=True, wrap=True), B.col("spec", "3σ process / PVT spread", md=True),
-        B.col("szin", "Spectre S<sup>Zin</sup><sub>p</sub>", digits=3), B.col("dzin", "3σ Δ|Zin| Spectre", "%", digits=3), B.col("dzinh", "3σ Δ|Zin| HSPICE", "%", digits=3),
-        B.col("sfh", "Spectre S<sup>fH</sup><sub>p</sub>", digits=3), B.col("dfh", "3σ ΔfH", "%", digits=3), B.col("dfl", "3σ ΔfL", "%", digits=3),
-        B.col("daol", "3σ ΔAOL", "dB", digits=3), B.col("dv", "3σ ΔVout", "mV", digits=3), B.col("post", "Post-cal residual (assumed)", wrap=True)], rows, search=False,
+        B.col("rank", "#"), B.col("src", "Variation source · 3σ spread", md=True, wrap=True), B.col("cell", "Tunability / calibration cell (bits, range, target)", md=True, wrap=True),
+        B.col("szin", "S<sup>Zin</sup>", digits=3, group="Spectre mean"), B.col("dzin", "Δ|Zin| %", digits=3, group="Spectre mean"),
+        B.col("sfh", "S<sup>fH</sup>", digits=3, group="Spectre mean"), B.col("dfh", "ΔfH %", digits=3, group="Spectre mean"), B.col("dfl", "ΔfL %", digits=3, group="Spectre mean"),
+        B.col("daol", "ΔAOL dB", digits=3, group="Spectre mean"), B.col("dv", "ΔVout mV", digits=3, group="Spectre mean"),
+        B.col("dzinh", "Δ|Zin| %", digits=3, group="HSPICE"), B.col("post", "Post-cal residual (assumed)", md=True)], rows, search=False,
         caption=T.SE_TABLES[0][1] + " *Hub: post-cal residuals are assumed reductions, see note above.*")
     arows = [{"arch": f"<b>{a['arch_name']}</b> · {a['arch_short']}", "top": f"{a['ibl_type']}<br><small>{a['hpf_type']}</small>",
-              "t3": " ".join(f"`#{i + 1}:{x}`" for i, x in enumerate(a.get("top3_sources") or [])),
+              "t3": "<br>".join(f"`#{i + 1}:{x}`" for i, x in enumerate(a.get("top3_sources") or [])),
               "z": B.r(abs((a.get("sigma3_zin_by_source") or {}).get("cpf_ratio", 0))), "fh": B.r(abs((a.get("sigma3_fh_by_source") or {}).get("ibias_core", 0))),
               "fl": B.r(-abs((a.get("sigma3_fl_by_source") or {}).get("r_pr_vth", 0))), "aol": B.r(-abs((a.get("sigma3_aol_by_source") or {}).get("vth_skew_np", 0))),
               "v": B.r(abs((a.get("sigma3_vout_by_source") or {}).get("vth_mismatch_in", 0)))} for a in archs]
     arch_table = B.table(T.SE_TABLES[1][0], [
-        B.col("arch", "Architecture", md=True), B.col("top", "IBL & HPF topology", md=True, wrap=True), B.col("t3", "Top 3 variation sources", md=True, wrap=True),
-        B.col("z", "3σ Δ|Zin| from ΔCpf", "%", digits=4), B.col("fh", "3σ ΔfH from ΔIbias", "%", digits=4), B.col("fl", "3σ ΔfL from ΔR_PR", "%", digits=4),
-        B.col("aol", "3σ ΔAOL from ΔVth,n/p", "dB", digits=3), B.col("v", "3σ ΔVout from ΔVth,in (±)", "mV", digits=4)], arows, search=False, caption=T.SE_TABLES[1][1])
+        B.col("arch", "Architecture", md=True, wrap=True), B.col("top", "IBL & HPF topology", md=True, wrap=True), B.col("t3", "Top 3 variation sources", md=True, wrap=True),
+        B.col("z", "Δ|Zin| % ← ΔCpf", digits=4, group="3σ shift"), B.col("fh", "ΔfH % ← ΔIbias", digits=4, group="3σ shift"),
+        B.col("fl", "ΔfL % ← ΔR_PR", digits=4, group="3σ shift"), B.col("aol", "ΔAOL dB ← ΔVth,n/p", digits=3, group="3σ shift"),
+        B.col("v", "±ΔVout mV ← ΔVth,in", digits=4, group="3σ shift")], arows, search=False, caption=T.SE_TABLES[1][1])
     blocks = [kpis, dom, honesty,
               B.section("", [{"type": "tabs", "id": "tornado", "style": "select", "label": "Target metric for tornado plot", "tabs": torn_tabs}]),
               B.section("", [cal, arch_chart], cols=2),
@@ -354,7 +354,7 @@ def xsim_page(D, out: Path):
             rel = f"data/xsim/{k}-{kind}.json"
             B.write_json(out / rel, sim_fig(d, kind))
             blocks.append({"type": "chart", "title": title, "src": f"hub/{rel}", "caption": cap})
-        dev_tabs.append({"label": f"{d.get('dev_type')} · W={d.get('w_um')}μm, L={d.get('l_um')}μm (m={d.get('m')}) · corner={d.get('corner')}, T={d.get('temp_c')}°C",
+        dev_tabs.append({"key": k, "label": f"{d.get('dev_type')} · W={d.get('w_um')}μm, L={d.get('l_um')}μm (m={d.get('m')}) · corner={d.get('corner')}, T={d.get('temp_c')}°C",
                          "blocks": [B.section("", blocks, cols=3)]})
     card_tabs = []
     for k, c in cards.items():
@@ -370,7 +370,7 @@ def xsim_page(D, out: Path):
             rel = f"data/xsim/{k}-{kind}.json"
             B.write_json(out / rel, B.fig(traces, "Frequency (Hz)", yl, True, logy))
             blocks.append({"type": "chart", "title": title, "src": f"hub/{rel}", "caption": cap + f" · [open card](#/ecg/{k})"})
-        card_tabs.append({"label": f"{k} — {c.get('arch_short')} (VDD={c.get('vdd')}V, {str(c.get('tier', '')).upper()})", "vdd": c.get("vdd"), "blocks": [B.section("", blocks, cols=2)]})
+        card_tabs.append({"label": f"{k} — {c.get('arch_short')} (VDD={c.get('vdd')}V, {str(c.get('tier', '')).upper()})", "vdd": c.get("vdd"), "key": k, "blocks": [B.section("", blocks, cols=2)]})
     ptr, all_ng = [], []
     for vdd in (1.8, 3.3):
         ng_p, sp_p, hs_p, names = [], [], [], []
@@ -401,29 +401,34 @@ def xsim_page(D, out: Path):
                       "i1": B.r(ng.get("id_vgs035_na")), "i2": B.r(sp.get("id_vgs035_na")), "i3": B.r(hs.get("id_vgs035_na")),
                       "ss": B.r(sp.get("ss_mv_dec") if sp.get("ss_mv_dec") is not None else ng.get("ss_mv_dec")),
                       "gg": f"{B.nf(v12.get('gm_gds_vds09_vv'), 1)} → <b>{B.nf(v15.get('gm_gds_vds09_vv'), 1)} V/V</b>"})
+    GA, GI = "g<sub>m</sub>/I<sub>D</sub> @ 0.35 V (V⁻¹)", "I<sub>D</sub> @ 0.35 V (nA)"
     tA = B.table(T.XS_TABLES[0][0], [
-        B.col("dev", "Device sweep", md=True), B.col("l", "L", "μm"), B.col("ct", "Corner / temp", md=True),
-        B.col("g1", "ngspice gm/ID @ 0.35V", "V⁻¹", digits=4), B.col("g2", "Spectre gm/ID @ 0.35V", "V⁻¹", digits=4), B.col("g3", "HSPICE gm/ID @ 0.35V", "V⁻¹", digits=4),
-        B.col("i1", "ngspice ID @ 0.35V", "nA", digits=5), B.col("i2", "Spectre ID @ 0.35V", "nA", digits=5), B.col("i3", "HSPICE ID @ 0.35V", "nA", digits=5),
-        B.col("ss", "Slope S", "mV/dec", digits=4), B.col("gg", "gm/gds @ V_DS 0.9 V (gmin=1e-12 → 1e-15)", md=True)], arows, search=False, caption=T.XS_TABLES[0][1])
+        B.col("dev", "Device sweep", md=True), B.col("l", "L (μm)"), B.col("ct", "Corner / temp", md=True),
+        B.col("g1", "ngspice", digits=4, group=GA), B.col("g2", "Spectre", digits=4, group=GA), B.col("g3", "HSPICE", digits=4, group=GA),
+        B.col("i1", "ngspice", digits=5, group=GI), B.col("i2", "Spectre", digits=5, group=GI), B.col("i3", "HSPICE", digits=5, group=GI),
+        B.col("ss", "Slope S (mV/dec)", digits=4), B.col("gg", "g<sub>m</sub>/g<sub>ds</sub> @ V<sub>DS</sub> 0.9 V<br>gmin 1e-12 → 1e-15", md=True)],
+        arows, search=False, caption=T.XS_TABLES[0][1] + " Spectre / HSPICE columns use the foundry ~/model-gf180 Rev9 decks.")
     brows = []
     for c in cards.values():
         s = c.get("simulators") or {}
         ng, sp, hs = s.get("ngspice") or {}, s.get("spectre") or {}, s.get("hspice") or {}
         brows.append({"_design": c["card_id"], "id": c["card_id"], "arch": c.get("arch_short"), "vdd": c.get("vdd"),
+                      "cur": f"[curves](#/ecg?page=xsim&t.xsimb={c['card_id']})",
                       "g1": B.r(ng.get("gain_db")), "g2": B.r(sp.get("gain_db")), "g3": B.r(hs.get("gain_db")),
                       "aol": B.r(sp.get("aol_db") if sp.get("aol_db") is not None else ng.get("aol_db")),
                       "lna": B.r(sp.get("lna_gain_db") if sp.get("lna_gain_db") is not None else ng.get("lna_gain_db")),
                       "f1": B.r(ng.get("fh_hz")), "f2": B.r(sp.get("fh_hz")), "f3": B.r(hs.get("fh_hz")), "p1": B.r(ng.get("p_tot_nw")), "p2": B.r(sp.get("p_tot_nw")),
-                      "z1": B.r(B.mul(ng.get("zin_50hz_mohm"), 1e6)), "z2": B.r(B.mul(sp.get("zin_50hz_mohm"), 1e6))})
+                      "z1": B.r(ng.get("zin_50hz_mohm")), "z2": B.r(sp.get("zin_50hz_mohm"))})
+    G1, G2, G3, G4 = "AFE gain (dB)", "f<sub>H</sub> (Hz)", "P<sub>core</sub> (nW)", "|Z<sub>in</sub> @ 50 Hz| (MΩ)"
     tB = B.table(T.XS_TABLES[1][0], [
-        B.col("id", "Card ID", type="design"), B.col("arch", "Arch"), B.col("vdd", "VDD", "V"),
-        B.col("g1", "ngspice AFE gain", "dB", digits=4), B.col("g2", "Spectre AFE gain", "dB", digits=4), B.col("g3", "HSPICE AFE gain", "dB", digits=4),
-        B.col("aol", "OTA AOL", "dB", digits=4), B.col("lna", "LNA gain", "dB", digits=4),
-        B.col("f1", "ngspice fH", "Hz", si=True, digits=5), B.col("f2", "Spectre fH", "Hz", si=True, digits=5), B.col("f3", "HSPICE fH", "Hz", si=True, digits=5),
-        B.col("p1", "ngspice Pcore", "nW", digits=4), B.col("p2", "Spectre Pcore", "nW", digits=4),
-        B.col("z1", "ngspice |Zin @ 50Hz|", "Ω", si=True, digits=4), B.col("z2", "Spectre |Zin @ 50Hz|", "Ω", si=True, digits=4)], brows,
-        caption=T.XS_TABLES[1][1].replace("or select it in the Benchmark B chart above", "(select it in the Benchmark B dropdown above for its curves)"))
+        B.col("id", "Card ID", type="design"), B.col("cur", "", md=True), B.col("vdd", "VDD (V)"),
+        B.col("g1", "ng", digits=4, group=G1, title="ngspice-46"), B.col("g2", "Sp", digits=4, group=G1, title="Spectre"), B.col("g3", "HS", digits=4, group=G1, title="HSPICE"),
+        B.col("aol", "OTA A<sub>OL</sub> (dB)", digits=4), B.col("lna", "LNA gain (dB)", digits=4),
+        B.col("f1", "ng", digits=5, group=G2, title="ngspice-46"), B.col("f2", "Sp", digits=5, group=G2, title="Spectre"), B.col("f3", "HS", digits=5, group=G2, title="HSPICE"),
+        B.col("p1", "ng", digits=4, group=G3, title="ngspice-46"), B.col("p2", "Sp", digits=4, group=G3, title="Spectre"),
+        B.col("z1", "ng", digits=5, group=G4, title="ngspice-46"), B.col("z2", "Sp", digits=5, group=G4, title="Spectre")], brows,
+        caption=T.XS_TABLES[1][1].replace("or select it in the Benchmark B chart above", "(the *curves* link selects it in the Benchmark B dropdown above)")
+        + " ng = ngspice-46 (open PDK), Sp = Cadence Spectre, HS = Synopsys HSPICE (~/model-gf180 Rev9).")
     dflt = dkeys.index("nfet_03v3_L1.0u_tt_27C") if "nfet_03v3_L1.0u_tt_27C" in dkeys else 0
     blocks = [kpis, concl, check,
               B.section("Benchmark A — transistor sweeps", [{"type": "tabs", "id": "xsima", "style": "select", "label": "Benchmark A transistor sweep", "default": dflt, "tabs": dev_tabs}]),
@@ -474,30 +479,31 @@ def reuse_page(D, out: Path):
         e = used.get((lib, key))
         return len(e["cards"]) if e else 0
 
-    ocols = [B.col("id", "OTA card ID", md=True), B.col("load", "Load lib"), B.col("arch", "Topology"), B.col("vdd", "VDD", "V"), B.col("reg", "Regime"),
-             B.col("a0", "Open-loop gain A0", "dB", digits=4, better="high"), B.col("ugb", "UGB", "kHz", digits=4), B.col("pm", "PM", "°", digits=3),
-             B.col("vn", "Noise @1kHz", "nV/√Hz", digits=4, better="low"), B.col("cmrr", "CMRR", "dB", digits=4), B.col("psrr", "PSRR", "dB", digits=4),
-             B.col("vos", "Vos σ", "mV", digits=3), B.col("pw", "Power", "µW", digits=3), B.col("area", "Area", "µm²", digits=5),
+    U = lambda k, lab, unit, **kw: B.col(k, f"{lab} ({unit})", **kw)  # noqa: E731  unit in the header only (narrow cells)
+    ocols = [B.col("id", "OTA card ID", md=True), B.col("load", "Lib"), B.col("vdd", "VDD (V)"), B.col("reg", "Regime"),
+             U("a0", "A0", "dB", digits=4, better="high"), U("ugb", "UGB", "kHz", digits=4), U("pm", "PM", "°", digits=3),
+             U("vn", "Noise @1kHz", "nV/√Hz", digits=4, better="low"), U("cmrr", "CMRR", "dB", digits=4), U("psrr", "PSRR", "dB", digits=4),
+             U("vos", "V<sub>os</sub> σ", "mV", digits=3), U("pw", "Power", "µW", digits=3), U("area", "Area", "µm²", digits=5),
              B.col("ls", "LNA score", digits=3, better="high"), B.col("as", "Aux score", digits=3, better="high"),
-             B.col("used", "Used by # cards", title="distinct delivered cards; only the 200 fF-library variant is instantiated (ecggen/select.py loads 200f first)")]
+             B.col("used", "Used by", title="distinct delivered cards using it; only the 200 fF-library variant is instantiated (ecggen/select.py loads 200f first)")]
 
     def sw_rows(lst):
         return [{"key": B.link(s["key"], href("switch", s["key"])), "topo": f"<b>{s.get('topo')}</b><br><small>{s.get('name', '')}</small>", "vdd": s.get("vdd"),
                  "ron": B.r(s.get("ron_min_ohm")), "ronx": B.r(s.get("ron_max_ohm")), "q": B.r(s.get("q_inj_fc")), "ped": B.r(s.get("pedestal_mv")),
                  "leak": B.r(s.get("leak_pa")), "e": B.r(s.get("e_vdd_fj")), "cs": B.r(s.get("chop_score")), "ss": B.r(s.get("sh_score")),
                  "used": cell_used(s["key"], "switch")} for s in lst]
-    scols = [B.col("key", "Switch key", md=True), B.col("topo", "Topology", md=True), B.col("vdd", "VDD", "V"), B.col("ron", "R_on min", "Ω", digits=4),
-             B.col("ronx", "R_on max", "Ω", digits=4), B.col("q", "|Q_inj|", "fC", digits=3), B.col("ped", "Pedestal (CFT)", "mV", digits=3),
-             B.col("leak", "I_off (leakage)", "pA", digits=3), B.col("e", "Energy / op", "fJ", digits=4), B.col("cs", "Chop score", digits=3, better="high"),
-             B.col("ss", "S&H score", digits=3, better="high"), B.col("used", "Used by # cards", title="distinct delivered cards instantiating this cell")]
+    scols = [B.col("key", "Switch key", md=True), B.col("topo", "Topology", md=True, wrap=True), B.col("vdd", "VDD (V)"), U("ron", "R<sub>on</sub> min", "Ω", digits=4),
+             U("ronx", "R<sub>on</sub> max", "Ω", digits=4), U("q", "|Q<sub>inj</sub>|", "fC", digits=3), U("ped", "Pedestal (CFT)", "mV", digits=3),
+             U("leak", "I<sub>off</sub>", "pA", digits=3), U("e", "Energy/op", "fJ", digits=4), B.col("cs", "Chop score", digits=3, better="high"),
+             B.col("ss", "S&H score", digits=3, better="high"), B.col("used", "Used by", title="distinct delivered cards instantiating this cell")]
 
     def sa_rows(lst):
         return [{"key": B.link(s["key"], href("sa", s["key"])), "topo": f"<b>{s.get('arch')}</b> ({s.get('mix')})", "vdd": s.get("vdd"),
                  "dl": B.r(s.get("delay_1mv_ns")), "e": B.r(s.get("e_core_fj")), "vos": B.r(s.get("vos_sigma_mv")), "kb": B.r(s.get("kick_diff_mv")),
                  "pvt": f"{s.get('pvt_pass')}/{s.get('pvt_total')}", "sc": B.r(s.get("comp_score")), "used": cell_used(s["key"], "sa")} for s in lst]
-    acols = [B.col("key", "Comparator ID", md=True), B.col("topo", "Topology", md=True), B.col("vdd", "VDD", "V"), B.col("dl", "Delay (1 mV)", "ns", digits=4),
-             B.col("e", "Energy", "fJ", digits=4), B.col("vos", "Vos σ", "mV", digits=3), B.col("kb", "Kickback", "mV", digits=3), B.col("pvt", "PVT"),
-             B.col("sc", "Score", digits=3, better="high"), B.col("used", "Used by # cards")]
+    acols = [B.col("key", "Comparator ID", md=True), B.col("topo", "Topology", md=True), B.col("vdd", "VDD (V)"), U("dl", "Delay (1 mV)", "ns", digits=4),
+             U("e", "Energy", "fJ", digits=4), U("vos", "V<sub>os</sub> σ", "mV", digits=3), U("kb", "Kickback", "mV", digits=3), B.col("pvt", "PVT"),
+             B.col("sc", "Score", digits=3, better="high"), B.col("used", "Used by", title="distinct delivered cards instantiating this cell")]
     urows = []
     for (lib, key), e in sorted(used.items(), key=lambda kv: (["opa", "switch", "sa"].index(kv[0][0]), kv[0][1])):
         urows.append({"cell": B.link(key, href(lib, key)), "lib": {"opa": "opa-gen (200 fF)", "switch": "switch-gen", "sa": "sa-gen"}[lib],
@@ -509,7 +515,7 @@ def reuse_page(D, out: Path):
                "them to the stored fields (`topo`/`name`, `ron_min_ohm`, `q_inj_fc`, `pedestal_mv`, `leak_pa`, `chop_score`, `key`, `delay_1mv_ns`, `e_core_fj`, "
                "`kick_diff_mv`, `comp_score`). Cell IDs link to the cell's page on the hub's Op-amps / Switches / Sense-amps tabs.", "info"),
         B.section("", [ota_chart, sw_chart], cols=2),
-        B.section("", [B.table("1. Reused Operational Transconductance Amplifiers from `../opa-gen-gemini4`", ocols, ota_rows(opa), search=False,
+        B.section("", [B.table("1. Reused Operational Transconductance Amplifiers from `../opa-gen-gemini4`", [c for c in ocols if c["key"] != "load"], ota_rows(opa), search=False,
                 caption=f"Selected from {sm.get('opa_evaluated', 96)} characterized OTAs. We prioritize the `200f` capacitive-load-optimized library for compact finger counts "
                         "(low input gate capacitance C<sub>par</sub> and zero routing congestion).")]),
         B.section("", [B.table("2. Reused Chopper & S&H Switches from `../switch-gen-gemini4`", scols, sw_rows(sw), search=False)]),
@@ -542,7 +548,7 @@ def db_page(D, out: Path):
             floor = D["thd_floor"][cid][stage]
             tag = "" if stage == "pre" else " (pre)"
             ttl = None if stage == "pre" else "PVT/MC not re-run post-layout — pre-PEX value shown"
-            rows.append({"_design": cid, "id": cid, "arch": c["arch_name"], "vdd": c["vdd"], "tier": c["tier_short"], "stage": stage,
+            rows.append({"_design": cid, "id": cid, "arch": c["arch_name"], "vdd": c["vdd"], "tier": c["tier"].upper(), "stage": stage,
                          "p": g("p_total_nw", 1e-9), "lna": g("a_lna_db"),
                          "fh": B.cell(B.rv(fh["sim"]), "warn" if fh["affected"] else None,
                                       f"hub-recovered simulated f_H (repo: conditioned {fh['rep']:g} Hz)" if fh["affected"] else None),
@@ -550,30 +556,33 @@ def db_page(D, out: Path):
                          "thd": B.cell(f"≤ {s['thd_pct']:g} (floor)", "muted") if floor else g("thd_pct"),
                          "gain": g("a_mid_db"), "aol": g("a_ol_db"), "irn": g("irn_rms_chopped_uv", 1e-6),
                          "nef": g("nef"), "pef": g("pef"), "cmrr": g("cmrr_50hz_db"), "psrr": g("psrr_50hz_db"), "dr": g("dr_db"),
-                         "area": B.rv(ph.get("area_um2")), "phys": B.cell("DRC/LVS/PEX pass" if clean else "DRC/LVS pass" if ph.get("drc_ok") and ph.get("lvs_ok") else "—",
-                                                                          "good" if clean else None),
+                         "area": B.rv(ph.get("area_um2")), "phys": B.cell("✓" if clean else "DRC/LVS" if ph.get("drc_ok") and ph.get("lvs_ok") else "—",
+                                                                          "good" if clean else None, "DRC, LVS and PEX clean" if clean else None),
                          "pvt_repo": B.cell(f"{pre.get('pvt_pass')}/{pre.get('pvt_total')}{tag}", None, ttl),
-                         "pvt_hub": B.cell(f"{hub['pvt_ok']}/{hub['pvt_total']}{tag}", "good" if hub["pvt_ok"] == hub["pvt_total"] else "bad", ttl),
+                         "pvt_hub": B.cell(f"{hub['pvt_ok']}/{hub['pvt_total']}{tag}", "good" if hub["pvt_ok"] == hub["pvt_total"] else "bad",
+                                           f"repo reports {pre.get('pvt_pass')}/{pre.get('pvt_total')} (forced)" + (f"; {ttl}" if ttl else "")),
                          "mc_hub": B.cell(f"{hub['mc_ok']}/{hub['mc_total']}{tag}", "good" if hub["mc_ok"] == hub["mc_total"] else "bad", ttl)})
-    S, M, P, V = "Simulated", "Model-derived (closed-form)", "Physical", "Verification (pre-PEX)"
-    key_cols = [B.col("id", "Card ID", type="design"), B.col("arch", "Arch"), B.col("vdd", "VDD", "V"), B.col("tier", "Tier"), B.col("stage", "Stage")]
+    S, M, P, V = "Simulated", "Model-derived (closed-form)", "Physical", "In spec (hub, pre-PEX)"
+    key_cols = [B.col("id", "Card ID", type="design"), B.col("vdd", "VDD (V)"), B.col("tier", "Tier"), B.col("stage", "Stage")]
     sim_cols = key_cols + [
-        B.col("p", "Power", "W", si=True, digits=4, group=S, better="low"), B.col("lna", "LNA gain", "dB", digits=4, group=S),
+        B.col("p", "Power", "W", si=True, digits=4, group=S, better="low"), B.col("lna", "LNA (dB)", digits=4, group=S),
         B.col("fh", "f<sub>H</sub>", "Hz", si=True, digits=4, group=S, title="amber = hub-recovered simulated value (the repo's f_H was conditioned)"),
         B.col("fl", "f<sub>L</sub>", "Hz", si=True, digits=3, group=S),
-        B.col("zin", "|Z<sub>in</sub> @ 50Hz|", "Ω", si=True, digits=4, group=S, better="high"), B.col("bst", "Boost", "×", digits=3, group=S, better="high"),
-        B.col("thd", "THD", "%", digits=3, group=S, better="low"),
-        B.col("area", "Area", "μm²", digits=5, group=P, better="low"), B.col("phys", "Physical", group=P),
-        B.col("pvt_repo", "PVT (repo, forced)", group=V), B.col("pvt_hub", "PVT in spec (hub)", group=V), B.col("mc_hub", "MC in spec (hub)", group=V)]
+        B.col("zin", "|Z<sub>in</sub>|@50Hz", "Ω", si=True, digits=4, group=S, better="high"), B.col("bst", "Boost (×)", digits=3, group=S, better="high"),
+        B.col("thd", "THD (%)", digits=3, group=S, better="low"),
+        B.col("pvt_hub", "PVT", group=V, title="corners inside the library spec windows (hub re-check; hover for the repo's forced value)"),
+        B.col("mc_hub", "MC", group=V, title="Monte Carlo runs inside the spec windows (hub re-check)"),
+        B.col("area", "Area (μm²)", digits=5, group=P, better="low"), B.col("phys", "DRC/LVS/PEX", group=P)]
     mod_cols = key_cols + [
-        B.col("gain", "AFE gain", "dB", digits=4, group=M), B.col("aol", "OTA A<sub>OL</sub>", "dB", digits=4, group=M),
+        B.col("gain", "AFE gain (dB)", digits=4, group=M), B.col("aol", "OTA A<sub>OL</sub> (dB)", digits=4, group=M),
         B.col("irn", "Chopped IRN", "Vrms", si=True, digits=3, group=M, better="low"), B.col("nef", "NEF", digits=3, group=M, better="low"),
-        B.col("pef", "PEF", digits=3, group=M, better="low"), B.col("cmrr", "CMRR", "dB", digits=4, group=M, better="high"),
-        B.col("psrr", "PSRR", "dB", digits=4, group=M, better="high"), B.col("dr", "DR", "dB", digits=4, group=M, better="high")]
+        B.col("pef", "PEF", digits=3, group=M, better="low"), B.col("cmrr", "CMRR (dB)", digits=4, group=M, better="high"),
+        B.col("psrr", "PSRR (dB)", digits=4, group=M, better="high"), B.col("dr", "DR (dB)", digits=4, group=M, better="high")]
     blocks = [
         B.note("Both tables follow the global **Simulation** option (pre-PEX or partial post-PEX; with *fill from earlier stage* the full-PEX setting shows partial) "
                "and the V<sub>DD</sub> option. Together they replace the old *Master comparison table* (Designs view) and the *Database* view and carry every column of "
-               "both, split by provenance so neither needs horizontal scrolling. PVT/MC were only run pre-PEX; on partial rows they are shown with a “(pre)” tag. "
+               "both, split by provenance (simulated / model-derived). PVT/MC were only run pre-PEX; on partial rows they are shown with a “(pre)” tag; hover a PVT "
+               "cell for the repo's forced value. "
                "Click a header to sort, a row to open the card; CSV exports the filtered rows.", "info"),
         B.section("", [B.table("Full 36-card ECG front-end specification database — simulated, physical & verification columns", sim_cols, rows, stage_column="stage",
                                sort={"key": "p", "dir": "asc"}, page_size=100, max_height=1500, csv_name="gf180-chopping-ecg-afe-sim", caption=T.COMP_CAP)]),
@@ -670,8 +679,8 @@ def notes_page(D, out: Path):
             "On the hub the coverage matrix, card grid and comparison table are the built-in **Designs** view (rows = architecture + impedance-boost mechanism, "
             "columns = V<sub>DD</sub> × tier). Its cells show simulated metrics (default |Z<sub>in</sub>|, total power, LNA gain, boost, f<sub>H</sub>; pick others with "
             "*Cell metric*) and DRC/LVS status. The PVT count, the PVT/MC statistics and the robust colour come from the pre-PEX run only: at *Pre-PEX* they are shown "
-            "directly, at *Partial/Full post-PEX* with *fill from earlier stage* they are shown tagged “pre”, and with the fill option off the cell reads "
-            "“PVT/MC not evaluated”. "
+            "directly, at *Partial/Full post-PEX* with *fill from earlier stage* they are shown tagged “pre”, and with the fill option off the cell keeps "
+            "its metrics but is drawn in the neutral “PVT/MC not evaluated” colour explained in the matrix legend. "
             "The old filters map to the axis chips (architecture, tier), the global V<sub>DD</sub>, *Verified* (DRC+LVS / PVT-robust) and search options; "
             "the old card sort options for power, |Z<sub>in</sub>| and area are in the card *Sort* menu, noise/NEF/DR (model figures) are sortable on the **Database** page.", "info")]),
         B.section("Data provenance & honesty notes (hub review of the repo)", [B.md("\n".join(f"{i + 1}. {x}" for i, x in enumerate(honesty)))]),

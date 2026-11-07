@@ -224,3 +224,13 @@ Adapter-side gaps (renderer_issue=false), all fixed:
 Renderer gaps adopted with the new options: #1 rings visible (rebuilt), #2 span reset, #5 fronts exclude delivered cards, #7 symbol legend (mix symbols are the hub's circle/×/◆, not the old ●/■/◆ — no per-dim symbol option), #8 envelope mode absent → preset `desc` points to the static envelope charts, #10 facet legend/titles, #11 explorers open per supply (tabs with `filters_default`), #12 `fixed_axes`.
 Also: matrix shows delay · I_DD · energy (the three quantities named in the old matrix caption); metric `desc` tooltips.
 Remaining renderer observation: at 420 px the Plotly charts render 415 px wide inside narrower panels (slight overflow).
+
+## Round 3 (sa-round3.json)
+- Regression FIA spec-check label → “mean of N and P pairs” only for 1.8 V wi/mi (flow/design.py); otherwise “P-pair gm/Id (PMOS-dominant closure)”; provenance bullet corrected.
+- #3 model tile “ΔV_BL,min (incl. 3σ)” → “deterministic ≥ 8 mV (search limit; total is a lower bound)” on censored records.
+- #6 explorer view deep links → explorers sit in V_DD tabs (`exvdd`) × trade-off tabs (`tradeoff`, shared with the static fronts): `#/sa?page=explore&t.exvdd=3.3&t.tradeoff=area` reproduces old `#explore/area/3.3`.
+- #7 mix `symbols` lv ●, hvl ■, nat ◆ (old convention).
+- #8 FoM-vs-gm/Id uses `pareto: "envelope"` (per architecture in both explorers); stale “no envelope mode” text removed.
+- #10 clouds coloured by a categorical inversion-level dim (12 viridis swatches as on the old legend) → no colourbar, equal facet sizes.
+- #5 facet titles still count cards (renderer); the intro states the card count per panel.
+- #16 open (renderer/policy): FIA cards show no single gm/Id (per-pair values only in detail); design tags are not rendered on cards.

@@ -777,13 +777,17 @@ for c in CARDS_SORTED:
             note += "; the generator scales the extracted ntop–vss / vb–vss capacitances by 0.25"
         results[POST_STAGE[key]] = stage_result(mp, c, note)
     files = {k: f"{base}/{v}" for k, v in (
-        ("schematic", "schematic.svg"), ("gds", f"{key}.gds.gz"), ("netlist", "netlist.spice"), ("pex_netlist", f"{key}.pex.spice"),
+        ("gds", f"{key}.gds.gz"), ("netlist", "netlist.spice"), ("pex_netlist", f"{key}.pex.spice"),
         ("lvs_netlist", "lvs_reference.spice"), ("data", "data.json")) if (docs / base / v).is_file()}
-    images = [{"label": "Schematic (post-PEX operating points)", "src": f"{base}/schematic_post.svg"}] if (docs / base / "schematic_post.svg").is_file() else []
+    images = [{"label": lab, "src": f"{base}/{fn}", "bg": "dark"} for lab, fn in (("Schematic", "schematic.svg"),
+              ("Schematic (post-PEX operating points)", "schematic_post.svg")) if (docs / base / fn).is_file()]
     pex = verify.get("pex") or {}
     tags = list(c.get("tags") or []) + [f"R_on grade {m.get('grade') or 'below D'}"]
     r2r_pre, r2r_post = (m.get("coverage") or 0) > 0.97, (mp.get("coverage") or 0) > 0.97
-    tags += (["r2r-pre"] if r2r_pre else []) + (["r2r-post"] if r2r_post else [])   # rail-to-rail (> 97 % VDD) per netlist; not substrings
+    tags += (["r2r-pre"] if r2r_pre else []) + (["r2r-post"] if r2r_post else [])
+    tags.append(f"valid {range_txt(m.get('valid'))} (pre)")
+    if mp and mp.get("valid") != m.get("valid"):
+        tags.append(f"valid {range_txt(mp.get('valid'))} (post)")   # rail-to-rail (> 97 % VDD) per netlist; not substrings
     if m.get("stress_ok") is False:
         tags.append("overstress")
     if m.get("em_ok") is False:
@@ -822,17 +826,30 @@ STAGE_OF["post"] = "partial"
 DESIGN_IDS = {x["id"] for x in designs}
 done = [c for c in CARDS_SORTED if c["status"]["sim"] == "done"]
 # page-level views of the old site's pre/post switch. The post-PEX cards have two extraction levels (35 complete cells = full,
-# 90 unit banks = partial); fixed page views are emitted per stage: partial = all extracted cards together, full = complete cells only.
-PARTIAL_NOTE = (f"Partial post-PEX view: all {N_COMPLETE + N_UNIT} extracted cards together — the {N_UNIT} unit-bank extractions (partial "
-                f"post-PEX) and, alongside, the {N_COMPLETE} complete-cell extractions (full post-PEX); select Full post-PEX for the complete cells "
-                "only. Areas marked ≈ are the generator's estimates for multi-bank cells.")
-FULL_NOTE = (f"Full post-PEX view: only the {N_COMPLETE} cards whose complete cell is drawn and extracted; the other {N_UNIT} cards have a "
-             "partial (unit-bank) extraction — select Partial post-PEX to include them.")
+# 90 unit banks = partial). Fixed page views per stage (fallback-aware, like the per-design stage resolution):
+#   pre          schematic results of all cards
+#   partial      the 90 unit-bank extractions (the complete cells have no partial extraction)
+#   full, fb on  all 125 extracted cards: 35 full + 90 partial filled in from the earlier stage (labelled per card)
+#   full, fb off the 35 complete-cell extractions only
+PARTIAL_NOTE = (f"Partial post-PEX view: the {N_UNIT} unit-bank extractions (partial post-PEX). The {N_COMPLETE} complete cells have a full "
+                "extraction instead (select Full post-PEX); in the per-design explorer and comparison table they fall back to their schematic "
+                "results at this stage when *fill from earlier stage* is on. Areas marked ≈ are the generator's estimates for multi-bank cells.")
+FULLFB_NOTE = (f"Full post-PEX with *fill from earlier stage*: all {N_COMPLETE + N_UNIT} extracted cards — the {N_COMPLETE} complete-cell "
+               f"extractions (full post-PEX) plus, filled in, the {N_UNIT} unit-bank extractions (partial post-PEX; marked per card). Turn the "
+               "fill option off for the complete cells only. Areas marked ≈ are the generator's estimates for multi-bank cells.")
+FULL_NOTE = (f"Full post-PEX view (fill from earlier stage off): only the {N_COMPLETE} cards whose complete cell is drawn and extracted; the "
+             f"other {N_UNIT} cards have a partial (unit-bank) extraction — turn on *fill from earlier stage* or select Partial post-PEX to see them.")
 PAGE_VIEWS = [
-    {"stage": "pre", "mv": "pre", "cards": lambda c: True, "note": ""},
-    {"stage": "partial", "mv": "post", "cards": lambda c: bool(c.get("mp")), "note": PARTIAL_NOTE},
-    {"stage": "full", "mv": "post", "cards": lambda c: bool(c.get("mp")) and not est(c), "note": FULL_NOTE},
+    {"id": "pre", "stage": "pre", "fb": None, "mv": "pre", "cards": lambda c: True, "note": ""},
+    {"id": "partial", "stage": "partial", "fb": None, "mv": "post", "cards": lambda c: bool(c.get("mp")) and est(c), "note": PARTIAL_NOTE},
+    {"id": "fullfb", "stage": "full", "fb": True, "mv": "post", "cards": lambda c: bool(c.get("mp")), "note": FULLFB_NOTE},
+    {"id": "full", "stage": "full", "fb": False, "mv": "post", "cards": lambda c: bool(c.get("mp")) and not est(c), "note": FULL_NOTE},
 ]
+
+
+def SV(V):
+    """stage (+ fallback flag) keys of a page-view alternative"""
+    return {"stage": V["stage"], **({"fb": V["fb"]} if V["fb"] is not None else {})}
 
 
 # ============================================================================= page: overview (old list view)
@@ -854,7 +871,7 @@ def page_overview():
                       {"label": "post-PEX simulated (complete / unit bank)",
                        "value": f"{sum(1 for c in dv if c.get('mp') and not est(c))} / {sum(1 for c in dv if c.get('mp') and est(c))}"},
                       {"label": "not applicable (n/a)", "value": str(sum(1 for c in cs if c["status"]["sim"] == "n/a"))}]
-            blk = {"type": "stats", "title": f"Design cards at {v} V", "stage": V["stage"], "alt": f"ovst{v}", "vdd": v, "items": items}
+            blk = {"type": "stats", "title": f"Design cards at {v} V", **SV(V), "alt": f"ovst{v}", "vdd": v, "items": items}
             if v == vdds[-1]:
                 blk["caption"] = V["note"] or (f"DRC/LVS were run on the drawn GDS: the complete cell for {N_COMPLETE} cards, one unit bank for the "
                                                f"other {N_UNIT}.")
@@ -876,8 +893,12 @@ def page_overview():
                         zr.append(-1); tr.append("n/a"); cr.append([c["key"], f"{c['key']}: {c['reason']}"])
                         continue
                     if not V["cards"](c):
-                        zr.append(-1); tr.append("partial<br>only")
-                        cr.append([c["key"], f"{c['name']}: only a unit-bank (partial) extraction — select Partial post-PEX"])
+                        if est(c):
+                            zr.append(-1); tr.append("partial<br>only")
+                            cr.append([c["key"], f"{c['name']}: only a unit-bank (partial) extraction — turn on fill from earlier stage or select Partial post-PEX"])
+                        else:
+                            zr.append(-1); tr.append("full<br>only")
+                            cr.append([c["key"], f"{c['name']}: complete cell, full extraction — select Full post-PEX"])
                         continue
                     m = mv(c, V["mv"])
                     cov = m.get("coverage")
@@ -887,7 +908,7 @@ def page_overview():
                                          f"{' (estimated, unit bank drawn)' if est(c) else ''}<br>R_on wc {si(m.get('ron_wc'), 'Ω')} · {grade_txt(m)}"
                                          + ("" if V["stage"] == "pre" else f" · {POST_STAGE[c['key']]} post-PEX")])
                 z.append(zr); text.append(tr); cd.append(cr)
-            heat.append({"type": "chart", "stage": V["stage"], "alt": f"covmx{v}", "vdd": v, "title": f"Coverage matrix · V<sub>DD</sub> = {v} V",
+            heat.append({"type": "chart", **SV(V), "alt": f"covmx{v}", "vdd": v, "title": f"Coverage matrix · V<sub>DD</sub> = {v} V",
                          "height": 680, "link_designs": True,
                          **({"caption": V["note"]} if V["note"] and v == vdds[-1] else {}),
                          "data": [{"type": "heatmap", "z": z, "text": text, "texttemplate": "%{text}", "textfont": {"size": 11, "color": "#1f2937"},
@@ -945,8 +966,9 @@ def page_overview():
                    "caption": "Every characterised design in one sortable table (click a header; default: generator order). Rows open the design. "
                               "Follows the global *Simulation stage*: each design shows its best available stage ≤ the selected one (with *fill from "
                               f"earlier stage*), so at Full post-PEX the {N_COMPLETE} complete-cell extractions (full) appear together with the {N_UNIT} "
-                              "unit-bank extractions (partial); the *Stage* column tells which is which. Areas in grey are the generator's estimates for "
-                              "multi-bank cells. Follows the V<sub>DD</sub> filter."})
+                              f"unit-bank extractions (partial); at Partial post-PEX the {N_COMPLETE} complete cells, which have no partial extraction, "
+                              "fall back to their schematic (pre-PEX) rows. The *Stage* column tells which is which. Areas in grey are the generator's "
+                              "estimates for multi-bank cells. Follows the V<sub>DD</sub> filter."})
     blocks.append({"type": "table", "title": "Not applicable cards", "search": False, "csv": False,
                    "caption": "These matrix positions are part of the generator's grid but are not built: no simulation, layout or results exist. They "
                               "appear as n/a placeholders in the Designs view.",
@@ -994,13 +1016,13 @@ def page_compare():
         blocks = []
         for V in PAGE_VIEWS:
             sub = [c for c in cs if V["cards"](c)]
-            blocks.append({"type": "stats", "title": f"Cards at {v} V", "stage": V["stage"], "alt": "cst",
+            blocks.append({"type": "stats", "title": f"Cards at {v} V", **SV(V), "alt": "cst",
                            "items": [{"label": f"characterised cards at {v} V", "value": str(len(cs))}]
                                     + ([{"label": "cards in this view", "value": str(len(sub))}] if V["stage"] != "pre" else [])
                                     + [{"label": "rail-to-rail", "value": str(sum(1 for c in sub if (mv(c, V["mv"]).get("coverage") or 0) > 0.97))}],
                            **({"caption": V["note"]} if V["note"] else {})})
         present = [t for t in ORDER if any(c["topo"] == t for c in cs)]
-        blocks.append({"type": "chart", "height": 150, "title": "Topologies",
+        blocks.append({"type": "chart", "height": 290, "title": "Topologies",
                        "data": [{"x": [None], "y": [None], "name": SHORT[t], "mode": "lines+markers", "line": {"color": TCOL[ORDER.index(t)], "width": 2},
                                  "marker": {"size": 6}} for t in present],
                        "layout": {"xaxis": {"visible": False}, "yaxis": {"visible": False}, "margin": {"l": 0, "r": 0, "t": 0, "b": 0},
@@ -1030,7 +1052,7 @@ def page_compare():
                 yax = {"type": ty, "title": {"text": f"{title.split(',')[0]}{f' ({unit})' if unit else ''}"}}
                 if ty == "log":
                     yax["dtick"] = 1
-                charts.append({"type": "chart", "stage": V["stage"], "alt": f"c{i}", "title": f"{title}{f' ({unit})' if unit else ''}",
+                charts.append({"type": "chart", **SV(V), "alt": f"c{i}", "title": f"{title}{f' ({unit})' if unit else ''}",
                                "link_designs": True, "height": 340, **({"caption": cap} if cap else {}),
                                "data": trs, "layout": {"showlegend": False, "yaxis": yax, "hovermode": "closest",
                                                        "xaxis": {"type": "category", "title": {"text": "load-current class"}}}})
@@ -1039,8 +1061,7 @@ def page_compare():
     intro = ("## Topology comparison\n\nKey metrics of all characterised cards against the load-current class, one line per topology. Every card meets "
              "the same on-resistance target (R<sub>on</sub>·I<sub>max</sub> ≤ 5 % VDD over its valid range, worst PVT), so the curves show what each "
              "topology pays for it: area, switching energy, charge injection and speed, and how much of the supply it can actually pass. "
-             "Click a point to open the card. The global *Simulation stage* selects the netlist: Pre-PEX = schematic; Partial post-PEX = all "
-             f"125 extracted cards ({N_UNIT} unit-bank + {N_COMPLETE} complete-cell extractions); Full post-PEX = only the {N_COMPLETE} complete cells.")
+             "Click a point to open the card. The global *Simulation stage* selects the netlist: " + f"Pre-PEX = schematic; Partial post-PEX = the {N_UNIT} unit-bank extractions; Full post-PEX = all 125 extracted cards with *fill from earlier stage* on ({N_COMPLETE} full + {N_UNIT} partial, marked per card), only the {N_COMPLETE} complete cells with it off.")
     return {"intro": intro, "blocks": [{"type": "tabs", "id": "vdd", "label": "V<sub>DD</sub>", "tabs": tabs}]}
 
 
@@ -1161,7 +1182,7 @@ def combo_pre(preset, vdd):
 def combo_post(preset, vdd, V):
     """post-PEX trade-off view over the cards of page view V (partial = all extracted cards, full = complete cells only)"""
     kx, ky = EXKEYS[preset]
-    st = V["stage"]
+    st = V["id"]
     allc = [c for c in done if V["cards"](c)]
     cards = [{"c": c, "x": cval(c, kx, "post"), "y": cval(c, ky, "post")} for c in allc if c["vdd"] == vdd]
     cards = [p for p in cards if p["x"] is not None and p["y"] is not None and math.isfinite(p["x"]) and math.isfinite(p["y"])]
@@ -1186,11 +1207,11 @@ def combo_post(preset, vdd, V):
         if ps:
             trs += [tr(ps, j, SHORT[t], False), tr(fronts[t], j, SHORT[t], True)]
     tag = f"{st}_{preset}_{str(vdd).replace('.', 'p')}"
-    blocks = [{"type": "stats", "title": "Post-PEX fronts (this trade-off and supply)", "stage": st, "alt": "cst",
+    blocks = [{"type": "stats", "title": "Post-PEX fronts (this trade-off and supply)", **SV(V), "alt": "cst",
                "items": [{"label": "design cards in this view", "value": str(len(cards))},
                          {"label": "per-topology post-PEX front cards (this view)", "value": str(nfr)},
                          {"label": "on the combined front (this view)", "value": str(len(fall))}]},
-              {"type": "chart", "stage": st, "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
+              {"type": "chart", **SV(V), "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
                "caption": f"{EXP[preset][1]} VDD = {vdd} V; {len(cards)} design cards, all values from the extracted-layout (post-PEX) simulations. The sweep "
                           "samples have no layout and are hidden in this view; switch the global *Simulation stage* to Pre-PEX to see them. " + V["note"],
                "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest"}})}]
@@ -1200,13 +1221,13 @@ def combo_post(preset, vdd, V):
         if not ps:
             facets.append({"type": "note", "tone": "muted", "title": SHORT[t],
                            "text": "not applicable at this supply" if META["na"].get(t) and vdd > 2 else
-                                   ("no complete-cell card at this supply (select Partial post-PEX)" if st == "full" else "no design card with post-PEX results")})
+                                   ("no complete-cell card at this supply" if st == "full" else "no unit-bank card at this supply" if st == "partial" else "no design card with post-PEX results")})
             continue
         facets.append({"type": "chart", "title": SHORT[t], "height": 300, "link_designs": True,
                        "src": write(f"data/dse/{tag}_{t}.json", {"data": [tr(ps, j, "cards", False), tr(fronts[t], j, "front", True)],
                                                                  "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "showlegend": False, "hovermode": "closest",
                                                                             "margin": {"l": 56, "r": 8, "t": 6, "b": 40}}})})
-    blocks.append({"type": "section", "stage": st, "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
+    blocks.append({"type": "section", **SV(V), "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
     rows = []
     for p in fall:
         v = mv(p["c"], "post")
@@ -1222,7 +1243,7 @@ def combo_post(preset, vdd, V):
             {"key": "ton", "label": "t_on", "unit": "s", "si": True}, {"key": "e", "label": "E/cycle", "unit": "J", "si": True},
             {"key": "q", "label": "|Q| max", "unit": "C", "si": True}, {"key": "thd", "label": "THD", "unit": "dB", "digits": 3},
             {"key": "stage", "label": "extraction", "type": "text"}]
-    blocks.append({"type": "table", "stage": st, "alt": "tab", "title": EX_POST["tab_h"],
+    blocks.append({"type": "table", **SV(V), "alt": "tab", "title": EX_POST["tab_h"],
                    "caption": EX_POST["tab_p"] + " Areas in grey are the generator's estimates for multi-bank cells.",
                    "src": write(f"data/dse/{tag}_tab.json", {"columns": cols, "rows": rows}), "columns": cols})
     return blocks
@@ -1316,9 +1337,11 @@ def page_explore():
                 "hover": ["topo", "ron_wc", "ws", "imax", "coverage", "area", "fom_ra", "t_on", "e_vdd", "q_absmax", "thd_db", "pvt_ratio", "knobs"],
                 "presets": presets, "height": 560,
                 "intro": "All 2,025 sweep samples (schematic simulations) plus the 125 delivered design cards. The explorer follows the global options: at "
-                         "**Pre-PEX** it shows the sweep and the cards' schematic results; at a post-PEX stage it shows each card's best available "
-                         f"extraction ≤ the selected stage (at Full post-PEX with *fill from earlier stage*: the {N_COMPLETE} complete-cell extractions plus "
-                         f"the {N_UNIT} unit-bank extractions; without it only the {N_COMPLETE}). The sweep has no layout and is hidden at post-PEX stages. "
+                         "**Pre-PEX** it shows the sweep and the cards' schematic results; at a post-PEX stage each card shows its best available "
+                         f"stage ≤ the selected one: at Full post-PEX with *fill from earlier stage* the {N_COMPLETE} complete-cell extractions plus the "
+                         f"{N_UNIT} unit-bank extractions (without it only the {N_COMPLETE}); at Partial post-PEX the {N_UNIT} unit-bank extractions, and "
+                         f"with fill on the {N_COMPLETE} complete cells fall back to their schematic results (they have no partial extraction). The sweep "
+                         "has no layout and is hidden at post-PEX stages. "
                          "Pick any axes, colour, symbol and facet, filter by chips / ranges and toggle the Pareto front; click a highlighted point to "
                          "open its card.",
                 "caption": "Area of the sweep samples is **estimated** from the sample's device and MIM area with a per-topology fit to the delivered cards' "
@@ -1334,9 +1357,9 @@ def page_explore():
         {"label": "designs simulated", "value": f"{SW['n_total']:,}"}, {"label": "with a valid signal range", "value": f"{SW['n_feasible']:,}"},
         {"label": "Pareto-front points", "value": f"{nfr:,}"},
         {"label": "front points within 5 % of R_on over all 15 PVT corners", "value": f"{SW['n_robust']}/{SW['n_front']}" if SW.get("n_front") else "—"}]})
-    for V in PAGE_VIEWS[1:]:
+    for V in PAGE_VIEWS[1:]:   # partial, full (fb on), full (fb off)
         sub = [c for c in done if V["cards"](c)]
-        blocks.append({"type": "stats", "title": "Post-PEX design cards", "stage": V["stage"], "alt": "exst", "items": [
+        blocks.append({"type": "stats", "title": "Post-PEX design cards", **SV(V), "alt": "exst", "items": [
             {"label": "design cards with post-PEX results (this view)", "value": str(len(sub))},
             {"label": "meet the R_on target post-PEX (grade A/B)", "value": str(sum(1 for c in sub if c["mp"].get("grade") in ("A", "B")))}],
             "caption": "Front counts for the selected trade-off and supply are shown with each view below. " + V["note"]})
@@ -1345,13 +1368,14 @@ def page_explore():
     for p in EXP:
         inner = []
         for v in META["vdds"]:
-            inner.append({"label": f"{v} V", "vdd": v, "blocks": combo_pre(p, v) + combo_post(p, v, PAGE_VIEWS[1]) + combo_post(p, v, PAGE_VIEWS[2])})
+            inner.append({"label": f"{v} V", "vdd": v, "blocks": combo_pre(p, v) + [b for V in PAGE_VIEWS[1:] for b in combo_post(p, v, V)]})
         tabs.append({"label": EXP[p][0], "blocks": [{"type": "note", "tone": "muted", "text": EXP[p][1]},
                                                      {"type": "tabs", "id": "exvdd", "label": "V<sub>DD</sub>", "default": 1, "tabs": inner}]})
     blocks.append({"type": "section", "title": "Trade-off views", "intro": "The fixed views of the original explorer page: pick the trade-off, then the "
                    "supply (default 3.3 V). The global *Simulation stage* selects the data: Pre-PEX = the sweep fronts with the cards' schematic results; "
-                   f"Partial post-PEX = the post-PEX fronts of all 125 extracted cards ({N_UNIT} unit-bank + {N_COMPLETE} complete-cell extractions); "
-                   f"Full post-PEX = the {N_COMPLETE} complete cells only.", "blocks": [{"type": "tabs", "id": "tradeoff", "tabs": tabs}]})
+                   f"Partial post-PEX = the post-PEX fronts of the {N_UNIT} unit-bank extractions; Full post-PEX = all 125 extracted cards with "
+                   f"*fill from earlier stage* on ({N_COMPLETE} full + {N_UNIT} partial, marked per card), the {N_COMPLETE} complete cells with it off.",
+                   "blocks": [{"type": "tabs", "id": "tradeoff", "tabs": tabs}]})
     intro = ("## Design-space explorer\n\nA random and structured known-design-point sweep of all thirteen topologies over both supplies: log-uniform switch "
              "width (1 µm – 100 mm, so every load-current class from 10 µA to 1 A is covered) and continuous knobs — P/N ratio, bootstrap / pump capacitor "
              "ratio, auxiliary-device scale, driver fan-out, switch channel length, dummy and shunt size. Every sample is simulated on the compute farm with "

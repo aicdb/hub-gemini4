@@ -629,7 +629,8 @@ function badgesOf(d, r) {
   const tg = (st) => (st && st !== r?.st ? ` (${STAGE_SHORT[st]})` : '');
   const rb = vi.robust === true ? `<span class="badge good">robust${tg(vi.robustSt)}</span>` : vi.robust === false ? `<span class="badge warn">not robust${tg(vi.robustSt)}</span>` : '';
   const pvt = vi.pvt ? `<span class="badge">PVT ${vi.pvt.pass}/${vi.pvt.total}${tg(vi.pvtSt)}</span>` : '';
-  return st + rb + pvt + b(p.drc, 'DRC') + b(p.lvs, 'LVS') + b(p.pex, 'PEX');
+  const fail = r?.r.status === 'fail' ? `<span class="badge bad" title="hard failure at ${STAGE_LABEL[r.st]}">failed</span>` : '';
+  return st + fail + rb + pvt + b(p.drc, 'DRC') + b(p.lvs, 'LVS') + b(p.pex, 'PEX');
 }
 function renderCards(view, c, list) {
   const { card } = viewCfg(c);
@@ -677,7 +678,7 @@ function renderTable(view, c, list) {
       ${axes.map((a) => `<td class="l">${esc(axisLabel(c, a, d.axes[a]))}</td>`).join('')}
       <td class="l ${r?.fallback ? 'fbv' : ''}">${r ? STAGE_LABEL[r.st] : '—'}</td>
       ${used.map((m) => { const x = mval(d, m.key, r); return `<td class="${x?.fb ? 'fbv' : ''}"${x?.fb ? ` title="from ${STAGE_LABEL[x.st]}"` : ''}>${x ? fmt(x.v, m) : '—'}</td>`; }).join('')}
-      ${(() => { const vi = vinfo(d, r); const fbc = (st) => (st && st !== S.stage ? ' class="fbv"' : ''); return `<td${fbc(vi.pvtSt)}>${vi.pvt ? `${vi.pvt.pass}/${vi.pvt.total}` : '—'}</td><td${fbc(vi.mcSt)}>${vi.mc ? `${vi.mc.pass}/${vi.mc.total}` : '—'}</td><td class="l${vi.robust === true ? ' s-good' : vi.robust === false ? ' s-warn' : ''}${vi.robustSt && vi.robustSt !== S.stage ? ' fbv' : ''}">${vi.robust === true ? '✓' : vi.robust === false ? '✗' : '—'}${r?.r.status === 'fail' ? ' fail' : ''}</td>`; })()}<td class="l">${physOk(d) ? '✓' : d.physical?.drc === false || d.physical?.lvs === false ? '✗' : '—'}</td></tr>`;
+      ${(() => { const vi = vinfo(d, r); const fbc = (st) => (st && st !== S.stage ? ' class="fbv"' : ''); return `<td${fbc(vi.pvtSt)}>${vi.pvt ? `${vi.pvt.pass}/${vi.pvt.total}` : '—'}</td><td${fbc(vi.mcSt)}>${vi.mc ? `${vi.mc.pass}/${vi.mc.total}` : '—'}</td><td class="l${r?.r.status === 'fail' ? ' s-bad' : vi.robust === true ? ' s-good' : vi.robust === false ? ' s-warn' : ''}${vi.robustSt && vi.robustSt !== S.stage ? ' fbv' : ''}">${r?.r.status === 'fail' ? 'failed' : vi.robust === true ? '✓' : vi.robust === false ? '✗' : '—'}</td>`; })()}<td class="l">${physOk(d) ? '✓' : d.physical?.drc === false || d.physical?.lvs === false ? '✗' : '—'}</td></tr>`;
   }).join('');
   view.innerHTML = `<div class="toolbar"><span class="subtle">Click a column to sort · values from an earlier stage in <i>italics</i>${tdef ? ` · <label class="check"><input type="checkbox" id="tmall" ${allCols ? 'checked' : ''}> all ${avail.length} metrics</label>` : ''}</span><button class="plain" id="csv">Download CSV ↓</button></div>
     <div class="table-scroll" style="max-height:70vh"><table class="list"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;

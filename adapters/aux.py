@@ -347,7 +347,8 @@ for f in sorted(fams, key=lambda x: OLD_ORDER.index(x["tag"]) if x["tag"] in OLD
     if not fcards:
         continue
     fields, mx, presets, cm = FAM[ft]
-    used = {k for k, _, _ in fields} | {"mc_cv", "area"}
+    used = {k for k, _, _ in fields} | {"area"} | (set() if ft in NO_MC else {"mc_cv"})
+    cm = [k for k in cm if k in used]
     summ = f"{f.get('summary', '').replace('`', '')} Primary metric on the retired site: {f['primary_metric_label']} ({f['primary_metric_unit']})."
     if ft == "clk_div":
         summ += (" Note: the input sweep spans 0.25–3.5 GHz, so f_min (0.25 GHz for every card) and an f_max,in of 3.5 GHz are sweep bounds; "
@@ -382,7 +383,7 @@ for f in sorted(fams, key=lambda x: OLD_ORDER.index(x["tag"]) if x["tag"] in OLD
             "target": {"label": "Target band", "values": [{"id": t["tag"], "label": t["label"]} for t in f["targets"]]},
         },
         "matrix": {"rows": ["topology", "flavor"], "cols": ["target"], "metrics": mx,
-                   "presets": [{"label": f"Retired-site headline: {' / '.join(MLABEL[k] for k in mx)}", "metrics": mx}] +
+                   "presets": [{"label": "Headline (retired site)", "metrics": mx}] +
                               [{"label": lab, "metrics": ms} for lab, ms in presets]},
         "card_metrics": cm,
         "pages": pages,

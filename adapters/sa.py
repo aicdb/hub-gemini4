@@ -528,7 +528,9 @@ def detail_doc(key):
             os_sub = f"mean {si(m.get('vos_mean'), 'V')} · Pelgrom est. {si(est.get('sigma_os'), 'V')} · Pelgrom formula + random samples"
         mitems = [
             {"label": "Min detectable ΔV<sub>BL,min</sub> (incl. 3σ)", "value": m.get("min_detectable_dv_v"), "unit": "V", "si": True,
-             "sub": f"= |hyst| + 3·√(σ<sub>n</sub>² + σ<sub>os</sub>²) · deterministic {si(m.get('min_detectable_dv_det_v'), 'V')} · 3σ stat. {si(m.get('min_detectable_dv_3sigma_v'), 'V')}"},
+             "sub": f"= |hyst| + 3·√(σ<sub>n</sub>² + σ<sub>os</sub>²) · deterministic "
+                    f"{'≥ 8 mV (search limit; total is a lower bound)' if trip_censored(m) else si(m.get('min_detectable_dv_det_v'), 'V')} · "
+                    f"3σ stat. {si(m.get('min_detectable_dv_3sigma_v'), 'V')}"},
             {"label": "Input noise σ<sub>n</sub>", "value": m.get("sigma_noise"), "unit": "V", "si": True,
              "sub": f"estimate {si(est.get('sigma_n'), 'V')} · analytical-probit fallback, identical for all 96 designs"},
             {"label": "Offset σ<sub>os</sub> (old site: 100-run MC)", "value": m.get("vos_sigma"), "unit": "V", "si": True, "sub": os_sub},
@@ -570,7 +572,8 @@ def detail_doc(key):
                 if m.get("self_calibrated") and m.get("vos_sigma_uncal") is not None else si(m.get("vos_sigma"), "V"))
         gm_lbl = "Input gm/Id within 6 % of the target (simulated, charge-weighted)"
         if arch == "fia":
-            gm_lbl += " — *FIA: mean of the N and P pairs (per-pair values in the design point)*"
+            gm_lbl += (" — *FIA at 1.8 V wi/mi: closure on the mean of the N and P pairs*" if vdd < 2.5 and tgt in ("wi", "mi")
+                       else " — *FIA: P-pair gm/Id (PMOS-dominant closure)*")
         if st == "partial":
             gm_lbl += " — *post-PEX value copied from the schematic closure*"
         specs = [
@@ -1310,7 +1313,7 @@ def explore_page():
                             "(both supplies when *All*). Axis ranges are shared by both supplies, as on the old site.",
                    "blocks": [{"type": "tabs", "id": "tradeoff", "label": "Trade-off", "tabs": ptabs}]})
     # --- explorer data (functional points of both spaces + delivered cards)
-    E = {k: [] for k in ("id", "stage", "kind", "arch", "mix", "vdd", "frac", "gmid_t", "gmid", "met", "sigma_os_t", "lat", "w_in",
+    E = {k: [] for k in ("id", "stage", "kind", "arch", "mix", "vdd", "frac", "lvl", "gmid_t", "gmid", "met", "sigma_os_t", "lat", "w_in",
                          "fclk", "delay", "e", "tau", "sn", "vos", "fom", "area", "delivered", "design")}
     for st in STG:
         cols, dl = spaces[st]
@@ -1319,7 +1322,8 @@ def explore_page():
                 continue
             E["id"].append(cols["id"][i]); E["stage"].append(st); E["kind"].append("sweep")
             E["arch"].append(DSE["archs"][cols["arch"][i]]); E["mix"].append(DSE["mixes"][cols["mix"][i]]); E["vdd"].append(cols["vdd"][i])
-            E["frac"].append(jround(cols["frac"][i] * 100)); E["gmid_t"].append(cols["gmid_t"][i]); E["gmid"].append(cols["gmid"][i])
+            E["frac"].append(jround(cols["frac"][i] * 100)); E["lvl"].append(str(jround(cols["frac"][i] * 100)))
+            E["gmid_t"].append(cols["gmid_t"][i]); E["gmid"].append(cols["gmid"][i])
             E["met"].append("yes" if cols["met"][i] else "no"); E["sigma_os_t"].append(cols["sigma_os_t"][i]); E["lat"].append(cols["lat"][i])
             E["w_in"].append(cols["w_in"][i]); E["fclk"].append(cols["fclk"][i])
             for k in ("delay", "e", "tau", "sn", "vos", "fom", "area"):
@@ -1334,6 +1338,7 @@ def explore_page():
             E["arch"].append(x["arch"]); E["mix"].append(x["mix"]); E["vdd"].append(x["vdd"])
             # a card's inversion level = its gm/Id target as % of the flavour's peak (colours it like the sweep)
             E["frac"].append(jround(100 * est["gmid_target"] / est["gmid_peak"]) if est.get("gmid_peak") else None)
+            E["lvl"].append("card")
             E["gmid_t"].append(CARD[x["key"]]["gmid_target"] if x["key"] in CARD else None)
             E["gmid"].append(x.get("gmid")); E["met"].append("yes" if CARD.get(x["key"], {}).get("tune_met") else "no")
             E["sigma_os_t"].append(tg.get("sigma_os_target")); E["lat"].append(tg.get("lat_scale"))
@@ -1343,6 +1348,7 @@ def explore_page():
                 E[k].append(x.get(k))
             E["delivered"].append(True); E["design"].append(x["key"] if x["key"] in CARD else None)
     ex_src = write("data/dse_explorer.json", {"columns": E})
+    lvls = [str(jround(f * 100)) for f in DSE["meta"]["fracs"]]
     dims = [
         {"key": "delay", "label": "Sensing delay @1 mV", "unit": "s", "si": True, "log": True, "better": "low"},
         {"key": "e", "label": "Energy / read", "unit": "J", "si": True, "log": True, "better": "low"},
@@ -1360,49 +1366,64 @@ def explore_page():
         {"key": "fclk", "label": "f_read", "unit": "Hz", "si": True},
         {"key": "arch", "label": "Architecture", "type": "cat", "labels": {a: arch_s[a] for a in archs}, "order": archs,
          "colors": {a: ARCH_COL[a] for a in archs}},
-        {"key": "mix", "label": "Threshold mix", "type": "cat", "labels": {x: mix_s[x] for x in MIX_ORDER}, "order": MIX_ORDER},
+        {"key": "mix", "label": "Threshold mix", "type": "cat", "labels": {x: mix_s[x] for x in MIX_ORDER}, "order": MIX_ORDER,
+         "symbols": dict(MIX_SYM)},
+        {"key": "lvl", "label": "Inversion level", "type": "cat", "order": lvls + ["card"],
+         "labels": dict({lv: f"{lv} % of peak gm/Id" for lv in lvls}, card="delivered card (target level)"),
+         "colors": dict({lv: VIR[jround(k * (len(VIR) - 1) / max(1, len(lvls) - 1))] for k, lv in enumerate(lvls)}, card="theme:ink")},
         {"key": "vdd", "label": "VDD", "unit": "V", "type": "cat", "labels": {str(v): f"{v} V" for v in VDDS}, "order": VDDS},
         {"key": "kind", "label": "Source", "type": "cat", "labels": {"sweep": "DSE sweep (model)", "card": "Delivered card (SPICE)"},
          "order": ["sweep", "card"]},
         {"key": "met", "label": "gm/Id target reached", "type": "cat"},
     ]
     hov = ["kind", "arch", "mix", "vdd", "gmid", "gmid_t", "frac", "sigma_os_t", "lat", "w_in", "fclk", "delay", "e", "tau", "sn", "vos", "area"]
-    env_desc = ("The old page drew each architecture's **lower envelope** (best E·σn² per rounded gm/Id) here; the explorer has no "
-                "envelope mode, so the envelopes are in the *FoM vs gm/Id* tab of **Pareto fronts by architecture** above.")
+    def ex_block(color, symbol, facet, xk, yk, front, extra):
+        b = {"type": "explorer", "src": ex_src, "dims": dims, "x": xk, "y": yk, "color": color, "fixed_axes": True,
+             "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
+             "hover": hov, "pareto_default": front}
+        if symbol:
+            b["symbol"] = symbol
+        if facet:
+            b["facet_default"] = facet
+        b.update(extra)
+        return b
 
-    def ex_presets(color, symbol, facet, front):
-        return [{"label": pl, "x": xk, "y": yk, "color": color, "symbol": symbol, "facet": facet, "pareto": front if fr else "",
-                 "desc": pcap + ("" if fr else " " + env_desc)} for _, pl, xk, yk, fr, pcap in PRESETS]
-
+    # one supply tab (id exvdd, shared by both sections) x one trade-off tab (id tradeoff, shared with the static
+    # fronts above) -> #/sa?page=explore&t.tradeoff=<preset>&t.exvdd=<vdd> reproduces the old #explore/<preset>/<vdd>
     ex1, ex2 = [], []
     for v in VDDS:
-        ex1.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [
-            {"type": "explorer", "src": ex_src, "dims": dims, "x": "delay", "y": "e", "color": "arch",
-             "filters": ["vdd", "arch", "mix", "kind", "met"], "filters_default": {"vdd": [v]}, "fixed_axes": True,
-             "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
-             "hover": hov, "pareto_default": "color", "height": 560, "preset_default": 0,
-             "presets": ex_presets("arch", "", "", "color")}]})
-        ex2.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [
-            {"type": "explorer", "src": ex_src, "dims": dims, "x": "delay", "y": "e", "color": "frac", "symbol": "mix",
-             "facet_default": "arch", "filters": ["vdd", "mix", "kind"], "filters_default": {"vdd": [v]}, "fixed_axes": True,
-             "highlight": "delivered", "highlight_label": "Delivered design cards", "design_key": "design", "label_key": "id",
-             "hover": hov, "pareto_default": "all", "preset_default": 0,
-             "presets": ex_presets("frac", "mix", "arch", "all")}]})
+        t1, t2 = [], []
+        for pk, pl, xk, yk, fr, pcap in PRESETS:
+            t1.append({"label": pl, "key": pk, "blocks": [ex_block(
+                "arch", "", "", xk, yk, "color" if fr else "envelope",
+                {"filters": ["vdd", "arch", "mix", "kind", "met"], "filters_default": {"vdd": [v]}, "height": 560,
+                 "intro": pcap + (" Lines: each architecture's Pareto front (delivered cards excluded, as on the old site)." if fr else
+                                  " Lines: each architecture's lower envelope (best E·σn² per gm/Id bin).")})]})
+            t2.append({"label": pl, "key": pk, "blocks": [ex_block(
+                "lvl" if fr else "arch", "mix", "arch", xk, yk, "all" if fr else "envelope",
+                {"filters": ["vdd", "mix", "kind"], "filters_default": {"vdd": [v]},
+                 "intro": pcap + (" Line per panel: the architecture's front over the sweep points." if fr else
+                                  " Line per panel: the architecture's lower envelope (best E·σn² per gm/Id bin); points coloured "
+                                  "by architecture here, since x already is the inversion level.")})]})
+        ex1.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [{"type": "tabs", "id": "tradeoff", "label": "Trade-off", "tabs": t1}]})
+        ex2.append({"label": f"{v} V", "key": str(v), "vdd": v, "blocks": [{"type": "tabs", "id": "tradeoff", "label": "Trade-off", "tabs": t2}]})
     blocks.append({"type": "section", "title": "Design-space explorer",
                    "intro": "Every functional point of the sweep, for the stage chosen with the Simulation-stage option (pre-PEX space "
                             "or the post-PEX scaled space; the 251 non-functional points are not plotted, as on the old site). One "
-                            "supply at a time as on the old page (tabs; add the other supply with the V<sub>DD</sub> chips). Pick a "
-                            "trade-off preset or any X/Y/colour/symbol/facet; *front per colour group* draws each architecture's "
-                            "non-dominated points (the delivered cards are not front candidates, as on the old site). Ringed points = "
-                            "delivered design cards (click to open). Axes stay fixed when filtering. All points are at the uniform "
-                            "2.5 MHz read rate into 200 fF; gate area is ΣW·L of the devices (not the layout area).",
+                            "supply and one trade-off at a time as on the old page (V<sub>DD</sub> and trade-off tabs are kept in the "
+                            "URL, e.g. `#/sa?page=explore&t.exvdd=3.3&t.tradeoff=area`; add the other supply with the V<sub>DD</sub> "
+                            "chips). Any X/Y/colour/symbol/facet can still be chosen. Ringed points = delivered design cards (click to "
+                            "open). Axes stay fixed when filtering. All points are at the uniform 2.5 MHz read rate into 200 fF; gate "
+                            "area is ΣW·L of the devices (not the layout area).",
                    "blocks": [{"type": "tabs", "id": "exvdd", "label": "V<sub>DD</sub>", "tabs": ex1}]})
     blocks.append({"type": "section", "title": "Per-architecture design clouds",
-                   "intro": "One panel per architecture, all on shared axes. Points are coloured by the inversion level (gm/Id as % "
-                            "of the flavour's peak, 35…94 %; delivered cards at their target level); symbol = threshold mix; the line "
-                            "is each architecture's front over the sweep points for the current axes; ringed points = delivered cards. "
-                            "One supply per tab, as on the old page.",
-                   "blocks": [{"type": "tabs", "id": "cloudvdd", "label": "V<sub>DD</sub>", "tabs": ex2}]})
+                   "intro": "One panel per architecture, all on shared axes. Points are coloured by the inversion level (fraction of "
+                            "peak gm/Id, 12 levels 35…94 %, as on the old legend); symbol = threshold mix (● 3.3V LV, ■ 6V HVL, "
+                            "◆ 6V Native); the line is each architecture's front over the sweep points; ringed points = delivered "
+                            "cards. Panel titles count all plotted points, i.e. the functional sweep points plus the delivered cards "
+                            "(6 per architecture, 3 for Dyn-bias XC and FIA + SA at one supply) — subtract those for the old "
+                            "“N functional points”. Uses the same V<sub>DD</sub> / trade-off tabs as above.",
+                   "blocks": [{"type": "tabs", "id": "exvdd", "label": "V<sub>DD</sub>", "tabs": ex2}]})
     # --- non-dominated table
     nrows = []
     for st in STG:
@@ -1526,7 +1547,7 @@ def method_page():
         "- **CM range** (and the hub's Input CM min/max) uses the ±1 mV column of the resolve-time map on the 14-point V<sub>CM</sub> "
         "grid; the old tile label ‘≥100 µV resolves’ did not match the flow.\n"
         "- **FIA gm/Id.** The FIA has an NMOS and a PMOS input pair; the hub reports both (FIA N-/P-pair gm/Id) instead of a "
-        "single value; the old spec check used their mean.\n"
+        "single value; the closure (and the spec check) uses the N/P mean at 1.8 V wi/mi and the P-pair value otherwise.\n"
         "- **Post-PEX gm/Id** is copied from the schematic closure and the post-PEX active-tail current is 0 in every record → both "
         "omitted from the hub's partial-stage results.\n"
         "- **Delay sweeps.** In some designs the sub-mV points of the delay sweep and the off-grid cells of the resolve-time map equal "

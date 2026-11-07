@@ -194,7 +194,7 @@ def to_md(n) -> str:
 # ----------------------------------------------------------------------------- figures
 GRAY_IN = "#8a8780"
 CORNER_COL = {"tt_27C": "#2a78d6", "ss_-40C": "#cf222e", "ff_125C": "#9a6700", "pilot": "#2a78d6"}
-PAL6 = ["#2a78d6", "#eb6834", "#1baf7a", "#9a6700", "#52514e", "#cf222e"]
+PAL6 = ["#2a78d6", "#eb6834", "#1baf7a", "#9a6700", "#8a8780", "#cf222e"]
 EXTRA_COL = ["#7c3aed", "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5"]
 
 
@@ -231,11 +231,11 @@ def wave_fig(waves: dict, vssl, vddl, vssh, vddh, title: str, legend_note=True):
                    "line": {"color": col, "width": width},
                    "hovertemplate": f"{corner_label(k)} %{{y:.3f}} V @ %{{x:.2f}} ns<extra></extra>"})
     shapes = [{"type": "line", "xref": "paper", "x0": 0, "x1": 1, "y0": v, "y1": v,
-               "line": {"color": "#74726c", "dash": "dot", "width": 1}} for v in (vssh, vddh)]
+               "line": {"color": "theme:muted", "dash": "dot", "width": 1}} for v in (vssh, vddh)]
     ann = [{"xref": "paper", "x": 1, "xanchor": "right", "y": vddh, "yanchor": "bottom", "showarrow": False,
-            "text": f"VDDH {fx(vddh, 2)} V", "font": {"size": 10, "color": "#74726c"}},
+            "text": f"VDDH {fx(vddh, 2)} V", "font": {"size": 10, "color": "theme:muted"}},
            {"xref": "paper", "x": 1, "xanchor": "right", "y": vssh, "yanchor": "top", "showarrow": False,
-            "text": f"VSSH {fx(vssh, 2)} V", "font": {"size": 10, "color": "#74726c"}}]
+            "text": f"VSSH {fx(vssh, 2)} V", "font": {"size": 10, "color": "theme:muted"}}]
     lay = {"title": {"text": title, "font": {"size": 13}, "x": 0.01},
            "xaxis": {"title": {"text": "Time (ns)"}},
            "yaxis": {"title": {"text": "Voltage (V)"}, "range": [ymin, ymax]},

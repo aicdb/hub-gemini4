@@ -39,7 +39,7 @@ import json
 import math
 import re
 import sys
-from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -85,9 +85,9 @@ def jsn(x: float) -> str:
 
 
 def _q(v: float, exp: int) -> Decimal:
-    """round the exact binary value of v to 10**exp like JS (ties → the larger number)"""
+    """round the exact binary value of v to 10**exp like JS toFixed (ties → away from zero)"""
     x = Decimal(float(v))
-    return x.quantize(Decimal(1).scaleb(exp), rounding=ROUND_HALF_UP if x >= 0 else ROUND_HALF_DOWN)
+    return x.quantize(Decimal(1).scaleb(exp), rounding=ROUND_HALF_UP)     # JS rounds the magnitude: ties away from zero
 
 
 def prec(v: float, d: int) -> float:
@@ -195,8 +195,17 @@ def note(text, tone="info", **kw):
     return {"type": "note", "text": text, "tone": tone, **kw}
 
 
+def logfix(layout):
+    """print log-axis ticks with SI prefixes down to 1 (1m instead of 0.001)"""
+    for k, ax in (layout or {}).items():
+        if re.match(r"^[xy]axis\d*$", k) and isinstance(ax, dict) and ax.get("type") == "log":
+            ax.setdefault("exponentformat", "SI")
+            ax.setdefault("minexponent", 0)
+    return layout
+
+
 def chart(title, data, layout=None, caption=None, height=None, **kw):
-    b = {"type": "chart", "title": title, "data": r5(data), "layout": r5(layout or {})}
+    b = {"type": "chart", "title": title, "data": r5(data), "layout": r5(logfix(dict(layout or {})))}
     if caption:
         b["caption"] = caption
     if height:
@@ -266,6 +275,11 @@ def mc_invalid(mc):
     return [s for s in mc if s.get("ok") and isnum(s.get("pm_min")) and s["pm_min"] <= PM_INVALID]
 
 
+def pvt_ok30(p):
+    r = p.get("r") or {}
+    return bool(r.get("ok")) and isnum(r.get("pm_min")) and r["pm_min"] >= PM_ROBUST_MC
+
+
 def mc_worst(mc):
     v = [s["pm_min"] for s in mc_valid(mc)]
     return min(v) if v else None
@@ -333,6 +347,7 @@ METRICS = [
     ("a0", "DC loop gain", "dB", False, "high", 3, lambda m, ch, c: m.get("a0_min")),
     ("pm_pvt", "PM worst PVT", "°", False, "high", 3, None),
     ("pm_mc", "PM worst MC", "°", False, "high", 3, None),
+    ("pvt35", "PVT corners PM ≥ 35°", "", False, "high", 3, None),
     ("iq", "Iq", "A", True, "low", 3, lambda m, ch, c: m.get("iq") or None),
     ("iq_max", "Iq @ Imax", "A", True, "low", 3, lambda m, ch, c: m.get("iq_max_load") or None),
     ("eff", "Efficiency @ Imax", "%", False, "high", 4, lambda m, ch, c: None if m.get("current_eff") is None else m["current_eff"] * 100),
@@ -363,6 +378,7 @@ METRIC_DESC = {
     "gm": "Worst gain margin. The bench reports 35 dB when the loop phase never reaches −180°, so 35 dB means ≥ 35 dB.",
     "pm_pvt": "Worst PM over the 17 PVT points (5 corners × 3 temperatures + 2 supply extremes).",
     "pm_mc": "Worst PM over the Monte-Carlo samples (global + mismatch); invalid PM values < −180° excluded.",
+    "pvt35": "Number of the 17 PVT points that meet the PM ≥ 35° target (the repo's per-point flag). The robust flag and the PVT count use PM ≥ 30°.",
     "iq": "Quiescent current at I_min (all current from V_IN and V_REF minus the load).",
     "zeta": "Second-order equivalent damping from the small-step overshoot; the bench sets ζ = 1.0 whenever the overshoot is ≤ 1 %.",
     "dropout": "V_IN − V_OUT where V_OUT leaves regulation, at I_max. The bench floors it at 15 mV, so 15 mV means ≤ 15 mV.",
@@ -394,7 +410,8 @@ def stage_result(V, d, area, key):
     out["height"] = round(lay["height_um"], 2) if isnum(lay.get("height_um")) else None
     res = {"metrics": out, "robust": bool(V["robust"])}
     if V["pvt"]:
-        res["pvt"] = {"pass": sum(1 for p in V["pvt"] if p.get("pass")), "total": len(V["pvt"])}
+        res["pvt"] = {"pass": sum(1 for p in V["pvt"] if pvt_ok30(p)), "total": len(V["pvt"])}
+        out["pvt35"] = sum(1 for p in V["pvt"] if p.get("pass"))
     if V["mc"]:
         res["mc"] = {"pass": sum(1 for s in mc_valid(V["mc"]) if s["pm_min"] >= PM_ROBUST_MC), "total": len(V["mc"])}
     notes = []
@@ -405,10 +422,11 @@ def stage_result(V, d, area, key):
         notes.append("Magic flat extraction of the complete LDO cell (devices as drawn, one per finger; MIM caps, poly "
                      "segments and all parasitic capacitances ≥ 0.01 fF; no wire resistance), same benches, PVT and MC re-run"
                      + (f" — {pc['n_mos']:,} extracted transistors, {pc['n_parasitic_c']:,} parasitic capacitors" if pc.get("n_mos") else ""))
-    notes.append(f"robust = repo flag (PVT sweep all-stable, worst MC PM ≥ {PM_ROBUST_MC:g}°); PVT count = corners meeting the "
-                 f"per-point PM ≥ {META.get('pm_target', 35)}° flag; MC count = samples with PM ≥ {PM_ROBUST_MC:g}°")
-    if V["pvt"] and res["pvt"]["pass"] < res["pvt"]["total"] and V["robust"]:
-        notes.append(f"the repo marks this design PVT-robust although only {res['pvt']['pass']}/{res['pvt']['total']} corners meet PM ≥ {META.get('pm_target', 35)}° (worst {num(out['pm_pvt'], 1)}°)")
+    notes.append(f"robust = repo flag (PVT sweep all-stable, worst MC PM ≥ {PM_ROBUST_MC:g}°); PVT and MC counts = corners / samples with PM ≥ {PM_ROBUST_MC:g}° "
+                 f"(the criterion behind the robust flag); the metric “PVT corners PM ≥ {META.get('pm_target', 35)}°” counts the repo's stricter per-point flag")
+    if V["pvt"] and out.get("pvt35", 0) < len(V["pvt"]) and V["robust"]:
+        notes.append(f"**discrepancy:** robust by the repo's ≥ {PM_ROBUST_MC:g}° criterion, but only {out['pvt35']}/{len(V['pvt'])} PVT corners meet the "
+                     f"PM ≥ {META.get('pm_target', 35)}° target stated in the methodology (worst {num(out['pm_pvt'], 1)}°)")
     inv = mc_invalid(V["mc"])
     if inv:
         notes.append(f"{len(inv)} Monte-Carlo sample(s) report an invalid PM ({', '.join(num(s['pm_min'], 1) + '°' for s in inv[:3])}; phase-unwrap artefact) and are excluded from the worst-case PM")
@@ -428,6 +446,89 @@ def stage_result(V, d, area, key):
 
 # ----------------------------------------------------------------------------- detail document builders
 INV_SUFFIX = {"sub": "subthreshold", "wi": "weak", "mi": "moderate", "si": "strong"}
+
+
+PRIMS = ("nfet_", "pfet_", "cap_mim", "ppolyf", "nplus", "pplus", "npolyf", "ppoly")
+
+
+def netlist_flat(key):
+    """True when the LDO netlist only instantiates primitive devices (no sub-cell of the reused generator)"""
+    p = DOCS / "designs" / key / "netlist.spice"
+    if not p.is_file():
+        return None
+    for ln in p.read_text().splitlines():
+        t = ln.split()
+        if t and t[0][:1].upper() == "X" and not any(x.startswith(PRIMS) for x in t[1:]):
+            return False
+    return True
+
+
+def gds_flat(key):
+    """True when the GDS has a single structure and no SREF/AREF records (stdlib GDS record scan)"""
+    p = DOCS / "designs" / key / f"{key}.gds.gz"
+    if not p.is_file():
+        return None
+    import gzip
+    b = gzip.decompress(p.read_bytes())
+    i = nstr = nref = 0
+    while i + 4 <= len(b):
+        n, rt = int.from_bytes(b[i:i + 2], "big"), b[i + 2]
+        if n < 4:
+            break
+        if rt == 0x06:
+            nstr += 1
+        elif rt in (0x0A, 0x0B):
+            nref += 1
+        i += n
+    return nstr == 1 and nref == 0
+
+
+def cell_supply(cid):
+    m = re.search(r"[_-](1v8|3v3|5v0)[_-]", str(cid))
+    return {"1v8": 1.8, "3v3": 3.3, "5v0": 5.0}.get(m.group(1)) if m else None
+
+
+REUSE_CACHE = {}
+
+
+def reuse_notes(c, d):
+    """what the published netlist / GDS show about the 'reused' cell (data-driven, honest)"""
+    key = c["key"]
+    if key in REUSE_CACHE:
+        return REUSE_CACHE[key]
+    cell = (c.get("ea") or c.get("comp") or {}).get("id")
+    if not cell:
+        REUSE_CACHE[key] = ""
+        return ""
+    out = []
+    nf, gf = netlist_flat(key), gds_flat(key)
+    if nf and gf:
+        what = "OTA" if c.get("ea") else "comparator"
+        out.append(f"The LDO netlist and GDS are flat: the {what}'s transistors are re-instantiated with the card's sizes and laid out inside the LDO cell; "
+                   f"the {'opa' if c.get('ea') else 'sa'}-gen sub-cell netlist and GDS are not instantiated (the text above is the old site's description). "
+                   "The LDO layout can therefore be smaller than the linked card's layout.")
+    if c.get("comp") and not c.get("ea"):
+        devs = (d.get("design") or {}).get("devs") or []
+        if not any("clk" in f"{v.get('g')}{v.get('d')}{v.get('s')}".lower() for v in devs):
+            out.append("The DLDO netlist contains no clocked latch: the “comparator” is a continuous-time 5-transistor stage whose input pair has the "
+                       "sa-gen cell's input-pair size; the StrongARM latch, clock and output buffers of the linked cell (schematic below) are not part of this design.")
+    cs = cell_supply(cell)
+    if cs and abs(cs - c["vin"]) > 0.01:
+        out.append(f"The reused card was characterised at {jsn(cs)} V, but this LDO runs it at V<sub>IN</sub> = {jsn(c['vin'])} V, although the methodology says "
+                   "“a card qualifies when its supply is V<sub>IN</sub>”.")
+    REUSE_CACHE[key] = " ".join(out)
+    return REUSE_CACHE[key]
+
+
+def reuse_role(c, d):
+    cell = (c.get("ea") or c.get("comp") or {}).get("id")
+    flat = netlist_flat(c["key"]) and gds_flat(c["key"])
+    cs = cell_supply(cell)
+    sup = f"; card characterised at {jsn(cs)} V, used at V_IN = {jsn(c['vin'])} V" if cs and abs(cs - c["vin"]) > 0.01 else ""
+    if c.get("ea"):
+        return ("error amplifier — transistor sizes from this card, re-instantiated flat (no sub-cell netlist/GDS)" if flat else "error amplifier") + sup
+    clk = any("clk" in f"{v.get('g')}{v.get('d')}{v.get('s')}".lower() for v in (d.get("design") or {}).get("devs") or [])
+    return ("DLDO comparator — input-pair size only; continuous-time 5-T stage, flat, no clocked latch" if not clk else "DLDO comparator") + sup
 
 
 def input_pair(d):
@@ -613,15 +714,17 @@ def design_point(d, dbn):
     return sec("Design point", blocks)
 
 
-def ea_panel(c):
+def ea_panel(c, d=None):
     ea = c.get("ea")
     if not ea:
         return None
+    extra = reuse_notes(c, d) if d is not None else ""
     return sec("Error amplifier — opa-gen cell", [mdb(
         f"The OTA is the opa-gen design card {opa_link(ea['id'])} ({ea.get('name')}, {ea.get('inv')}), used unchanged: its netlist in every "
         f"simulation here, its GDS as a sub-cell of the layout and its own LVS reference. Card figures: I<sub>DD</sub> {si(ea.get('idd'), 'A')}, "
         f"A<sub>0</sub> {num(ea.get('a0_db'), 1)} dB, UGB {si(ea.get('ugb'), 'Hz')} (at the opa-gen design load). "
-        f"<small>(The link opens the {OPA_VARIANT.replace('p', ' pF')}-load opa-gen card on the hub, the variant whose sizes and figures match.)</small>")])
+        f"<small>(The link opens the {OPA_VARIANT.replace('p', ' pF')}-load opa-gen card on the hub, the variant whose sizes and figures match.)</small>")]
+               + ([note(extra, "warn", title="Hub check of the published files")] if extra else []))
 
 
 def device_rows(d, V):
@@ -709,7 +812,7 @@ def schematic_tab(d, V_pre, V_full):
     if tl:
         who = (f"the schematic of the opa-gen OTA cell {opa_link(c['ea']['id'])}" if c.get("ea") else
                f"the schematic of the sa-gen comparator cell {sa_link(c['comp']['id'])}" if c.get("comp") else "the schematic of the reused sub-cell")
-        blocks.append({"type": "image", "title": "Error-amplifier sub-cell — transistor level" if not (c.get("comp") and not c.get("ea")) else "Comparator sub-cell (sa-gen) — transistor level",
+        blocks.append({"type": "image", "title": "Error-amplifier sub-cell — transistor level" if not (c.get("comp") and not c.get("ea")) else "Comparator sub-cell (sa-gen) — transistor level (linked card; only its input-pair size is used here)",
                        "src": f"{base}/schematic_tl.svg", "max_height": 900,
                        "caption": f"The triangle above expanded: {who} as published on its design card (the cell is used unchanged). "
                                   "<small>The old site's post-layout file `schematic_tl_sizing.svg` is byte-identical to this one.</small>"})
@@ -1084,8 +1187,10 @@ def detail_doc(d, dbn):
         ov.append(design_point(d, dbn))
     else:
         ov = [key_results(d, V) for V in (Vp, Vf) if V]
-        if ea_panel(c):
-            ov.append(ea_panel(c))
+        if ea_panel(c, d):
+            ov.append(ea_panel(c, d))
+        elif reuse_notes(c, d):
+            ov.append(sec("Comparator — sa-gen cell", [note(reuse_notes(c, d), "warn", title="Hub check of the published files")]))
         ov.append(sec("", [spec_checks(d, V) for V in (Vp, Vf) if V]))
         ov.append(design_point(d, dbn))
         sim = [sim_section(d, V) for V in (Vp, Vf) if V]
@@ -1168,9 +1273,11 @@ for c in cards:
                + ".")
     uses = []
     if c.get("ea"):
-        uses.append({"component": "opa", "design": opa_id(c["ea"]["id"]), "role": "error amplifier"})
+        uses.append({"component": "opa", "design": opa_id(c["ea"]["id"]), "role": reuse_role(c, d)})
     if c.get("comp"):
-        uses.append({"component": "sa", "design": c["comp"]["id"], "role": "DLDO comparator"})
+        uses.append({"component": "sa", "design": c["comp"]["id"], "role": reuse_role(c, d)})
+    if reuse_notes(c, d) and cell_supply((c.get("ea") or c.get("comp") or {}).get("id")) not in (None, c["vin"]):
+        summary += f" **Note:** the reused card was characterised at {jsn(cell_supply((c.get('ea') or c.get('comp'))['id']))} V but runs at V<sub>IN</sub> = {jsn(c['vin'])} V (see Overview)."
     details[key] = detail_doc(d, db_count.get(key, 0))
     designs.append({
         "id": key,
@@ -1327,7 +1434,9 @@ old_vin, old_cls = jsn(META["vins"][-1]), ICLS[1] if len(ICLS) > 1 else ICLS[0]
 db_blocks = [
     S(mdb(db_lede_pre, title="Design database explorer"), "pre", "lede"),
     S(mdb(db_lede_full, title="Post-layout design database"), "full", "lede"),
-    dict(stage="pre", **note(db_correction, "warn")) if db_correction else None,
+    S(note(db_correction, "warn"), "pre", "candnote") if db_correction else None,
+    S(note("**Hub note.** Every point is a delivered design simulated on its extracted netlist. PSRR is signed (negative = supply ripple amplified; the old site "
+           f"showed abs()); {DAG} marks quantities the repo's builder derives by formula; UGB is the worst case over the class corners.", "info"), "full", "candnote"),
     S({"type": "stats", "title": "Database statistics", "items": [
         stat("explored design points", f"{(DB or {}).get('n_total', 0):,}"),
         stat("nominally feasible (in the database)", f"{(DB or {}).get('n', 0):,}"),
@@ -1341,7 +1450,7 @@ db_blocks = [
     {"type": "explorer", "title": "Design-space explorer", "src": "hub/data/explore.json", "dims": dims,
      "x": "iq", "y": "lreg", "color": "arch", "symbol": "pol", "filters": ["vin_c", "cls", "pol", "arch", "src", "pin"], "cat_axes": True,
      "highlight": "delivered", "highlight_label": "Delivered cards", "design_key": "design", "label_key": "label",
-     "hover": ["iq", "ugb", "pm", "zeta", "lreg", "do_max", "linreg", "psrr1k"], "height": 560,
+     "hover": ["iq", "ugb", "pm", "a0", "lreg", "verr"], "height": 560,
      "presets": [{"label": "Old default: load regulation vs I_q · V_IN 3.3 V · 10–100 nA", "x": "iq", "y": "lreg",
                   "show": {"vin_c": [old_vin], "cls": [old_cls]},
                   "desc": f"The old explorer opened at V<sub>IN</sub> = {old_vin} V and load class {icls_label(old_cls)}."},
@@ -1390,9 +1499,9 @@ for k, lbl, unit, sio, lg, better in DBM:
         if not tr:
             continue
         rel = f"data/dist/{k}_{st}.json"
-        wjson(rel, {"data": r5(tr), "layout": {"boxmode": "group", "hovermode": "closest", "legend": LEG,
+        wjson(rel, {"data": r5(tr), "layout": logfix({"boxmode": "group", "hovermode": "closest", "legend": LEG,
                                                "xaxis": {"type": "category", "categoryorder": "array", "categoryarray": [ARCH_SHORT.get(a, a) for a in ARCH_ORDER], "tickangle": -30},
-                                               "yaxis": {"title": {"text": lbl + (f" ({unit})" if unit else "")}, "type": "log" if lg else "linear", "exponentformat": "SI"}}})
+                                               "yaxis": {"title": {"text": lbl + (f" ({unit})" if unit else "")}, "type": "log" if lg else "linear", "exponentformat": "SI"}})})
         cap = ("explored candidates of every load class" if k in PER_POINT else "delivered cards only (the candidates carry copies of the card value)") if st == "pre" \
             else "delivered designs simulated post-layout"
         tb.append(S({"type": "chart", "title": f"{lbl} — distribution per architecture", "src": f"hub/{rel}", "height": 460,
@@ -1484,7 +1593,15 @@ STAB = [
 roles = {"inp": "error-amplifier input pair", "cas": "cascodes", "load": "active loads / mirrors / buffers", "cs": "bias current sources"}
 gt = META.get("gm_targets") or {}
 gm_rows = [[roles[r], (gt.get("WI") or {}).get(r), (gt.get("MI") or {}).get(r)] for r in roles] + [["pass device (at I<sub>max</sub>)", "8–24, explored", "8–24, explored"]]
+n_flat = sum(1 for x in designs if "flat" in " ".join(u.get("role", "") for u in x.get("uses") or []))
+n_vmis_m = sum(1 for x in designs if "used at V_IN" in " ".join(u.get("role", "") for u in x.get("uses") or []))
+method_check = (f"**Hub check of the published files.** All {n_flat} of {len(designs)} LDO netlists and GDS files are flat (no sub-cell instances): the error "
+                "amplifier's transistors are re-instantiated with the opa-gen card's sizes (without the card's output compensation capacitor) and laid out inside "
+                "the LDO cell, so items 1 and 8 (“netlist for simulation, GDS for layout … placed unchanged as a sub-cell”) do not describe the published designs. "
+                "The hybrid PI DLDOs contain a continuous-time 5-transistor stage with the sa-gen cell's input-pair size and no clocked latch, unlike item 9. "
+                + (f"{n_vmis_m} designs at V<sub>IN</sub> = 3.3 V reuse cards characterised at 1.8 V although item 1 requires the card's supply to be V<sub>IN</sub>." if n_vmis_m else ""))
 method_blocks = [
+    note(method_check, "warn"),
     sec("Methodology", [
         sec("Flow", [mdb("\n".join(f"{i + 1}. {t}" for i, t in enumerate(FLOW)))]),
         sec("", [sec("Stability test conditions", [mdb("\n".join(f"- {t}" for t in STAB))]),
@@ -1494,7 +1611,7 @@ method_blocks = [
     ], cols=2),
 ]
 if GMID:
-    ramp = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]
+    ramp = ["#8b5cf6", "#c026d3", "#db2777", "#f43f5e", "#ea580c"]   # sequential violet → orange, ≥ 3:1 on light and dark panels
     gtabs = []
     for dev in ("nfet_03v3", "pfet_03v3"):
         Dd = GMID.get(dev)
@@ -1542,13 +1659,14 @@ for v in META["vins"]:
                                  sum(1 for c in CARDS if c["vin"] == v and c["vout"] == o and c["iclass"] == k and c["tier"] == "neg"), cl_by_cls.get(k), v])
 skip_rows = [[c["key"], (d or {}).get("diag", {}).get("explanation", "") if d else "no data.json", "; ".join(f"{a}: {b}" for a, b in ((d or {}).get("diag") or {}).get("reasons", []))]
              for c, d in skipped]
+n_vmis = sum(1 for x in designs if "used at V_IN" in " ".join(u.get("role", "") for u in x.get("uses") or []))
 n_su_bad = sum(1 for x in designs for st, r in x["results"].items() if "start-up time omitted" in (r.get("note") or ""))
 n_stage_rows = sum(len(x["results"]) for x in designs)
 flag_mismatch, bad_pm = [], []
 for x in designs:
     for st, r in x["results"].items():
-        if r.get("robust") and r.get("pvt") and r["pvt"]["pass"] < r["pvt"]["total"]:
-            flag_mismatch.append(f"{x['id']} {st} {r['pvt']['pass']}/{r['pvt']['total']}")
+        if r.get("robust") and r.get("pvt") and (r["metrics"].get("pvt35") or 0) < r["pvt"]["total"]:
+            flag_mismatch.append(f"{x['id']} {st} {r['metrics'].get('pvt35')}/{r['pvt']['total']}")
         if "invalid PM" in (r.get("note") or ""):
             bad_pm.append(f"{x['id']} {st}")
 about_blocks = [
@@ -1595,13 +1713,19 @@ about_blocks = [
         f"({n_su_bad} of {n_stage_rows} design/stage traces); the design pages mark those values {DDAG}.",
         "- **Input pair / parameters:** the card field `pin` (always NMOS) and the knob `inv` (always subthreshold) are builder defaults; the hub derives the input pair "
         "from the device list and the inversion from the reused cell, lists each capacitor and resistor separately, and takes the DLDO pass-cell sizes from the devices.",
-        f"- **Robustness:** `robust` is the repo's flag (PVT sweep all-stable and worst Monte-Carlo PM ≥ {PM_ROBUST_MC:g}°). The PVT count on the hub is the number of "
-        f"corners with the repo's per-point pass flag (PM ≥ {META.get('pm_target')}°), the MC count the samples with PM ≥ {PM_ROBUST_MC:g}°."
-        + (f" {len(flag_mismatch)} design/stage combination(s) are flagged robust with fewer passing corners ({', '.join(flag_mismatch[:6])}{' …' if len(flag_mismatch) > 6 else ''}); "
-           "the note on their pages says so." if flag_mismatch else "")
+        f"- **Robustness:** `robust` is the repo's flag (PVT sweep all-stable and worst Monte-Carlo PM ≥ {PM_ROBUST_MC:g}°). The hub's PVT and MC counts use the same "
+        f"PM ≥ {PM_ROBUST_MC:g}° criterion (it reproduces the repo's PVT flag on every design), so counts and flag agree. The methodology's stricter PM ≥ "
+        f"{META.get('pm_target')}° target is the separate metric *PVT corners PM ≥ {META.get('pm_target')}°* (Table view, Robustness matrix preset)."
+        + (f" {len(flag_mismatch)} design/stage combination(s) are robust by the ≥ {PM_ROBUST_MC:g}° criterion but miss the {META.get('pm_target')}° target at some corners "
+           f"({', '.join(flag_mismatch[:6])}{' …' if len(flag_mismatch) > 6 else ''}); their pages carry a discrepancy note." if flag_mismatch else "")
         + (f" {len(bad_pm)} design/stage combination(s) contain Monte-Carlo PM values below −180° ({', '.join(bad_pm[:6])}) — phase-unwrap artefacts, excluded from worst cases."
            if bad_pm else f" PM values below −180° would be treated as phase-unwrap artefacts (none in the current data)."),
         "- **Database explorer:** candidate-point columns copied from the delivered card are attributed to the card only (see the note on that page).",
+        f"- **Reuse is by sizing, not by instance:** all published LDO netlists and GDS files are flat (no sub-cell instances). The error-amplifier transistors carry the "
+        "opa-gen card's sizes (its output compensation capacitor is not included) and are laid out inside the LDO cell; the DLDOs contain a continuous-time 5-T stage "
+        "with the sa-gen cell's input-pair size, not the clocked latch. The `uses` roles say so; some LDO layouts are smaller than the linked card's layout.",
+        f"- **Supply of the reused cards:** {n_vmis} designs at V<sub>IN</sub> = 3.3 V reuse cards characterised at 1.8 V, contrary to the methodology's "
+        "“a card qualifies when its supply is V<sub>IN</sub>”; their pages and `uses` roles flag it.",
         "- **Post-layout values** are read from each design's `data.json` (`post.char`), not from `index.json` `post.m`, which the builder back-fills with schematic "
         "values when a post-layout field is missing.",
         "- **Load transient C<sub>L</sub>:** the old Key-results tile and caption printed the global nominal 100 pF; the hub prints the class's testbench C<sub>L</sub> used in the "
@@ -1655,11 +1779,12 @@ comp = {
                            {"label": "Noise & PSRR → PSRR 1 kHz / 100 kHz (noise not exported)", "metrics": ["psrr_1k", "psrr_100k"]},
                            {"label": "Layout area (µm², W × H)", "metrics": ["area", "width", "height"]},
                            {"label": "Quiescent Iq & dropout", "metrics": ["iq", "dropout"]},
-                           {"label": "Robustness (worst PVT / MC PM)", "metrics": ["pm_pvt", "pm_mc"]}]},
+                           {"label": "Robustness (worst PVT PM · PVT corners ≥ 35° · worst MC PM)", "metrics": ["pm_pvt", "pvt35", "pm_mc"]}]},
     "card_metrics": ["ugb", "area", "width", "height", "iq", "a0", "pm", "pm_pvt", "pm_mc", "psrr_1k", "dropout", "load_reg", "droop"],
-    "table_metrics": ["iq", "ugb", "pm", "pm_pvt", "pm_mc", "a0", "dropout", "line_reg", "load_reg", "psrr_1k", "droop", "fom", "area"],
+    "table_metrics": ["iq", "ugb", "pm", "pm_pvt", "pvt35", "pm_mc", "a0", "dropout", "line_reg", "load_reg", "psrr_1k", "droop", "fom", "area"],
     "cards_group_by": ["vout", "class"],
-    "builds_on": [{"id": "opa", "role": "error amplifier (analog LDOs)"}, {"id": "sa", "role": "clocked comparator (hybrid PI DLDOs)"}],
+    "builds_on": [{"id": "opa", "role": "error-amplifier sizing (analog LDOs; re-instantiated flat)"},
+                  {"id": "sa", "role": "comparator input-pair sizing (hybrid PI DLDOs; continuous-time stage, flat)"}],
     "pages": [{"id": "db", "title": "Database explorer", "src": "hub/pages/db.json"},
               {"id": "method", "title": "Methodology", "src": "hub/pages/method.json"},
               {"id": "about", "title": "About & data notes", "src": "hub/pages/about.json"}],

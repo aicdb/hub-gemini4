@@ -5,6 +5,7 @@ import json
 import math
 import re
 
+from aux_detail import FLAGS
 from aux_fmt import DASH, fmt_mhz, isnum, num, write_json
 
 PALETTE = ["#2563eb", "#ea580c", "#059669", "#d97706", "#7c3aed", "#db2777", "#0284c7", "#dc2626", "#4f46e5"]
@@ -84,6 +85,11 @@ def unit_of(key):
     return ("", 1, False)
 
 
+SYM = {"w": "W", "l": "L", "c": "C", "r": "R", "v": "V", "i": "I", "m": "m", "f": "f", "t": "t", "n": "n", "k": "k", "g": "g"}
+WORDS = {"err": "error", "sens": "sensitivity", "nom": "nominal", "ss": "SS", "ff": "FF", "tt": "TT", "mid": "mid", "vcm": "V_CM", "ibias": "I_bias",
+         "vctrl": "V_ctrl", "kvco": "K_VCO", "signed": "(signed)", "gmid": "g_m/I_D", "dac": "DAC", "vi": "V-I", "mr": "mirror", "sw": "switch"}
+
+
 def pretty(key):
     if key in NICE:
         return NICE[key]
@@ -92,7 +98,12 @@ def pretty(key):
         if base.endswith(suf):
             base = base[: -len(suf)]
             break
-    return base.replace("_", " ")
+    tok = [t for t in base.split("_") if t]
+    if len(tok) >= 2 and tok[0] in SYM and all(len(t) <= 5 for t in tok[1:]):
+        return f"{SYM[tok[0]]}_{''.join(tok[1:])}"          # w_n -> W_n, c_load -> C_load, m_core -> m_core
+    words = [WORDS.get(t, t) for t in tok]
+    txt = " ".join(words)
+    return txt[:1].upper() + txt[1:]
 
 
 # ----------------------------------------------------------------------------- explorer data
@@ -158,6 +169,10 @@ def family_dse(ft, fd, fmeta, cards, details, mlabel):
             if not m:
                 continue
             r = dict(m)
+            for k, v in list(r.items()):      # placeholders / clip limits / 'not measured' sentinels are not plotted
+                fl = FLAGS.get((ft, k))
+                if fl and fl[1] != "sweep top" and isnum(v) and fl[0](v):
+                    r[k] = None
             r.update(c.get("knobs") or {})
             r.update({"topo": dv["topo"], "vdd": dv["vdd"], "vdd_tag": dv["vdd_tag"], "target_tag": dv["target_tag"], "area_um2": dv.get("area_um2", m.get("area_um2")),
                       "_kind": kind, "_stage": stg, "_design": dv["card_id"], "_label": dv["card_id"], "_front": {}})
@@ -258,7 +273,8 @@ def family_dse(ft, fd, fmeta, cards, details, mlabel):
                 {"key": "supply", "label": "Supply", "type": "cat", "labels": {"1v8": "1.8 V", "3v3": "3.3 V"}, "order": ["1v8", "3v3"]},
                 {"key": "kind", "label": "Point kind", "type": "cat", "order": ["dse", "post", "pre"],
                  "labels": {"dse": "DSE candidate (pre-PEX)", "pre": "Delivered card · pre-PEX", "post": "Delivered card · post-PEX"},
-                 "colors": {"dse": "#94a3b8", "pre": "#0f172a", "post": "#dc2626"}}]
+                 "colors": {"dse": "#94a3b8", "pre": "theme:ink", "post": "#dc2626"},
+                 "symbols": {"dse": "circle", "pre": "diamond", "post": "star"}}]
     if any(r.get("target_tag") for r in rows):
         cols["target"] = [r.get("target_tag") for r in rows]
         cat_dims.append({"key": "target", "label": "Target band", "type": "cat", "labels": tgt_lab, "order": [t["tag"] for t in fmeta["targets"]]})
@@ -424,7 +440,8 @@ HERO_EXPLORE = ("**MULTI-OBJECTIVE COMPUTE-FARM DSE & PARETO FRONT ANALYSIS**\n\
                 "overlay chart, or inspect per-topology design clouds in the locked-axis small-multiples grid (`sharedRange` ensures every facet panel shares "
                 "identical X and Y limits). Deliverable cards are highlighted as diamonds (Pre-PEX) and stars (Post-PEX); click any deliverable marker to open its card.")
 FOM_KEYS = {"fom_dbc", "fom_t_dbc"}
-FAM_ALIASES = {"vref_2t": {"power_uw"}, "clk_div": {"vpp_v"}}
+FAM_ALIASES = {"vref_2t": {"power_uw"}, "clk_div": {"vpp_v"}, "cml_ro": {"tr_ns", "tf_ns"}, "cml_dco_vco": {"tr_ns", "tf_ns"},
+               "tcap": {"target_pf", "c_lsb_ff"}, "tres": {"target_kohm"}, "cm_idac": {"target_ua"}, "bm_iref": {"acc_err_pct"}}
 
 
 def family_explore(out, f, fd, cards, dse, details):
@@ -473,7 +490,7 @@ def family_explore(out, f, fd, cards, dse, details):
         "highlight": "delivered", "highlight_label": "Delivered cards (click to open)", "design_key": "design", "label_key": "label",
         "hover": ["topo", "supply", "kind"] + (["target"] if "target" in X["cols"] else []), "presets": ex_presets, "preset_default": 0,
         "height": 560, "cat_axes": True,
-        "intro": "Delivered cards are ringed. Pre-PEX view: DSE candidates + delivered ◆ pre-PEX and ✕ post-PEX values (as the retired Schematic mode); "
+        "intro": "Delivered cards are ringed. Pre-PEX view: DSE candidates + delivered ◆ pre-PEX and ★ post-PEX values (as the retired Schematic mode); "
                  "Full post-PEX view: DSE candidates + post-PEX values only. Click a delivered point to open its card.",
         "caption": " ".join(notes),
     }
@@ -652,15 +669,31 @@ DELTA_LABEL = {"f_osc_mhz": ("f_osc", "%"), "f_center_mhz": ("f_center", "%"), "
                "psrr_100hz_db": ("PSRR @ 100 Hz", "dB")}
 
 
+DELTA_ALIASES = {"acc_err_pct", "f_max_mhz"}
+NICE.update({"i_fs_ua": "I_FS", "copy_err_pct": "Copy error", "v_comp_v": "V_comp", "rout_mohm": "R_out", "bw_mhz": "BW (−3 dB)", "bw_3db_mhz": "BW (−3 dB)",
+             "c_max_pf": "C_max", "c_min_pf": "C_min", "q_factor_100m": "Q @ 100 MHz", "esr_ohm": "ESR", "r_nom_kohm": "R_nom", "tc_ppm_c": "TC",
+             "line_sens_pct_v": "Line sensitivity", "min_vdd_v": "Min supply", "iref_ua": "I_REF", "tuning_ratio": "Tuning ratio", "fom": "FoM",
+             "f_max_ghz": "f_max,in", "f_max_mhz": "f_max", "psrr_100hz_db": "PSRR @ 100 Hz", "linearity_err_pct": "I–V linearity error",
+             "f_mid_mhz": "Mid-code frequency", "kvco_signed_mhz_per_unit": "K (signed)", "vcm_v": "Output common mode V_CM", "v_comp_v": "V_comp",
+             "trim_code_ss": "Trim code (SS)", "trim_code_ff": "Trim code (FF)", "trim_code_tt": "Trim code (TT)", "ss_trim_err_pct": "SS trim error",
+             "ff_trim_err_pct": "FF trim error", "trim_range_pct": "Trim range", "power_min_uw": "Power (min code)", "power_max_uw": "Power (max code)",
+             "vctrl_v": "Control voltage", "c_total_pf": "C total", "c_var_ff": "Varactor C", "c_unit_ff": "Unit C", "c_load_pf": "C_load", "c_load_ff": "C_load",
+             "ibias_ua": "I_bias", "r_load_ohm": "R_load", "r_deg_kohm": "R_deg", "r_deg_ohm": "R_deg", "r_s_ohm": "R_s", "r_poly_ohm": "R_poly", "r_diff_ohm": "R_diff",
+             "load_scale": "Load scale", "aspect_ratio_top_bot": "Aspect ratio top/bottom", "v_sw_v": "Switch swing", "vctrl_nom_v": "Nominal V_ctrl",
+             "f_out_mod0_ghz": "Output frequency (mod 0)", "f_out_mod1_ghz": "Output frequency (mod 1)", "target_ghz": "Target input frequency",
+             "ratio_err_mod0_pct": "Ratio error (mod 0)", "ratio_err_mod1_pct": "Ratio error (mod 1)",
+             "f_out_ghz": "Output frequency", "div_ratio_mod0": "Div ratio (mod 0)", "div_ratio_mod1": "Div ratio (mod 1)", "i_lsb_ua": "I LSB"})
+
+
 def delta_table(fcards):
     keys = []
     for c in fcards:
         for k in (c.get("deltas") or {}):
-            if k not in keys:
+            if k not in keys and k not in ALIASES and k not in DELTA_ALIASES:
                 keys.append(k)
     cols = [{"key": "id", "label": "Card ID", "type": "design"}, {"key": "vdd", "label": "VDD", "unit": "V"}, {"key": "tgt", "label": "Target", "type": "text"}]
     for k in keys:
-        lab, u = DELTA_LABEL.get(k, (pretty(k), "dB" if k.endswith("_db") or k.endswith("_dbc") else "%"))
+        lab, u = DELTA_LABEL.get(k, (NICE.get(k) or pretty(k), "dB" if k.endswith("_db") or k.endswith("_dbc") else "%"))
         cols.append({"key": k, "label": lab, "unit": u, "digits": 3, "title": f"generator delta of {k} ({'absolute' if u == 'dB' else 'relative'})"})
     rows = []
     for c in fcards:
@@ -779,6 +812,11 @@ def headline(c, st):
     return main, sub, pv
 
 
+HEAD_FIELDS = {"ro": ("f_osc_mhz", ("power_uw", "energy_fj")), "cml_ro": ("f_osc_mhz", ("vpp_diff_v", "power_uw")),
+               "tcap": ("c_max_pf", ("tuning_ratio", "q_factor_100m")), "tres": ("r_nom_kohm", ("tuning_ratio", "bw_3db_mhz")),
+               "cm_idac": ("i_fs_ua", ("rout_mohm", "v_comp_v")), "dco_vco": ("f_center_mhz", ("tuning_range_pct", "power_uw")),
+               "cml_dco_vco": ("f_center_mhz", ("tuning_range_pct", "power_uw")), "clk_div": ("f_max_ghz", ("lock_range_ghz",)),
+               "vref_2t": ("tc_ppm_c", ("vref_mv", "power_nw")), "bm_iref": ("iref_ua", ("tc_ppm_c", "line_sens_pct_v"))}
 PRIMARY_DELTA = {"ro": "f_osc_mhz", "cml_ro": "f_osc_mhz", "tcap": "c_max_pf", "tres": "r_nom_kohm", "cm_idac": "i_fs_ua", "dco_vco": "f_center_mhz",
                  "cml_dco_vco": "f_center_mhz", "clk_div": "f_max_ghz", "vref_2t": "tc_ppm_c", "bm_iref": "iref_ua"}
 
@@ -832,6 +870,16 @@ def collection_page(docs, out, meta, cards):
         rows = []
         for c in cards:
             main, sub, pv = headline(c, st)
+            m = c.get(f"metrics_{st}") or {}
+            pf, sfs = HEAD_FIELDS.get(c["family"], (None, ()))
+            fl_main = [FLAGS[(c["family"], pf)] for _ in [0] if (c["family"], pf) in FLAGS and isnum(m.get(pf)) and FLAGS[(c["family"], pf)][0](m[pf])]
+            fl_sub = [FLAGS[(c["family"], f)] for f in sfs if (c["family"], f) in FLAGS and isnum(m.get(f)) and FLAGS[(c["family"], f)][0](m[f])]
+            if fl_main:
+                tip = "; ".join(x[2] for x in fl_main)
+                main = {"v": f"{main} ({fl_main[0][1]})", "s": "warn", "title": tip}
+                pv = {"v": pv, "s": "warn", "title": tip}
+            if fl_sub:
+                sub = {"v": f"{sub} ({', '.join(dict.fromkeys(x[1] for x in fl_sub))})", "s": "warn", "title": "; ".join(x[2] for x in fl_sub)}
             D = (c.get("deltas") or {}).get(PRIMARY_DELTA.get(c["family"]))
             sign = all(c.get(k) for k in ("drc_ok", "lvs_ok", "pex_ok"))
             rows.append({"id": f"[{c['card_id']}](#/aux-{c['family']}/{c['card_id']})", "fam": f"[{c['family_short']}](#/aux-{c['family']})", "topo": c["topo_short"], "vdd": c["vdd"], "tgt": c["target_label"],
@@ -847,7 +895,7 @@ def collection_page(docs, out, meta, cards):
                                    {"key": "sign", "label": "Signoff"}, {"key": "shift", "label": "|Post-PEX shift| of primary", "unit": "%", "digits": 3, "better": "low"}],
                        "rows": rows, "page_size": 500, "csv_name": f"auxgen_all_{st}_cards",
                        "caption": f"Showing **{'Post-layout (Magic PEX Extracted)' if st == 'post' else 'Pre-PEX Schematic'}** metrics. Click any column header to sort or any row to open the card. "
-                                  "*Primary value* is the family's headline number in its own unit (MHz, pF, kΩ, µA, GHz, ppm/°C). "
+                                  "*Primary value* is the family's headline number in its own unit (MHz, pF, kΩ, µA, GHz, ppm/°C). Amber = generator placeholder, clip limit, floor or sweep bound (hover for details). "
                                   "*|Post-PEX shift|* is the generator's pre→post delta of the primary metric (the retired sort option \"|Post-PEX Shift %|\")."})
     downloads = {"type": "downloads", "title": "Machine-readable data (retired site footer / header)", "items": [
         {"label": "library.json — downstream cell library (pins, areas, verification, pre/post metrics)", "file": "data/library.json"},

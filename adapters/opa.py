@@ -79,7 +79,7 @@ METRIC_DESC = {
     "vos_sigma": "Standard deviation of the input offset over the 50 Monte Carlo runs",
     "pm_p5": "5th percentile of the phase margin over the 50 Monte Carlo runs",
     "zin": "Closed-loop input impedance at 1 kHz in the 1 V/V follower",
-    "area": "Layout bounding-box area from the GDS (a layout property, reported with the full post-PEX stage)",
+    "area": "Layout bounding-box area from the GDS — a layout property, the same at every simulation stage",
 }
 
 KNOBS = {  # card.knobs key -> (label, unit, scale)
@@ -173,7 +173,7 @@ def phys_badge(p):
 
 
 def stage_result(s, area, mc):
-    """area: only passed for the full (post-layout) stage; it is a layout property, not a simulation result."""
+    """area: the exact layout bounding-box area (a stage-independent layout property, identical in every stage)."""
     if not s:
         return None
     m = {}
@@ -340,7 +340,8 @@ def kpi_items(card, st, phys, cl_pf):
         bw,
         ("Phase Margin (Nominal)", f"{num(nom.get('pm_deg'), 2)}°", cmp_sub(pre.get("pm_deg"), post.get("pm_deg"), "°", 2)),
         ("Worst-Case PVT PM", f"{num(pvt.get('pm_min_deg'), 2)}°", f"{n_pass}/{n_pts} PVT corners pass >45°"),
-        ("Input Noise @ 1 kHz", f"{num(nom.get('vn_1khz_nv_rthz'), 1)} nV/√Hz", f"Integrated (1Hz–1MHz): {num(nom.get('vn_rms_1hz_1mhz_uv'), 2)} μVrms"),
+        ("Input Noise @ 1 kHz", (f"{num(nom.get('vn_1khz_nv_rthz'), 1)} nV/√Hz" if not fin(nom.get('vn_1khz_nv_rthz')) or nom['vn_1khz_nv_rthz'] < 1000
+                                 else si(nom["vn_1khz_nv_rthz"] * 1e-9, "V/√Hz", 3)), f"Integrated (1Hz–1MHz): {num(nom.get('vn_rms_1hz_1mhz_uv'), 2)} μVrms"),
         ("Mismatch Offset σ", f"{num(mc.get('vos_sigma_mv'), 3)} mV", f"50-run MC yield: {num(mc.get('yield_pct'), 1)}% (P5 PM {num(mc.get('pm_p5_deg'), 1)}°)"),
         ("CMRR (DC)", f"{num(nom.get('cmrr_dc_db'), 1)} dB", "DC rejection ratio (original tile: CMRR / PSRR+ / PSRR−)"),
         ("PSRR+ (DC)", f"{num(nom.get('psrr_p_dc_db'), 1)} dB", "DC rejection ratio"),
@@ -422,16 +423,16 @@ def extra_nominal_items(nom):
 
 OP_COLS = [
     {"key": "dev", "label": "Device", "type": "text"}, {"key": "role", "label": "Role", "type": "text"},
-    {"key": "model", "label": "Model", "type": "text"}, {"key": "nets", "label": "Nets (D, G, S, B)", "type": "text", "wrap": True},
+    {"key": "model", "label": "Model", "type": "text"}, {"key": "nets", "label": "Nets (D, G, S, B)", "type": "text"},
     {"key": "wf", "label": "W<sub>f</sub> (µm)", "digits": 4}, {"key": "l", "label": "L (µm)", "digits": 4},
     {"key": "m", "label": "m", "digits": 4}, {"key": "wt", "label": "W<sub>tot</sub> (µm)", "digits": 5},
     {"key": "gt", "label": "gm/Id Tgt", "digits": 3}, {"key": "gs", "label": "gm/Id Sim", "digits": 4},
     {"key": "it", "label": "I<sub>D</sub> Tgt", "unit": "A", "si": True}, {"key": "is", "label": "I<sub>D</sub> Sim", "unit": "A", "si": True},
-    {"key": "gm", "label": "g<sub>m</sub>", "unit": "S", "si": True}, {"key": "gds", "label": "g<sub>ds</sub>", "unit": "S", "si": True},
     {"key": "vgs", "label": "V<sub>GS</sub> (V)", "digits": 4}, {"key": "vds", "label": "V<sub>DS</sub> (V)", "digits": 4},
-    {"key": "vth", "label": "V<sub>th</sub> (V)", "digits": 4}, {"key": "vdsat", "label": "V<sub>DSAT</sub> (V)", "digits": 4},
+    {"key": "vdsat", "label": "V<sub>DSAT</sub> (V)", "digits": 4},
     {"key": "hr", "label": "|V<sub>DS</sub>|−V<sub>DSAT</sub> (V)", "digits": 4, "title": "Saturation headroom computed from the simulated V_DS and V_DSAT (red when negative)"},
-    {"key": "sat", "label": "Sat.", "type": "status"},
+    {"key": "gm", "label": "g<sub>m</sub>", "unit": "S", "si": True, "group": "Additional OP data"}, {"key": "gds", "label": "g<sub>ds</sub>", "unit": "S", "si": True, "group": "Additional OP data"},
+    {"key": "vth", "label": "V<sub>th</sub> (V)", "digits": 4, "group": "Additional OP data"}, {"key": "sat", "label": "Sat.", "type": "status", "group": "Additional OP data"},
 ]
 
 
@@ -444,9 +445,9 @@ def op_rows(card):
         rows.append([f"M{d.get('name')}", d.get("role"), d.get("model"), f"{d.get('d')}, {d.get('g')}, {d.get('s')}, {d.get('b')}",
                      r5(d.get("w_finger")), r5(d.get("l")), d.get("m"), r5(d.get("w_total")), r5(d.get("target_gmid")),
                      r5(op.get("gmid_sim")), scale(d.get("target_id_ua"), 1e-6), scale(op.get("id_ua"), 1e-6),
-                     scale(op.get("gm_us"), 1e-6), scale(op.get("gds_ns"), 1e-9), r5(op.get("vgs")), r5(op.get("vds")),
-                     r5(op.get("vth")), r5(op.get("vdsat")),
-                     {"v": r5(hr), "s": "bad"} if hr is not None and hr < 0 else r5(hr), op.get("saturated")])
+                     r5(op.get("vgs")), r5(op.get("vds")), r5(op.get("vdsat")),
+                     {"v": r5(hr), "s": "bad"} if hr is not None and hr < 0 else r5(hr),
+                     scale(op.get("gm_us"), 1e-6), scale(op.get("gds_ns"), 1e-9), r5(op.get("vth")), op.get("saturated")])
     return rows
 
 
@@ -821,7 +822,8 @@ def explore_page(loads, summ, ulp, bnd, out):
         {"key": "arch", "label": "Architecture", "type": "cat", "labels": arch_labels, "order": order, "colors": arch_colors},
         {"key": "kind", "label": "Point type", "type": "cat", "order": ["feasible", "screened", "del_pre", "del_post"],
          "labels": {"feasible": "Feasible candidate", "screened": "Screened candidate", "del_pre": "Delivered · pre-PEX", "del_post": "Delivered · post-PEX"},
-         "colors": {"feasible": "#225bb2", "screened": "#94a3b8", "del_pre": "#111827", "del_post": "#dc2626"}},
+         "colors": {"feasible": "#225bb2", "screened": "#94a3b8", "del_pre": "theme:ink", "del_post": "#dc2626"},
+         "symbols": {"feasible": "circle", "screened": "x", "del_pre": "diamond", "del_post": "star"}},
         {"key": "cls", "label": "Current class", "type": "cat", "labels": cls_labels, "order": list(cls_labels)},
         {"key": "regime", "label": "Inversion regime", "type": "cat", "labels": reg_labels, "order": list(reg_labels)},
         {"key": "supply", "label": "Supply", "type": "cat", "labels": {"1v8": "1.8 V", "3v3": "3.3 V"}, "order": ["1v8", "3v3"]},
@@ -871,10 +873,39 @@ def explore_page(loads, summ, ulp, bnd, out):
              "Every candidate point is a recorded compute-farm ngspice-46 evaluation. Circles pass all nominal constraints (PM > 45°, I<sub>DD</sub> in decade, all devices saturated); "
              f"crosses (grey) were screened out; the {meta['total_cards']} selected deliverable designs per load are ringed — ◆ pre-PEX or ■ post-PEX values, following the **Simulation** stage option "
              "(click any point to inspect the card it was generated for).")
+    shift_tabs = []
+    for ld in loads:
+        lt = ld["id"]
+        cards = [c for c in summ[lt]["cards"] if c.get("pre") and c.get("post")]
+        charts = []
+        for (xk, yk, xl, yl, lx, ly) in (("idd_ua", "ugb_hz", "Quiescent supply current IDD (A)", "Unity-gain bandwidth UGB (Hz)", True, True),
+                                          ("ugb_hz", "pm_deg", "Unity-gain bandwidth UGB (Hz)", "Phase margin PM (°)", True, False)):
+            kx = 1e-6 if xk == "idd_ua" else 1
+            seg_x, seg_y = [], []
+            for c in cards:
+                seg_x += [r5(c["pre"][xk] * kx), r5(c["post"][xk] * kx), None]
+                seg_y += [r5(c["pre"][yk]), r5(c["post"][yk]), None]
+            ids = [f"{lt}-{c['card_id']}" for c in cards]
+            hov = "<b>%{customdata}</b><br>%{x:.4s} · %{y:.4s}<extra>%{fullData.name}</extra>"
+            data = [{"type": "scatter", "mode": "lines", "name": "pre → post shift", "x": seg_x, "y": seg_y, "hoverinfo": "skip",
+                     "line": {"color": "theme:muted", "width": 1}},
+                    {"type": "scatter", "mode": "markers", "name": "Deliverable (Pre-PEX)", "x": [r5(c["pre"][xk] * kx) for c in cards],
+                     "y": [r5(c["pre"][yk]) for c in cards], "customdata": ids, "hovertemplate": hov,
+                     "marker": {"symbol": "diamond-open", "size": 10, "color": "theme:ink", "line": {"width": 2}}},
+                    {"type": "scatter", "mode": "markers", "name": "Post-PEX Extracted", "x": [r5(c["post"][xk] * kx) for c in cards],
+                     "y": [r5(c["post"][yk]) for c in cards], "customdata": ids, "hovertemplate": hov,
+                     "marker": {"symbol": "star-open", "size": 10, "color": "#dc2626", "line": {"width": 2}}}]
+            charts.append(chart(f"{yl.split(' (')[0]} vs {xl.split(' (')[0]} — pre-PEX ◆ → post-PEX ★", data,
+                                lay(xl, yl, logx=lx, logy=ly, hovermode="closest"), height=480, link_designs=True))
+        shift_tabs.append({"label": f"C<sub>L</sub> = {ld['label']}", "key": lt, "blocks": [{"type": "section", "cols": 2, "blocks": charts}]})
     blocks = [{"type": "section", "title": "Interactive Pareto trade-off plot",
                "intro": "Choose X / Y / colour / symbol / facet, toggle log axes and the Pareto front, and filter by point type, architecture, supply, class, regime and numeric ranges. "
                         "The global V<sub>DD</sub> option filters the supply. Click any delivered (ringed) point — or any candidate — to open its design card.",
-               "blocks": [{"type": "tabs", "id": "dse", "tabs": tabs}]}]
+               "blocks": [{"type": "tabs", "id": "dse", "tabs": tabs}]},
+              {"type": "section", "title": "Delivered cards: pre-PEX vs post-PEX side by side",
+               "intro": "The original plot's overlay of the deliverable designs at both levels: each card's pre-PEX value (open diamond) is joined to its post-PEX value "
+                        "(red open star), so the extraction shift is visible directly. These charts show both stages regardless of the Simulation option; click a marker to open the card.",
+               "blocks": [{"type": "tabs", "id": "shift", "tabs": shift_tabs}]}]
 
     # ---------------- ULP frontier
     if ulp and ulp.get("topologies"):
@@ -904,16 +935,16 @@ def explore_page(loads, summ, ulp, bnd, out):
                           "s": "good" if (t.get("valid_ulp_count") or 0) > 100 else "warn"},
                 "mp": dcell(t.get("min_power_design")), "mp60": dcell(t.get("min_power_60db_design")), "mp80": dcell(t.get("min_power_80db_design")),
                 "mg": f"**{num(mg.get('a0_db'), 2)} dB** @ {fp(mg.get('power_nw'))}<br><small>{fi(mg.get('idd_na'))} @ {num(mg.get('vdd'), 2)} V · BW {num(mg.get('cl_bw_hz'), 1)} Hz · PM {num(mg.get('pm_deg'), 1)}°</small>" if mg else "—",
-                "env": f"[{num(env.get('cl_bw_hz_min'), 2)} Hz, {num(env.get('cl_bw_hz_max'), 0)} Hz]" if env.get("cl_bw_hz_min") is not None else "—",
+                "env": f"[{num(env.get('cl_bw_hz_min'), 2)}, {num(env.get('cl_bw_hz_max'), 0)}]" if env.get("cl_bw_hz_min") is not None else "—",
                 "fom": f"**{num(env.get('fom_p_max'), 0)}**" if env.get("fom_p_max") is not None else "—"})
         tcols = [{"key": "top", "label": "Topology", "md": True, "type": "text", "wrap": True},
-                 {"key": "valid", "label": "Valid ULP Designs (<10 kHz)", "md": True, "type": "text"},
-                 {"key": "mp", "label": "Min Power Frontier (A<sub>0</sub> ≥ 35 dB)", "md": True, "type": "text", "wrap": True},
-                 {"key": "mp60", "label": "Min Power w/ A<sub>0</sub> ≥ 60 dB", "md": True, "type": "text", "wrap": True},
-                 {"key": "mp80", "label": "Min Power w/ A<sub>0</sub> ≥ 80 dB", "md": True, "type": "text", "wrap": True},
-                 {"key": "mg", "label": "Max DC Gain A<sub>0,max</sub> (<10 kHz, nW)", "md": True, "type": "text", "wrap": True},
-                 {"key": "env", "label": "Valid CL BW Envelope", "type": "text"},
-                 {"key": "fom", "label": "Peak FoM<sub>P</sub> (MHz·pF/mW)", "md": True, "type": "text"}]
+                 {"key": "valid", "label": "Valid ULP Designs<br>(<10 kHz)", "md": True, "type": "text"},
+                 {"key": "mp", "label": "Min Power Frontier<br>(A<sub>0</sub> ≥ 35 dB)", "md": True, "type": "text", "wrap": True},
+                 {"key": "mp60", "label": "Min Power<br>w/ A<sub>0</sub> ≥ 60 dB", "md": True, "type": "text", "wrap": True},
+                 {"key": "mp80", "label": "Min Power<br>w/ A<sub>0</sub> ≥ 80 dB", "md": True, "type": "text", "wrap": True},
+                 {"key": "mg", "label": "Max DC Gain A<sub>0,max</sub><br>(<10 kHz, nW)", "md": True, "type": "text", "wrap": True},
+                 {"key": "env", "label": "Valid CL BW<br>Envelope (Hz)", "type": "text"},
+                 {"key": "fom", "label": "Peak FoM<sub>P</sub><br>(MHz·pF/mW)", "md": True, "type": "text"}]
         ecols = [{"key": "arch", "label": "Topology", "type": "text", "wrap": True}, {"key": "n", "label": "Evaluated", "digits": 0},
                  {"key": "v", "label": "Valid", "digits": 0}, {"key": "v60", "label": "≥60 dB", "digits": 0},
                  {"key": "v80", "label": "≥80 dB", "digits": 0}, {"key": "v90", "label": "≥90 dB", "digits": 0},
@@ -1037,12 +1068,12 @@ def boundary_section(bnd, short=None):
     tops = bnd["topologies"]
     vc, cc = bnd.get("validity_criteria") or {}, bnd.get("core_criteria") or {}
     ocols = [{"key": "t", "label": "Topology", "md": True, "type": "text", "wrap": True}, {"key": "io", "label": "Input / Stages", "type": "text", "wrap": True},
-             {"key": "fr", "label": "Feasible Rate", "type": "text"}, {"key": "cr", "label": "Strict Core Rate", "md": True, "type": "text"},
+             {"key": "fr", "label": "Feasible Rate", "type": "text"}, {"key": "cr", "label": "Strict Core<br>Rate", "md": True, "type": "text"},
              {"key": "vddr", "label": "Valid V<sub>DD</sub> Range (Core)", "md": True, "type": "text"},
              {"key": "vcm", "label": "Valid V<sub>CM</sub>/V<sub>DD</sub> ICMR (Core)", "md": True, "type": "text"},
              {"key": "gm", "label": "Valid g<sub>m</sub>/I<sub>D,in</sub> (V⁻¹)", "md": True, "type": "text"},
              {"key": "li", "label": "Valid L<sub>in</sub> (μm)", "md": True, "type": "text"},
-             {"key": "idd", "label": "Achieved I<sub>DD</sub> Range", "type": "text"}, {"key": "a0", "label": "Achieved A<sub>0</sub> Range", "type": "text"}]
+             {"key": "idd", "label": "Achieved I<sub>DD</sub><br>Range (µA)", "type": "text"}, {"key": "a0", "label": "Achieved A<sub>0</sub><br>Range (dB)", "type": "text"}]
     orows = []
     for t in tops.values():
         p, env = t.get("parameters") or {}, t.get("achieved_envelopes") or {}
@@ -1055,8 +1086,8 @@ def boundary_section(bnd, short=None):
             "vcm": f"{fmt_range(g('vcm_ratio', 'valid_min'), g('vcm_ratio', 'valid_max'), 2)}<br><small>Core: {fmt_range(g('vcm_ratio', 'core_min'), g('vcm_ratio', 'core_max'), 2)}</small>",
             "gm": f"{fmt_range(g('gmid_in', 'valid_min'), g('gmid_in', 'valid_max'), 1)}<br><small>1D ray: {fmt_range(g('gmid_in', 'ray_valid_min'), g('gmid_in', 'ray_valid_max'), 1)}</small>",
             "li": f"{fmt_range(g('l_in', 'valid_min'), g('l_in', 'valid_max'), 2)}<br><small>1D ray: {fmt_range(g('l_in', 'ray_valid_min'), g('l_in', 'ray_valid_max'), 2)}</small>",
-            "idd": fmt_range((env.get("idd_ua") or {}).get("min"), (env.get("idd_ua") or {}).get("max"), 2, "μA"),
-            "a0": fmt_range((env.get("a0_db") or {}).get("min"), (env.get("a0_db") or {}).get("max"), 1, "dB"),
+            "idd": fmt_range((env.get("idd_ua") or {}).get("min"), (env.get("idd_ua") or {}).get("max"), 2),
+            "a0": fmt_range((env.get("a0_db") or {}).get("min"), (env.get("a0_db") or {}).get("max"), 1),
             "_href": f"#/opa?page=explore&t.topo={t['arch']}"})
     pcols = [{"key": "p", "label": "Parameter", "md": True, "type": "text", "wrap": True}, {"key": "d", "label": "Description", "type": "text", "wrap": True},
              {"key": "ex", "label": "Explored Range", "type": "text"}, {"key": "ray", "label": "1-D Orthogonal Ray Valid", "md": True, "type": "text"},
@@ -1314,7 +1345,7 @@ def main():
             ph = c.get("physical") or {}
             area = ph.get("area_um2")
             results = {}
-            if (s := stage_result(c.get("pre"), None, part_of(card, "pre", "mc"))):
+            if (s := stage_result(c.get("pre"), area, part_of(card, "pre", "mc"))):
                 results["pre"] = s
             if c.get("post") and (s := stage_result(c.get("post"), area, part_of(card, "full", "mc"))):
                 s["note"] = POST_NOTE
@@ -1323,10 +1354,13 @@ def main():
                 ("schematic", "schematic.svg"), ("gds", f"{cid}.gds.gz"), ("netlist", "netlist.spice"),
                 ("pex_netlist", "pex.spice"), ("lvs_netlist", "lvs_ref.spice"), ("data", "card.json")) if (docs / base / v).is_file()}
             twin = [f"[C<sub>L</sub> = {x['label']}](#/opa/{x['id']}-{cid})" for x in other if any(k["card_id"] == cid for k in summ[x["id"]]["cards"])]
+            fails = [(lab, c[st_]) for st_, lab in (("pre", "Pre-PEX"), ("post", "Post-PEX")) if (c.get(st_) or {}).get("pm_pass") is False]
             summary = (f"{num(c['vdd'], 1)} V supply · {c['iclass_label']} envelope · {c['inv_label']} (target gm/Id = {jsn(c['gmid_target'])} V⁻¹) · "
                        f"{card.get('topology_desc') or next((a.get('desc') for a in archs if a['id'] == c['arch']), '')}\n\n"
                        f"Card `{cid}` · C<sub>L</sub> = {ld['label']} · {'Pre-PEX + Post-PEX Extracted Available' if c.get('post') else 'Pre-PEX Farm Verified'}"
-                       + (f" · same design at {', '.join(twin)}" if twin else ""))
+                       + (f" · same design at {', '.join(twin)}" if twin else "")
+                       + "".join(f"\n\n**{lab}: nominal phase-margin screen FAILED** (PM = {num(x.get('pm_deg'), 2)}° < 45°; {x.get('pvt_pass')}/{x.get('pvt_total')} PVT corners, "
+                                 f"MC yield {num(x.get('mc_yield_pct'), 1)}%) — shown as *Screen warn* (red) on the original site." for lab, x in fails))
             params = {"C<sub>L</sub>": ld["label"], "Input gm/Id target": f"{jsn(c['gmid_target'])} V⁻¹",
                       "I<sub>ref</sub>": fmt_idd(card.get("iref_ua")) if card else None,
                       "V<sub>CM</sub>": f"{num(card.get('vcm'), 2)} V" if card.get("vcm") is not None else None,
@@ -1344,7 +1378,8 @@ def main():
                 "summary": summary,
                 "vdd": c["vdd"],
                 "axes": {"topology": c["arch"], "regime": c["inv_tag"], "class": c["iclass_tag"], "load": lt},
-                "tags": [f"{c.get('input_type')} input", f"{c.get('stages')}-stage", f"gm/Id {jsn(c.get('gmid_target'))} V⁻¹", f"CL {ld['label']}"],
+                "tags": [f"{c.get('input_type')} input", f"{c.get('stages')}-stage", f"gm/Id {jsn(c.get('gmid_target'))} V⁻¹", f"CL {ld['label']}"]
+                        + [f"✗ nominal PM screen failed ({lab})" for st_, lab in (("pre", "pre-PEX"), ("post", "post-PEX")) if (c.get(st_) or {}).get("pm_pass") is False],
                 "physical": {"drc": ph.get("drc_ok"), "lvs": ph.get("lvs_ok"), "pex": ph.get("pex_ok"), "area_um2": area,
                              "width_um": ph.get("width_um"), "height_um": ph.get("height_um")},
                 "results": results,
@@ -1382,10 +1417,10 @@ def main():
                     "mismatch MC), gLayout DRC/LVS-clean layouts and Magic PEX."),
         "technology": "gf180mcuD",
         "generated": generated,
-        "stats": [{"label": f"ngspice-46 farm evaluations ({' / '.join(ld['label'] for ld in loads)})",
-                   "value": " / ".join(f"{summ[ld['id']]['meta'].get('total_farm_sims', 0):,}" for ld in loads)},
-                  {"label": f"DSE candidates ({' / '.join(ld['label'] for ld in loads)})",
-                   "value": " / ".join(f"{summ[ld['id']]['meta'].get('dse_points_count', 0):,}" for ld in loads)},
+        "stats": [{"label": f"farm evaluations · {loads[0]['label']}" + "".join(f" ({ld['label']}: {summ[ld['id']]['meta'].get('total_farm_sims', 0):,})" for ld in loads[1:]),
+                   "value": f"{summ[loads[0]['id']]['meta'].get('total_farm_sims', 0):,}"},
+                  {"label": f"DSE candidates · {loads[0]['label']}" + "".join(f" ({ld['label']}: {summ[ld['id']]['meta'].get('dse_points_count', 0):,})" for ld in loads[1:]),
+                   "value": f"{summ[loads[0]['id']]['meta'].get('dse_points_count', 0):,}"},
                   {"label": "boundary sweeps", "value": f"{meta.get('bounds_jobs_count', 0):,}"},
                   {"label": "ULP frontier runs", "value": f"{meta.get('ulp_jobs_count', 0):,}"}],
         "metrics": [{k: v for k, v in dict(key=k, label=lab, unit=u, si=s or None, better=b, digits=dg, desc=METRIC_DESC.get(k)).items() if v is not None}

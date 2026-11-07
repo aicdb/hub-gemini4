@@ -28,7 +28,7 @@ old "Pre + Post overlay" → collapsed overlay/comparison sections in X and per-
 11. ✓ Matrix heading / click hint / ULP-column caption — OV "Coverage matrix …" section intro.
 12. ✓ Matrix layout — D matrix (rows architecture · regime · load, cols class inside V<sub>DD</sub> groups, ULP class first in 1.8 V; cell UGB / DC gain / PM) and the classic OV table (ULP column + 1.8 V / 3.3 V groups), per load and stage.
 13. ✓ ULP cell (A<sub>0</sub>, CL BW, power, PM, PVT, DRC/LVS, frontier "Min … · Max …") — OV classic table (all fields incl. frontier tag); D matrix via cell-metric preset "ULP view: DC gain / CL BW / power / PM" (frontier tag only in OV).
-14. ✓ Standard cell (UGB, A<sub>0</sub>, PM, PVT, DRC/LVS, colour) — D matrix (UGB / DC gain / PM, PVT, DRC/LVS; green / amber / red — the one nominal-PM failure is `results.full.status = "fail"` → red) and OV table (good/warn/bad as `statusTuple`).
+14. ✓ Standard cell (UGB, A<sub>0</sub>, PM, PVT, DRC/LVS, colour) — D matrix (UGB / DC gain / PM, PVT, DRC/LVS; green / amber / red — the one nominal-PM failure is `results.full.status = "fail"` → red, plus a "✗ nominal PM screen failed (post-PEX)" tag and a summary line on that design) and OV table (good/warn/bad as `statusTuple`).
 15. ✓ Cell click → card — D matrix cells; OV table values are links to the design.
 16. ✓ Filters — axis chips (architecture, regime, class, load) in D, global V<sub>DD</sub>, global Verified (PVT-robust = 17/17; DRC+LVS — PEX is not a separate filter but all 336 cards are PEX-clean), global search.
 17. ✓ Sort cards — D Sort select: best/worst of every card metric (A<sub>0</sub>, power, UGB, PVT-min PM, area, …); "By Architecture & Class" → "Generator order" (the old option actually sorted by UGB, a bug).
@@ -42,7 +42,7 @@ old "Pre + Post overlay" → collapsed overlay/comparison sections in X and per-
 ## E. Design space
 24. ✓ Eyebrow / H1 / intro — DS intro; counts from data (9,312 / 9,311 candidates, 6,186 sweeps); stale static "144 deliverable designs" replaced by the real 168; marker wording adapted to the hub explorer.
 25. ✓ Controls — DS explorer: X / Y / colour / symbol / facet / log / Pareto, presets for the old axis pairs; supply + architecture (+ class, regime, PM check, point type) chips, numeric ranges; global V<sub>DD</sub> filters the supply.
-26. ✓ Pareto plot — DS explorer per load (tabs 2 pF / 200 fF / both loads): default colour "Architecture (screened grey)" = old look (screened grey ×, feasible per architecture in the original ARCH_COLORS), symbol = point type with legend entries, delivered cards ringed at the selected Simulation stage (◆ pre-PEX / ■ post-PEX, `stage` + `stage_group`), log I<sub>DD</sub>/UGB/FoM, click → design. Pareto front restricted to feasible, PM-passing candidates (`pareto_on`). FoM of delivered points computed with the candidates' formula (labelled).
+26. ✓ Pareto plot — DS explorer per load (tabs 2 pF / 200 fF / both loads): default colour "Architecture (screened grey)" = old look (screened grey ×, feasible per architecture in the original ARCH_COLORS), symbol = point type with legend entries, delivered cards ringed at the selected Simulation stage (◆ pre-PEX / ★ post-PEX, theme-aware colours, `stage` + `stage_group`); the old pre+post overlay (diamonds + red stars) is the DS section "Delivered cards: pre-PEX vs post-PEX side by side" (UGB-vs-I<sub>DD</sub> and PM-vs-UGB per load, each card's pre→post shift joined by a line, click → card), log I<sub>DD</sub>/UGB/FoM, click → design. Pareto front restricted to feasible, PM-passing candidates (`pareto_on`). FoM of delivered points computed with the candidates' formula (labelled).
 27. ✓ ULP heading "(5,040 Farm Runs)", download, caption — DS ULP section (title, downloads block, intro incl. criteria from the JSON).
 28. ✓ ULP A<sub>0</sub> vs power — DS chart (12 power-scaling curves, original colours).
 29. ✓ ULP CL BW vs power — DS chart.
@@ -69,12 +69,12 @@ old "Pre + Post overlay" → collapsed overlay/comparison sections in X and per-
 44. ✓ Back / detail Load / detail Level — hub breadcrumbs + prev/next; twin-load link in the summary; global Simulation option.
 45. ✓ Head (card id · CL, arch title, meta line, PVT / physical badges, availability) — X title, axis chips, tags, summary markdown, hub stage/robust/DRC/LVS/PEX badges, performance-by-stage table with post-PEX note.
 46. ✓ Six tabs — X sections: Overview · Schematic & gm/Id operating point · Simulation waveforms (+ collapsed overlay) · PVT corners & mismatch MC (+ collapsed comparison) · Physical layout & PEX · Files & provenance.
-47. ✓ 12 KPI tiles with pre→post sub-texts, ULP variant — X Overview `stats` (pre / full alternatives); multi-value tiles split (CMRR, PSRR+, PSRR−, SR+, SR−, THD, IM3) so nothing wraps. Old bug fixed: at Pre-PEX level the PVT/MC tiles showed post-PEX numbers; now each stage uses its own PVT/MC.
+47. ✓ 12 KPI tiles with pre→post sub-texts, ULP variant — X Overview `stats` (pre / full alternatives); multi-value tiles split (CMRR, PSRR+, PSRR−, SR+, SR−, THD, IM3); noise ≥ 1 µV/√Hz shown in µV/√Hz (ULP) so values stay on one line. Old bug fixed: at Pre-PEX level the PVT/MC tiles showed post-PEX numbers; now each stage uses its own PVT/MC.
 48. ✓ Verification Signoff Checklist (PASS/WARN/PENDING coloured) — X Overview table (stage alternatives; wrapped text so Status stays visible; MC criterion added).
 49. ✓ Design Target & Passive Compensation — X Overview `kv` (stage alternatives).
 50. ✓ Schematic downloads — X Schematic section (pre / post SPICE repo links, hosted schematic SVG).
 51. ✓ Annotated schematic + caption — X Figures gallery → Schematic (click opens the full-size SVG; no −/+/Fit buttons, browser zoom instead); caption in the Schematic section.
-52. ✓ Sizing & OP table (16 columns, negative headroom red) — X table (+ g<sub>m</sub>, g<sub>ds</sub>, V<sub>th</sub>, saturation); OP is pre-PEX only (post-PEX has no device map), labelled.
+52. ✓ Sizing & OP table (16 columns, negative headroom red) — X table, original 16 columns first, then "Additional OP data" (g<sub>m</sub>, g<sub>ds</sub>, V<sub>th</sub>, saturation); OP is pre-PEX only (post-PEX has no device map), labelled.
 53. ✓ Simulation caption — X section intros.
 54–61. ✓ Gain, phase, CMRR/PSRR±, noise, step/slew, DC transfer, Z<sub>in</sub> 1×/6×, HD2/HD3/THD/IM3 — X charts with pre / full alternatives (original names, colours, axes) + all 8 as pre-solid / post-dashed overlays in the collapsed overlay section.
 62–63. ✓ PM and DC gain across 17 PVT corners — X stage alternatives + grouped pre/post bars in the comparison section.
@@ -107,3 +107,12 @@ and stats per V<sub>DD</sub> (#15); wrapped wide tables, short topology labels (
 full stage, unrounded (#21); duplicate schematic/layout blocks removed, KPI tiles split (#23).
 Also found while re-checking: two table columns keyed `vdd` (boundary V<sub>DD</sub> range, PVT corner supply) were filtered by the global
 V<sub>DD</sub> option and hid rows — renamed.
+
+## Round 3 (final verification: 5 partial gaps, 2 regressions, 1 hub issue)
+- Delivered pre vs post shown together again: new DS section with the original diamonds + red stars joined per card (gap 5).
+- Nominal-PM failure: red matrix cell (status fail) + tag + summary sentence on the design (gap 7; card/table badge colours are renderer-owned).
+- Wide tables: units moved into headers, `<br>` headers, original sizing columns first (gap 16).
+- Thumbnail vs footprint dimensions: renderer-owned (`layoutHtml`); the Physical text states that the thumbnail line is the GDS bounding box (gap 20).
+- ULP noise KPI in µV/√Hz above 1 µV/√Hz; figures appear once (gap 23).
+- Regressions: area is again in both stages (exact, stage-independent layout property, metric `desc` says so); header tiles show the 2 pF value with the 200 fF value in the label.
+- Hub issue: point-type colour `del_pre` = `theme:ink` (visible in dark mode; checked with a dark-mode render); per-value marker `symbols` (★ post-PEX like the original).
