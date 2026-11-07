@@ -1300,8 +1300,10 @@ def explore_page():
                 src = write(f"ex/{pk}_{vtag(v)}_{tag}.json", {"data": tr, "layout": axes})
                 tb.append({"type": "chart", "alt": f"ov{vtag(v)}", "stage": st, "vdd": v, "src": src, "height": 520, "link_designs": True,
                            "title": f"{'Pareto fronts' if front else 'Lower envelopes'} by architecture — {Y[0]} vs {X[0]} (VDD {v} V)",
-                           "caption": pcap + " Lines join each architecture's non-dominated points; the dashed line is the front over "
-                                             "all architectures. Black diamonds are the 96 delivered design cards (click to open)."})
+                           "caption": pcap + (" Lines join each architecture's non-dominated points; the dashed line is the front over "
+                                              "all architectures." if front else " Lines join each architecture's lowest E·σn² per "
+                                              "rounded gm/Id (lower envelope).") + " Black diamonds are the 96 delivered design cards "
+                                              "(click to open)."})
         ptabs.append({"label": plabel, "key": pk, "blocks": tb})
     blocks.append({"type": "section", "title": "Pareto fronts by architecture",
                    "intro": "The old explorer's overview chart for each *Trade-off* button; V<sub>DD</sub> follows the global option "

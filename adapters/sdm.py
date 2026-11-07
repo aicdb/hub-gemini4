@@ -230,12 +230,12 @@ METRICS = [
     # key, label, unit, si, better, digits, desc
     ("p_spice", "Analog power (SPICE)", "W", True, "low", 4,
      "Mean analog supply current of the ngspice transient × V_DD (sdm2bin digital power not included)."),
-    ("idd", "Analog I_DD (SPICE)", "A", True, "low", 4, "Mean analog supply current of the ngspice transient."),
-    ("swing1", "Int-1 swing (SPICE)", "Vpp", True, None, 4, "Peak-to-peak differential output of integrator 1 in the ngspice transient."),
-    ("swing2", "Int-2 swing (SPICE)", "Vpp", True, None, 4, "Peak-to-peak differential output of integrator 2 in the ngspice transient."),
-    ("cu_eff", "C_u (extracted)", "F", True, None, 5, "Magic-extracted unit capacitance of the ratio-trimmed SC cap array."),
-    ("a1_eff", "a1 (extracted)", "", False, None, 5, "Loop coefficient a1 = Cs1/Ci1 from the Magic-extracted cap array."),
-    ("a2_eff", "a2 (extracted)", "", False, None, 5, "Loop coefficient a2 = Cs2/Ci2 from the Magic-extracted cap array."),
+    ("idd", "Analog supply current", "A", True, "low", 4, "Analog supply current: mean of the ngspice transient (SPICE)."),
+    ("swing1", "Int-1 swing", "Vpp", True, None, 4, "Integrator-1 peak-to-peak differential output swing in the ngspice transient (SPICE)."),
+    ("swing2", "Int-2 swing", "Vpp", True, None, 4, "Integrator-2 peak-to-peak differential output swing in the ngspice transient (SPICE)."),
+    ("cu_eff", "C_u ext.", "F", True, None, 5, "Magic-extracted unit capacitance of the ratio-trimmed SC cap array."),
+    ("a1_eff", "a1 ext.", "", False, None, 5, "Loop coefficient a1 = Cs1/Ci1 from the Magic-extracted cap array."),
+    ("a2_eff", "a2 ext.", "", False, None, 5, "Loop coefficient a2 = Cs2/Ci2 from the Magic-extracted cap array."),
 ]
 
 
@@ -1313,7 +1313,7 @@ macros_page = {"blocks": [
                                                   ["Macros", DIGF.get("count")], ["All DRC clean / LVS match / sim pass",
                                                                                   f"{DIGF.get('all_drc_clean')} / {DIGF.get('all_lvs_match')} / {DIGF.get('all_sim_pass')}"]], cols=3),
         table("OpenROAD sdm2bin macros", [col("cell", "Digital macro", type="text"), col("res", "Target res", type="text"), col("osr", "OSR", digits=0),
-                                         col("vdd", "V<sub>DD</sub>", unit="V", digits=2), col("fs", "f<sub>s</sub>", unit="Hz", si=True),
+                                         col("vdd", "V<sub>DD</sub>", unit="V", digits=2), col("fs", "f<sub>s</sub>", unit="Hz", si=True, digits=4),
                                          col("fn", "f<sub>Nyq</sub>", unit="Hz", si=True), col("sc", "Synth cells", digits=0),
                                          col("sa", "Synth area", unit="µm²", digits=5), col("ssa", "Seq. area", unit="µm²", digits=5),
                                          col("ra", "Routed active / total cells", type="text"), col("rp", "Physical (fill/tap) cells", digits=0),
@@ -1579,22 +1579,50 @@ def sc(x, y, name, **kw):
 F = SW["facets"]
 
 
+FACET_LABEL = {"fom_walden_vs_enob": "FoM_W vs ENOB", "fom_schreier_vs_power": "FoM_S vs power", "area_vs_enob": "Area vs ENOB",
+               "osr_vs_sndr": "OSR vs SNDR", "gain_a0_vs_leakage": "A0 vs leakage", "bandwidth_fb_vs_power": "f_B vs power",
+               "cap_type_mom_vs_mim": "MOM vs MIM", "architecture_comparison": "Architectures", "vdd_1v8_vs_3v3": "1.8 V vs 3.3 V",
+               "settling_vs_clock_freq": "Settling τ vs f_s", "mismatch_sigma_vs_yield": "Mismatch σ vs yield",
+               "deliverable_48_overlay": "Delivered cards on Pareto"}
+
+
+def sc_v(pts, xf, yf, name, textf=None, markerf=None, **kw):
+    """one scatter trace per supply (meta.vdd), so the chart follows the global V_DD filter"""
+    vs = sorted({p.get("vdd") for p in pts if p.get("vdd") is not None})
+    out = []
+    for vv in (vs or [None]):
+        sub = [p for p in pts if vv is None or p.get("vdd") == vv]
+        if not sub:
+            continue
+        t = sc([xf(p) for p in sub], [yf(p) for p in sub], name if len(vs) <= 1 else f"{name} · {vv} V", **kw)
+        if textf:
+            t["text"] = [textf(p) for p in sub]
+        if markerf:
+            t["marker"] = markerf(sub)
+        if vv is not None:
+            t["meta"] = {"vdd": vv}
+            t["legendgroup"] = name
+        out.append(t)
+    return out
+
+
 def facet_tab(key):
     f = F[key]
     title = f["title"]
     blocks = []
+    hov = "%{text}<extra></extra>"
     if key in ("fom_walden_vs_enob", "fom_schreier_vs_power", "area_vs_enob"):
         xk, yk = f["x_key"], f["y_key"]
         lab = {"enob": "ENOB (bits)", "fom_walden_fj": "FoM Walden (fJ/conv-step)", "power_uw": "Total power (µW)",
                "fom_schreier_db": "FoM Schreier (dB)", "area_um2": "Total macro area (µm², sweep model)"}
-        data = [sc([p[xk] for p in f["pareto"] if p["arch_id"] == a], [p[yk] for p in f["pareto"] if p["arch_id"] == a], ARCH_SPECS[a]["short"],
-                   marker={"size": 9, "color": ARCH_COLORS[a]}, text=[hover_pt(p) for p in f["pareto"] if p["arch_id"] == a],
-                   hovertemplate="%{text}<extra></extra>") for a in ARCH_ORDER]
+        data = [t for a in ARCH_ORDER for t in sc_v([p for p in f["pareto"] if p["arch_id"] == a], lambda p: p[xk], lambda p: p[yk],
+                                                    ARCH_SPECS[a]["short"], textf=hover_pt, marker={"size": 9, "color": ARCH_COLORS[a]},
+                                                    hovertemplate=hov)]
         logx = xk in ("power_uw",)
         logy = yk in ("fom_walden_fj", "area_um2")
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis(lab[xk], type="log" if logx else "linear"), "yaxis": axis(lab[yk], type="log" if logy else "linear")}}), "height": 420,
-            "caption": f"{len(f['pareto'])} global Pareto points, coloured by architecture."})
+            "caption": f"{len(f['pareto'])} global Pareto points (all 3.3 V), coloured by architecture."})
     elif key == "osr_vs_sndr":
         data = []
         for a in ARCH_ORDER:
@@ -1604,81 +1632,92 @@ def facet_tab(key):
                              "name": f"{ARCH_SPECS[a]['short']} {nm}", "line": {"color": ARCH_COLORS[a], "dash": dash}, "legendgroup": a})
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("OSR", type="log", tickvals=SW["sweep_dimensions"]["osrs"]), "yaxis": axis("SNDR (dB)")}}), "height": 420,
-            "caption": "Mean / P90 / max SNDR of the sampled configurations per OSR and architecture."})
+            "caption": "Mean / P90 / max of the best-library-combo SNDR over all 5,040 configurations (feasible or not) per OSR and "
+                       "architecture; both supplies combined (not split by V<sub>DD</sub>)."})
     elif key == "gain_a0_vs_leakage":
         arches = sorted({p["opa1_arch"] for p in f["points"]})
-        data = [sc([p["a0_1_db"] for p in f["points"] if p["opa1_arch"] == oa], [p["leak_enob_loss"] for p in f["points"] if p["opa1_arch"] == oa], oa,
-                   text=[f"{p['nbits']}b OSR {p['osr']} {p['vdd']} V {p['arch_id']} · ENOB {p['enob']}" for p in f["points"] if p["opa1_arch"] == oa],
-                   hovertemplate="A0 %{x} dB · loss %{y} b<br>%{text}<extra></extra>") for oa in arches]
+        data = [t for oa in arches for t in sc_v([p for p in f["points"] if p["opa1_arch"] == oa], lambda p: p["a0_1_db"],
+                                                 lambda p: p["leak_enob_loss"], oa,
+                                                 textf=lambda p: f"{p['nbits']}b OSR {p['osr']} {p['vdd']} V {p['arch_id']} · ENOB {p['enob']}",
+                                                 hovertemplate="A0 %{x} dB · loss %{y} b<br>%{text}<extra></extra>")]
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("Stage-1 op-amp DC gain A0 (dB)"), "yaxis": axis("Finite-gain NTF leakage ENOB loss (bits)")}}), "height": 400,
-            "caption": f"{len(f['points'])} points, coloured by the Stage-1 op-amp architecture."})
+            "caption": f"{len(f['points'])} stored points, coloured by the Stage-1 op-amp architecture."})
     elif key == "bandwidth_fb_vs_power":
         data = []
         for fe, colr in ((False, "rgba(100,116,139,0.45)"), (True, "#16a34a")):
-            sub = [p for p in f["points"] if bool(p.get("feasible")) == fe]
-            if sub:
-                data.append(sc([p["fb_khz"] * 1e3 for p in sub], [p["power_uw"] for p in sub], "feasible" if fe else "infeasible",
-                               marker={"size": 6 if fe else 4, "color": colr}, text=[hover_pt(p) for p in sub], hovertemplate="%{text}<extra></extra>"))
+            data += sc_v([p for p in f["points"] if bool(p.get("feasible")) == fe], lambda p: p["fb_khz"] * 1e3, lambda p: p["power_uw"],
+                         "feasible" if fe else "infeasible", textf=hover_pt, marker={"size": 6 if fe else 4, "color": colr}, hovertemplate=hov)
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("Passband bandwidth f_B (Hz)", type="log"), "yaxis": axis("Total power (µW)", type="log")}}), "height": 400,
-            "caption": f"{len(f['points'])} sampled points."})
+            "caption": f"{len(f['points'])} stored points."})
     elif key in ("cap_type_mom_vs_mim", "architecture_comparison", "vdd_1v8_vs_3v3"):
-        s = f["summary"]
-        ks = list(s.keys())
-        cols_all = sorted({c2 for v in s.values() for c2 in v.keys()} - {"name", "short"})
-        nice = {"count": "Feasible count", "mean_enob": "Mean ENOB (b)", "max_enob": "Max ENOB (b)", "mean_power_uw": "Mean power (µW)",
-                "best_fom_schreier_db": "Best FoM_S (dB)", "best_fom_walden_fj": "Best FoM_W (fJ)", "cu_nom_ff": "C_u,nom (fF)",
-                "mean_area_um2": "Mean area (µm²)", "vdd": "V_DD (V)"}
-        rows = [[k2, s[k2].get("name") or s[k2].get("short") or k2] + [s[k2].get(c2) for c2 in cols_all] for k2 in ks]
+        sm = f["summary"]
+        ks = list(sm.keys())
+        cols_all = sorted({c2 for v in sm.values() for c2 in v.keys()} - {"name", "short"})
+        nice = {"count": "Configs with a feasible best combo (of 5,040)", "mean_enob": "Mean ENOB (b)", "max_enob": "Max ENOB (b)",
+                "mean_power_uw": "Mean power (µW)", "best_fom_schreier_db": "Best FoM_S (dB)", "best_fom_walden_fj": "Best FoM_W (fJ)",
+                "cu_nom_ff": "C_u,nom (fF)", "mean_area_um2": "Mean area (µm²)", "vdd": "V_DD (V)"}
+        rows = [[k2, sm[k2].get("name") or sm[k2].get("short") or k2] + [sm[k2].get(c2) for c2 in cols_all] for k2 in ks]
         blocks.append(table(title, [col("k", "Key", type="text"), col("n", "Name", type="text")] + [col(c2, nice.get(c2, c2), digits=5) for c2 in cols_all],
                             rows, search=False, csv=True,
-                            caption="Summary over the feasible sweep points." + (" The 1.8 V domain has no feasible point in the sweep." if key == "vdd_1v8_vs_3v3" else "")))
+                            caption="Statistics over the sweep configurations (5,040 = resolution × OSR × V<sub>DD</sub> × cap × architecture × "
+                                    "C<sub>u</sub> scale) whose best of the 72 library combinations is feasible; this count (448 in total) differs "
+                                    "from the 5,080 feasible evaluations of the stats tile, which counts every feasible combination."
+                                    + (" The 1.8 V domain has no feasible configuration." if key == "vdd_1v8_vs_3v3" else "")))
         if "mean_enob" in cols_all:
-            blocks.append(chart(None, [{"type": "bar", "x": [s[k2].get("short") or s[k2].get("name") or k2 for k2 in ks], "y": [s[k2].get("mean_enob") for k2 in ks], "name": "Mean ENOB"},
-                                       {"type": "bar", "x": [s[k2].get("short") or s[k2].get("name") or k2 for k2 in ks], "y": [s[k2].get("best_fom_schreier_db") for k2 in ks],
-                                        "name": "Best FoM_S", "yaxis": "y2"}],
-                                {"barmode": "group", "yaxis": axis("Mean ENOB (bits)"), "yaxis2": {"title": {"text": "Best FoM_S (dB)"}, "overlaying": "y", "side": "right", "showgrid": False}},
+            xs = [sm[k2].get("short") or sm[k2].get("name") or k2 for k2 in ks]
+            blocks.append(chart(None, [{"type": "bar", "x": xs, "y": [sm[k2].get("mean_enob") for k2 in ks], "name": "Mean ENOB",
+                                        "offsetgroup": "a", "alignmentgroup": "g"},
+                                       {"type": "bar", "x": xs, "y": [sm[k2].get("best_fom_schreier_db") for k2 in ks],
+                                        "name": "Best FoM_S", "yaxis": "y2", "offsetgroup": "b", "alignmentgroup": "g"}],
+                                {"barmode": "group", "yaxis": axis("Mean ENOB (bits)"),
+                                 "yaxis2": {"title": {"text": "Best FoM_S (dB)"}, "overlaying": "y", "side": "right", "showgrid": False}},
                                 height=300))
     elif key == "settling_vs_clock_freq":
-        data = [sc([p["fs_mhz"] * 1e6 for p in f["points"] if p["arch_id"] == a], [p["tau_settle_ns"] for p in f["points"] if p["arch_id"] == a],
-                   f"τ_settle · {ARCH_SPECS[a]['short']}", marker={"color": ARCH_COLORS[a], "size": 8},
-                   text=[f"{p['nbits']}b OSR {p['osr']} {p['vdd']} V {p['cap_type']} · t_φ2 {p['t_phi2_ns']} ns · ratio {p['settle_ratio']} · ENOB {p['enob']}"
-                         for p in f["points"] if p["arch_id"] == a], hovertemplate="f_s %{x:.3s}Hz · τ %{y} ns<br>%{text}<extra></extra>") for a in ARCH_ORDER]
-        data.append(sc([p["fs_mhz"] * 1e6 for p in f["points"]], [p["t_phi2_ns"] for p in f["points"]], "available φ2 time t_φ2",
-                       marker={"symbol": "line-ew-open", "size": 12, "color": "#e11d48"}))
+        data = [t for a in ARCH_ORDER for t in sc_v([p for p in f["points"] if p["arch_id"] == a], lambda p: p["fs_mhz"] * 1e6,
+                                                    lambda p: p["tau_settle_ns"], f"τ_settle · {ARCH_SPECS[a]['short']}",
+                                                    marker={"color": ARCH_COLORS[a], "size": 8},
+                                                    textf=lambda p: f"{p['nbits']}b OSR {p['osr']} {p['vdd']} V {p['cap_type']} · t_φ2 {p['t_phi2_ns']} ns · "
+                                                                    f"ratio {p['settle_ratio']} · ENOB {p['enob']}",
+                                                    hovertemplate="f_s %{x:.3s}Hz · τ %{y} ns<br>%{text}<extra></extra>")]
+        data += sc_v(f["points"], lambda p: p["fs_mhz"] * 1e6, lambda p: p["t_phi2_ns"], "available φ2 time t_φ2",
+                     marker={"symbol": "line-ew-open", "size": 12, "color": "#e11d48"})
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("Clock frequency f_s (Hz)"), "yaxis": axis("τ_settle / t_φ2 (ns)", type="log")}}), "height": 400,
-            "caption": f"{len(f['points'])} points; the red dashes mark the available φ2 half-period for each point."})
+            "caption": f"{len(f['points'])} stored points; the red dashes mark the available φ2 half-period for each point."})
     elif key == "mismatch_sigma_vs_yield":
         data = [sc([p["sigma_dc_c_pct"] for p in f["points"] if p["cap_type"] == t], [p["yield_pct"] for p in f["points"] if p["cap_type"] == t],
                    CAP_LABEL[t], marker={"size": 8}, text=[f"{p['nbits']}b {p['arch_id']} C_u×{p['cu_scale']} · ENOB {p['enob']}" for p in f["points"] if p["cap_type"] == t],
                    hovertemplate="σ %{x} % · yield %{y} %<br>%{text}<extra></extra>") for t in ("mom", "mim")]
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("Capacitor ratio mismatch σ(ΔC/C) (%)"), "yaxis": axis("Parametric ENOB yield (%)")}}), "height": 380,
-            "caption": f"{len(f['points'])} points."})
+            "caption": f"{len(f['points'])} stored points (no supply recorded, so not filtered by V<sub>DD</sub>)."})
     elif key == "deliverable_48_overlay":
         cards = f["cards"]
-        data = [sc([p["power_uw"] for p in pareto], [p["enob"] for p in pareto], "Global Pareto (sweep)", marker={"size": 7, "color": "rgba(100,116,139,0.6)"},
-                   text=[hover_pt(p) for p in pareto], hovertemplate="%{text}<extra></extra>")]
+        data = sc_v(pareto, lambda p: p["power_uw"], lambda p: p["enob"], "Global Pareto (sweep)", textf=hover_pt,
+                    marker={"size": 7, "color": "rgba(100,116,139,0.6)"}, hovertemplate=hov)
         for a in ARCH_ORDER:
             sub = [p for p in cards if p["arch_id"] == a]
-            data.append(sc([p["power_uw"] for p in sub], [p["enob"] for p in sub], f"Delivered · {ARCH_SPECS[a]['short']}",
-                           marker={"size": 10, "color": ARCH_COLORS[a], "symbol": ["diamond" if p["cap_type"] == "mim" else "circle" for p in sub],
-                                   "line": {"width": 1, "color": "#0f172a"}},
-                           customdata=[p["card_id"] for p in sub], text=[f"<b>{p['card_id']}</b><br>ENOB {p['enob']} · P {p['power_uw']} µW · FoM_S {p['fom_schreier_db']} dB" for p in sub],
-                           hovertemplate="%{text}<extra>click to open</extra>"))
+            for t in sc_v(sub, lambda p: p["power_uw"], lambda p: p["enob"], f"Delivered · {ARCH_SPECS[a]['short']}",
+                          textf=lambda p: f"<b>{p['card_id']}</b><br>ENOB {p['enob']} · P {p['power_uw']} µW · FoM_S {p['fom_schreier_db']} dB (model)",
+                          markerf=lambda ps, a=a: {"size": 10, "color": ARCH_COLORS[a], "symbol": ["diamond" if p["cap_type"] == "mim" else "circle" for p in ps],
+                                                   "line": {"width": 1, "color": "#0f172a"}},
+                          hovertemplate="%{text}<extra>click to open</extra>"):
+                vv = t.get("meta", {}).get("vdd")
+                t["customdata"] = [p["card_id"] for p in sub if vv is None or p["vdd"] == vv]
+                data.append(t)
         blocks.append({"type": "chart", "title": title, "src": write(f"data/dse/facet_{key}.json", {"data": data, "layout": {
             "xaxis": axis("Total power (µW)", type="log"), "yaxis": axis("ENOB (bits)")}}), "height": 440, "link_designs": True,
-            "caption": f"All {len(cards)} delivered cards (old title says 48) over the {len(pareto)} sweep Pareto points; diamonds = MIM. "
-                       "Click a card to open it."})
-    return {"label": title.split(" — ")[0][:60], "blocks": blocks}
+            "caption": f"All {len(cards)} delivered cards (old title says 48; model figures) over the {len(pareto)} sweep Pareto points; "
+                       "diamonds = MIM. Click a card to open it."})
+    return {"label": FACET_LABEL.get(key, title[:40]), "key": key, "blocks": blocks}
 
 
 win_rows = []
 for w in sel_cards:
     win_rows.append({"facet": f"{w['nbits']}b · {w['vdd']}V · {w['cap_type'].upper()}", "arch": w["arch_id"], "id": w["card_id"], "osr": w["osr"],
-                     "fs": w["fs_mhz"] * 1e6, "fb": w["fb_khz"] * 1e3, "enob": w["enob"], "sndr": w["sndr_db"], "sfdr": w.get("sfdr_db"),
+                     "fs": RES_SPECS[str(w["nbits"])]["fs_hz"], "fb": RES_SPECS[str(w["nbits"])]["fb_hz"], "enob": w["enob"], "sndr": w["sndr_db"], "sfdr": w.get("sfdr_db"),
                      "p": w["power_uw"] * 1e-6, "fw": w["fom_walden_fj"] * 1e-15, "fs_db": w["fom_schreier_db"], "area": w.get("area_um2"),
                      "o1": opa_link(DATA[w["card_id"]]["components"]["opa1"]["key"]) if w["card_id"] in DATA else w.get("opa1_id"),
                      "o2": opa_link(DATA[w["card_id"]]["components"]["opa2"]["key"]) if w["card_id"] in DATA else w.get("opa2_id"),
@@ -1707,12 +1746,12 @@ dse_page = {"intro": "Exhaustive design-space exploration across OSR, sampling r
                  "title": "12-Facet Parametric Design-Space Explorer (362,880 Evaluated Configurations)"},
                 table("Sweep dimensions", [col("k", "Dimension", type="text"), col("v", "Values", type="text")], dims_rows, search=False, csv=False),
                 {"type": "tabs", "id": "grp", "style": "select", "label": "Select facet (Res × VDD × Cap)", "title": "Pareto frontier & feasible cloud per group",
-                 "tabs": [{"label": t["label"], "blocks": [section(None, t["blocks"], cols=2)]} for t in facet_tabs],
+                 "tabs": [dict({k: v for k, v in t.items() if k != "blocks"}, blocks=[section(None, t["blocks"], cols=2)]) for t in facet_tabs],
                  "caption": "Old-site facet selector: 16 groups V<sub>DD</sub> × capacitor × architecture (despite the “Res × V<sub>DD</sub> × Cap” "
                             "label). Grey = stored cloud sample, colour = Pareto points of the selected group by architecture."},
                 table("Winning cards (sweep selected_cards)", [
                     col("facet", "Facet", type="text"), col("arch", "Architecture", type="text"), col("id", "Winning card ID", type="design"),
-                    col("osr", "OSR", digits=0), col("fs", "f<sub>s</sub>", unit="Hz", si=True), col("fb", "f<sub>B</sub>", unit="Hz", si=True),
+                    col("osr", "OSR", digits=0), col("fs", "f<sub>s</sub>", unit="Hz", si=True, digits=4), col("fb", "f<sub>B</sub>", unit="Hz", si=True, digits=4),
                     col("enob", "ENOB", unit="bits", digits=4, better="high"), col("sndr", "SNDR", unit="dB", digits=5), col("sfdr", "SFDR", unit="dB", digits=5),
                     col("p", "Power", unit="W", si=True, digits=5, better="low"), col("fw", "FoM<sub>W</sub>", unit="J/step", si=True, digits=5, better="low"),
                     col("fs_db", "FoM<sub>S</sub>", unit="dB", digits=5, better="high"), col("area", "Area (model)", unit="µm²", digits=5),
@@ -1841,7 +1880,7 @@ comp = {
         "resolution": {"label": "Resolution", "values": [{"id": f"{n}b", "label": f"{n}-bit · OSR {RES_SPECS[str(n)]['osr']}"} for n in NBITS]},
         "cap": {"label": "Cap array", "values": [{"id": t, "label": CAP_LABEL.get(t, t)} for t in IDX["cap_types"]]},
     },
-    "matrix": {"rows": ["topology", "cap"], "cols": ["resolution"], "metrics": ["p_spice", "swing1", "swing2", "a1_eff", "cu_eff"],
+    "matrix": {"rows": ["topology", "cap"], "cols": ["resolution"], "metrics": ["p_spice", "swing1", "swing2", "a1_eff"],
                "presets": [{"label": "Analog I_DD & power (SPICE)", "metrics": ["idd", "p_spice"]},
                            {"label": "Integrator swings (SPICE)", "metrics": ["swing1", "swing2"]},
                            {"label": "Extracted cap array (C_u, a1, a2)", "metrics": ["cu_eff", "a1_eff", "a2_eff"]}]},
