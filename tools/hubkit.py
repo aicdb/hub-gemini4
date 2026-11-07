@@ -487,6 +487,7 @@ def normalize(ex: Export, src: dict, commit: str | None) -> dict:
         d.setdefault("tags", [])
         d.setdefault("physical", {})
         d.setdefault("files", {})
+        d.setdefault("results", {})
         for st in list(d.get("results", {})):
             d["results"][st].setdefault("metrics", {})
     if not comp.get("card_metrics"):
