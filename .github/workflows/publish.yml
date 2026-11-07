@@ -50,6 +50,9 @@ jobs:
             echo "::error title=Missing secret::HUB_SOURCES_TOKEN is not set (needs read access to the private source repos, see README.md)"
             exit 1
           fi
+          raw_len=${#TOKEN}
+          TOKEN=$(printf %s "$TOKEN" | tr -d '[:space:]')
+          echo "token: ${#TOKEN} chars (raw ${raw_len}), prefix ${TOKEN:0:11}…"
           : > sources.lock
           for row in $(jq -r '.components[] | "\(.id)|\(.repo)|\(.branch // "main")"' sources.json); do
             IFS='|' read -r id repo branch <<< "$row"
@@ -57,6 +60,15 @@ jobs:
             if [ -z "$sha" ]; then echo "::warning title=Source unreachable::${repo}@${branch} (check HUB_SOURCES_TOKEN has access)"; sha=missing; fi
             echo "${id} ${repo} ${branch} ${sha}" | tee -a sources.lock
           done
+          if grep -q ' missing$' sources.lock; then
+            echo "--- access diagnostics (GitHub API) ---"
+            curl -s -o /tmp/u.json -w "GET /user -> HTTP %{http_code}\n" -H "Authorization: Bearer ${TOKEN}" https://api.github.com/user || true
+            jq -r '"  login: \(.login // "-")  message: \(.message // "-")"' /tmp/u.json 2>/dev/null || true
+            for repo in $(awk '$4=="missing"{print $2}' sources.lock); do
+              code=$(curl -s -o /tmp/r.json -w "%{http_code}" -H "Authorization: Bearer ${TOKEN}" "https://api.github.com/repos/${repo}" || true)
+              echo "GET /repos/${repo} -> HTTP ${code}: $(jq -r '.message // .full_name' /tmp/r.json 2>/dev/null)"
+            done
+          fi
           if ! grep -qv ' missing$' sources.lock; then
             echo "::error title=No source reachable::HUB_SOURCES_TOKEN cannot read any repo in sources.json; refusing to deploy an empty site"
             exit 1
@@ -78,6 +90,7 @@ jobs:
           TOKEN: ${{ secrets.HUB_SOURCES_TOKEN }}
         run: |
           set -euo pipefail
+          TOKEN=$(printf %s "$TOKEN" | tr -d '[:space:]')
           mkdir -p src
           while read -r id repo branch sha; do
             [ "$sha" = missing ] && continue
