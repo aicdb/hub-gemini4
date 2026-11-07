@@ -160,7 +160,7 @@ class Ctx:
             src, note = self.wave(st, tid, did)
             if src:
                 blocks.append({"type": "chart", "stage": st, "alt": f"w-{tid}-{did}", "title": title, "src": src,
-                               "height": 400,
+                               "height": 440,
                                "caption": "Dashed grey: VIN · solid: VOUT per PVT corner (blue = tt 27 °C, red = ss −40 °C, "
                                           "amber = ff 125 °C, thinner lines = the other six corners) · dotted: output rails."})
                 blocks.append({"type": "note", "stage": st, "alt": f"wn-{tid}-{did}", "tone": "muted", "text": note})

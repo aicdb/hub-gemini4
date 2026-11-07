@@ -395,9 +395,13 @@
     };
   }
   function filterTraces(traces, ctx) {
+    const meta = (t) => (t.meta && typeof t.meta === 'object' && !Array.isArray(t.meta) ? t.meta : {});
+    const stages = [...new Set((traces || []).map((t) => meta(t).stage).filter(Boolean))];
+    const pick = stages.length ? pickStage(stages, ctx) : null;
     return (traces || []).filter((t) => {
-      const m = t.meta && typeof t.meta === 'object' ? t.meta : {};
+      const m = meta(t);
       if (m.vdd != null && ctx.vdd && String(m.vdd) !== ctx.vdd) return false;
+      if (m.stage && m.stage !== pick) return false;   // trace-level stage alternatives
       return true;
     });
   }
@@ -538,7 +542,7 @@
         } else if (colorD) {
           traces.push(mk(normal, 'points', { color: normal.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: fv === null || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
         } else traces.push(mk(normal, 'points', { color: COLORWAY[0] }));
-        if (hi.length) traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 11, opacity: 1, color: 'rgba(0,0,0,0)', symbol: 'circle-open', line: { width: 2, color: themeColors().ink } }), { type: 'scatter' }));
+        if (hi.length) { const ink = themeColors().ink; traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 12, opacity: 1, color: ink, symbol: 'circle-open', line: { width: 2, color: ink } }), { type: 'scatter' })); }
         let frontN = 0;
         if (st.pareto && fi.length && D[st.x]?.type !== 'cat' && D[st.y]?.type !== 'cat') {
           const fr = pareto(fi).sort((a, c) => C[st.x][a] - C[st.x][c]);

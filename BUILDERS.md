@@ -230,7 +230,9 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 - Colours, fonts and backgrounds are themed by the hub. Only set them when they carry
   meaning (e.g. pass/fail colours).
 - A trace with `meta: {vdd: 1.8}` is hidden when the global V<sub>DD</sub> filter selects
-  another supply.
+  another supply. A trace with `meta: {stage: "pre"}` is a stage alternative inside one chart:
+  only the traces of the resolved stage are drawn (traces without a stage are always drawn).
+  This saves duplicating a whole chart per stage.
 - With `link_designs: true`, clicking a point whose `customdata` is a design id opens that
   design.
 - Use log axes (`layout.xaxis.type = "log"`), subplots, annotations and shapes as needed.

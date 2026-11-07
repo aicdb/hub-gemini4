@@ -336,7 +336,7 @@ def stats_keyres(d, view):
         ("On-resistance @ test level", si(m.get("ron_vtest"), "Ω"),
          f"min {si(m.get('ron_min'), 'Ω')} · max {si(m.get('ron_max'), 'Ω')} over the range · worst PVT {si(m.get('ron_wc'), 'Ω')}"),
         ("R<sub>on</sub> grade", grade_txt(m),
-         f"I<sub>max</sub>·R<sub>on</sub> worst PVT over the valid range; points " + " · ".join(f"{g} {si(f * c['vdd'] / c['imax'], 'Ω')}" for g, f in GRADES)),
+         "I<sub>max</sub>·R<sub>on</sub> worst PVT over the valid range; points " + " · ".join(f"{g} {si(f * c['vdd'] / c['imax'], 'Ω')}" for g, f in GRADES)),
         ("Valid signal range", range_txt(m.get("valid")), f"{fx(100 * m['coverage'], 0)} % of VDD · test level {fx(m.get('vtest'), 2)} V"),
         ("Off-resistance (worst PVT)", si(m.get("roff_wc"), "Ω"), f"leakage {si(m.get('leak_wc'), 'A')} worst · {si(m.get('leak_tt'), 'A')} tt"),
         ("Turn-on / turn-off time", f"{si(m.get('t_on'), 's')} / {si(m.get('t_off'), 's')}",
@@ -431,7 +431,7 @@ def overview_blocks(d, key):
 
 
 def schematic_blocks(d, key):
-    c, circ = d["card"], d["circuit"]
+    circ = d["circuit"]
     naux = circ.get("naux") or 1
     base = ("Each transistor shows its model, W · L · fingers and **gm/I<sub>D</sub> target → simulated** (1/V): the target is the LUT "
             "inversion level at the device's intended on-state bias (e.g. V<sub>GS</sub> = VDD for an ideal bootstrap), the simulated value "
@@ -444,7 +444,7 @@ def schematic_blocks(d, key):
     blocks = [
         {"type": "image", "stage": "pre", "alt": "schem", "title": "Schematic with gm/I<sub>D</sub> annotation", "src": f"designs/{key}/schematic.svg",
          "bg": "dark", "max_height": 900, "caption": base + tail},
-        {"type": "image", "stage": "full", "alt": "schem", "title": "Schematic with gm/I<sub>D</sub> annotation", "src": f"designs/{key}/schematic_post.svg",
+        {"type": "image", "stage": STAGE_OF["post"], "alt": "schem", "title": "Schematic with gm/I<sub>D</sub> annotation", "src": f"designs/{key}/schematic_post.svg",
          "bg": "dark", "max_height": 900, "caption": base + post + tail},
     ]
     reg = lambda g: "" if g is None else "WI" if g >= 18 else "MI" if g >= 8 else "SI"  # noqa: E731
@@ -1105,10 +1105,10 @@ def combo_post(preset, vdd):
         ps = [p for p in cards if p["c"]["topo"] == t]
         if ps:
             trs += [tr(ps, j, SHORT[t], False), tr(fronts[t], j, SHORT[t], True)]
-    tag = f"full_{preset}_{str(vdd).replace('.', 'p')}"
-    blocks = [{"type": "stats", "stage": "full", "items": [{"label": "per-topology post-PEX front cards (this view)", "value": str(nfr)},
+    tag = f"post_{preset}_{str(vdd).replace('.', 'p')}"
+    blocks = [{"type": "stats", "stage": STAGE_OF["post"], "items": [{"label": "per-topology post-PEX front cards (this view)", "value": str(nfr)},
                                                           {"label": "on the combined front (this view)", "value": str(len(fall))}]},
-              {"type": "chart", "stage": "full", "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
+              {"type": "chart", "stage": STAGE_OF["post"], "alt": "ov", "title": EX_POST["ov"], "link_designs": True, "height": 560,
                "caption": f"{EXP[preset][1]} VDD = {vdd} V; {len(cards)} design cards, all values from the extracted-layout (post-PEX) simulations. The sweep "
                           "samples have no layout and are hidden in this view; switch the global *Simulation stage* to Pre-PEX to see them. " + MIXED_NOTE,
                "src": write(f"data/dse/{tag}_ov.json", {"data": trs, "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "hovermode": "closest",
@@ -1124,7 +1124,7 @@ def combo_post(preset, vdd):
                        "src": write(f"data/dse/{tag}_{t}.json", {"data": [tr(ps, j, "cards", False), tr(fronts[t], j, "front", True)],
                                                                  "layout": {"xaxis": ax(kx), "yaxis": ax(ky), "showlegend": False, "hovermode": "closest",
                                                                             "margin": {"l": 56, "r": 8, "t": 6, "b": 40}}})})
-    blocks.append({"type": "section", "stage": "full", "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
+    blocks.append({"type": "section", "stage": STAGE_OF["post"], "alt": "fac", "title": EX_POST["fac_h"], "intro": EX_POST["fac_p"], "cols": 3, "blocks": facets})
     rows = []
     for p in fall:
         v = mv(p["c"], "post")
@@ -1137,7 +1137,7 @@ def combo_post(preset, vdd):
             {"key": "cov", "label": "range", "unit": "%", "digits": 3}, {"key": "area", "label": "area", "unit": "µm²", "digits": 4},
             {"key": "ton", "label": "t_on", "unit": "s", "si": True}, {"key": "e", "label": "E/cycle", "unit": "J", "si": True},
             {"key": "q", "label": "|Q| max", "unit": "C", "si": True}, {"key": "thd", "label": "THD", "unit": "dB", "digits": 3}]
-    blocks.append({"type": "table", "stage": "full", "alt": "tab", "title": EX_POST["tab_h"], "caption": EX_POST["tab_p"],
+    blocks.append({"type": "table", "stage": STAGE_OF["post"], "alt": "tab", "title": EX_POST["tab_h"], "caption": EX_POST["tab_p"],
                    "src": write(f"data/dse/{tag}_tab.json", {"columns": cols, "rows": rows}), "columns": cols})
     return blocks
 
@@ -1241,10 +1241,10 @@ def page_explore():
         {"label": "Pareto-front points", "value": f"{nfr:,}"},
         {"label": "front points within 5 % of R_on over all 15 PVT corners", "value": f"{SW['n_robust']}/{SW['n_front']}" if SW.get("n_front") else "—"}]})
     allc = [c for c in done if c.get("mp")]
-    blocks.append({"type": "stats", "stage": "full", "alt": "exst", "items": [
+    blocks.append({"type": "stats", "stage": STAGE_OF["post"], "alt": "exst", "items": [
         {"label": "design cards with post-PEX results", "value": str(len(allc))},
         {"label": "meet the R_on target post-PEX (grade A/B)", "value": str(sum(1 for c in allc if c["mp"].get("grade") in ("A", "B")))}],
-        "caption": "Front counts for the selected trade-off and supply are shown with each view below."})
+        "caption": "Front counts for the selected trade-off and supply are shown with each view below. " + MIXED_NOTE})
     blocks.append(explorer)
     tabs = []
     for p in EXP:
@@ -1255,7 +1255,8 @@ def page_explore():
                                                      {"type": "tabs", "label": "V<sub>DD</sub>", "default": 1, "tabs": inner}]})
     blocks.append({"type": "section", "title": "Trade-off views", "intro": "The fixed views of the original explorer page: pick the trade-off, then the "
                    "supply (default 3.3 V). The global *Simulation stage* switches between the sweep fronts (Pre-PEX) and the post-PEX fronts of the "
-                   "design cards (Full post-PEX).", "blocks": [{"type": "tabs", "tabs": tabs}]})
+                   "design cards (tagged *Partial post-PEX* because they mix complete-cell and unit-bank extractions; shown as fallback at Full "
+                   "post-PEX).", "blocks": [{"type": "tabs", "tabs": tabs}]})
     intro = ("## Design-space explorer\n\nA random and structured known-design-point sweep of all thirteen topologies over both supplies: log-uniform switch "
              "width (1 µm – 100 mm, so every load-current class from 10 µA to 1 A is covered) and continuous knobs — P/N ratio, bootstrap / pump capacitor "
              "ratio, auxiliary-device scale, driver fan-out, switch channel length, dummy and shunt size. Every sample is simulated on the compute farm with "
