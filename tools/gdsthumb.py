@@ -17,7 +17,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-RENDER_VERSION = "1"  # bump to invalidate cached thumbnails
+RENDER_VERSION = "2"  # bump to invalidate cached thumbnails
 
 # (layer, datatype): (name, rgb, alpha, kind)  kind: fill | cut | mark(hidden)
 LAYERS = {
@@ -42,7 +42,7 @@ LAYERS = {
         (75, 0): ("MIM_TOP", "#facc15", 0.45, "fill"),
     }
 }
-BG = (11, 16, 32)
+BG = (26, 18, 16)   # warm dark, matches the hub palette (#1a1210)
 
 
 def cache_key(gds: Path, cell: str | None, size: int, tech: str) -> str:

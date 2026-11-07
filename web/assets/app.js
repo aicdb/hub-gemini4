@@ -205,7 +205,7 @@ function passGlobalRow(row) {
 function designText(c, d) {
   if (!d._txt) {
     const ax = Object.entries(d.axes || {}).map(([k, v]) => c._axisLabel[k]?.[v]?.label || v);
-    d._txt = [d.id, d.title, ...(d.tags || []), ...ax].join(' ').toLowerCase();
+    d._txt = [d.id, d.title, ...(d.tags || []), ...ax, c.name, c.title, c.group || ''].join(' ').toLowerCase();
   }
   return d._txt;
 }
@@ -268,8 +268,10 @@ function renderGlobals() {
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
 
+/** the one design count used everywhere (nav badges, overview cards, hierarchy nodes) */
+const shownRows = (c) => c.rows.filter((r) => passGlobalRow(r) && resolveMask(r[3], r[5], r[6] ?? r[3]));
 function renderTabs() {
-  const counts = Object.fromEntries(CAT.components.map((c) => [c.id, c.rows.filter(passGlobalRow).length]));
+  const counts = Object.fromEntries(CAT.components.map((c) => [c.id, shownRows(c).length]));
   let prevGroup = null;
   $('#tabs').innerHTML = `<a href="${tabHref('')}" class="${S.tab ? '' : 'on'}">Overview</a>` +
     CAT.components.map((c) => {
@@ -326,7 +328,7 @@ function hierarchyHtml() {
     rows[i].sort((a, b) => { const bx = (k) => { const d = deps(k).filter((x) => pos.has(x)); return d.length ? d.reduce((s2, x) => s2 + pos.get(x).x, 0) / d.length : W / 2; }; return bx(a) - bx(b); });
     place(rows[i], i);
   }
-  const count = (n) => n.ids.reduce((a, id) => a + byId[id].rows.filter(passGlobalRow).length, 0);
+  const count = (n) => n.ids.reduce((a, id) => a + shownRows(byId[id]).length, 0);
   const H = top + L * rowH + boxH + 26;
   const maxU = Math.max(1, ...[...edges.values()].map((e) => e.users));
   const ePaths = [...edges.values()].map((e) => {
@@ -493,7 +495,7 @@ async function renderComponent(main) {
         <div class="stat"><b>${list.length}</b><span>designs shown</span></div>
         <div class="stat"><b>${exact}</b><span>with ${STAGE_LABEL[S.stage]}</span></div>
         <div class="stat"><b>${list.filter(physOk).length}</b><span>DRC + LVS clean</span></div>
-        <div class="stat"><b>${robust}</b><span>robust at shown stage</span></div>
+        ${c.designs.some((d) => STAGES.some((st) => d.results?.[st]?.robust != null)) ? `<div class="stat"><b>${robust}</b><span>robust at shown stage</span></div>` : ''}
         ${extraStats}
       </div>
     </section>
@@ -605,7 +607,7 @@ function renderMatrix(view, c, list) {
   view.innerHTML = `<div class="table-scroll"><table class="matrix"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table></div>
     <div class="legend"><span>Cell: <b>${esc(m1?.label || '')}</b>${mRest.slice(0, 4).map((mm) => ` / ${esc(mm.label)}`).join('')} at <b>${STAGE_LABEL[S.stage]}</b></span>
       <span><i style="background:var(--goodbg)"></i>meets generator criteria</span><span><i style="background:var(--warnbg)"></i>not robust over PVT/MC</span><span><i style="background:var(--noevalbg);border:1px dashed var(--line)"></i>PVT/MC not evaluated</span>
-      <span><i style="background:var(--badbg)"></i>DRC/LVS or screen failed</span><span><i style="background:var(--nonebg)"></i>no result at this stage</span>
+      <span><i style="background:var(--badbg)"></i>${mx.status ? 'below threshold, ' : ''}failed screen or DRC/LVS</span><span><i style="background:var(--nonebg)"></i>no result at this stage</span>
       ${mx.status && c._metric[mx.status.metric] ? `<span>colour: ${esc(c._metric[mx.status.metric].label)} thresholds (green ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.good, c._metric[mx.status.metric])}${mx.status.warn != null ? `, amber ${c._metric[mx.status.metric].better === 'low' ? '≤' : '≥'} ${fmt(mx.status.warn, c._metric[mx.status.metric])}` : ''})</span>` : ''}
       <span><b>PRE/PART</b> tag = value filled from an earlier stage (per cell or per value) · <b>n/a</b> = not applicable (hover for the reason)</span></div>`;
   view.querySelector('tbody').onclick = (e) => { const td = e.target.closest('td[data-id]'); if (td) location.hash = tabHref(c.id, td.dataset.id); };
@@ -615,7 +617,7 @@ function thumbOf(c, d) {
   const f = d.files || {};
   if (f.thumbnail) return asset(c, f.thumbnail);
   const t = thumbFor(c, f.gds);
-  if (t) return asset(c, t.src);
+  if (t) return Object.assign(new String(asset(c, t.src)), { dark: true });
   const p = f.schematic || d.images?.find((x) => x.src)?.src;
   return p ? asset(c, p) : '';
 }
@@ -650,7 +652,7 @@ function renderCards(view, c, list) {
     const t = thumbOf(c, d);
     const kv = card.slice(0, 12).map((k) => { const m = c._metric[k]; return m ? `<div><span>${esc(m.label)}</span><b>${r ? fmtM(d, m, r) : '—'}</b></div>` : ''; }).join('');
     return `${head}<a class="card" href="${tabHref(c.id, d.id)}">
-      <div class="thumb">${t ? `<img loading="lazy" decoding="async" src="${t}" alt="">` : '<span class="ph">no preview</span>'}</div>
+      <div class="thumb${t?.dark ? ' dark' : ''}">${t ? `<img loading="lazy" decoding="async" src="${t}" alt="">` : '<span class="ph">no preview</span>'}</div>
       <div class="body"><h3>${esc(d.title)}</h3><div class="id">${esc(d.id)}</div>
         <div class="kv"><div><span>V<sub>DD</sub></span><b>${fmtV(d.vdd)}</b></div>${kv}</div>
         <div class="badges">${badgesOf(d, r)}</div></div></a>`;
@@ -742,7 +744,9 @@ async function renderDetail(main, c) {
   const params = Object.entries(d.params || {}).filter(([, v]) => v !== null && v !== undefined && v !== '');
   const dls = [...Object.entries(FILE_LABEL).filter(([k]) => f[k]).map(([k, l]) => ({ label: l, file: f[k] })), ...(d.downloads || [])];
   const axesChips = Object.entries(d.axes || {}).map(([k, v]) => `<span class="badge acc" title="${esc(c.axes[k]?.label || k)}">${esc(axisLabel(c, k, v))}</span>`).join('');
-  const navList = c.designs.filter((x) => (!d.family || x.family === d.family) && (x === d || passGlobal(c, x)));
+  const axf = Object.entries(S.f || {}).filter(([, v]) => v);
+  let navList = c.designs.filter((x) => (!d.family || x.family === d.family) && (x === d || (passGlobal(c, x) && axf.every(([k, v]) => x.axes?.[k] === v))));
+  if (S.sort) navList = sorted(c, navList);
   const idx = navList.indexOf(d);
   const prev = navList[idx - 1], next = navList[idx + 1];
 
@@ -780,7 +784,7 @@ async function renderDetail(main, c) {
           const li = (x, comp, title) => `<li>${x.missing ? `<span class="subtle">${esc(comp)}/${esc(x.design)} (not on the hub)</span>` : `<a href="${tabHref(x.component, x.design)}">${esc(title)}</a> <span class="subtle">· ${esc(comp)}</span>`}${x.role ? ` — ${esc(x.role)}` : ''}</li>`;
           return `<div class="panel"><div class="section-head"><h2>Hierarchy</h2></div>
             ${uses.length ? `<div class="subtle">Built from</div><ul class="hlist">${uses.map((x) => li(x, x.component_name || x.component, x.title || x.design)).join('')}</ul>` : ''}
-            ${usedBy.length ? `<div class="subtle">Used in ${usedBy.length} design${usedBy.length === 1 ? '' : 's'}</div><ul class="hlist">${usedBy.slice(0, 50).map((x) => li(x, x.component_name || x.component, x.title)).join('')}${usedBy.length > 50 ? `<li class="subtle">… and ${usedBy.length - 50} more</li>` : ''}</ul>` : ''}</div>`;
+            ${usedBy.length ? `<div class="subtle">Used in ${usedBy.length} design${usedBy.length === 1 ? '' : 's'}</div><ul class="hlist">${usedBy.slice(0, 30).map((x) => li(x, x.component_name || x.component, x.title)).join('')}</ul>${usedBy.length > 30 ? `<details class="hmore"><summary>show all ${usedBy.length}</summary><ul class="hlist">${usedBy.slice(30).map((x) => li(x, x.component_name || x.component, x.title)).join('')}</ul></details>` : ''}` : ''}</div>`;
         })()}
         <div class="panel" id="dls"></div>
       </div>
@@ -830,7 +834,9 @@ async function render() {
     const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     root.dataset.theme = dark ? 'light' : 'dark';
     try { localStorage.setItem('hub-theme', root.dataset.theme); } catch (e) { /* ignore */ }
+    if (CAT) render();   // re-plot charts with the new theme colours
   };
+  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (CAT && !document.documentElement.dataset.theme) render(); }); } catch (e) { /* old browsers */ }
   try {
     CAT = await getJSON('data/catalog.json');
   } catch (e) {

@@ -251,7 +251,7 @@ Pages and detail documents are lists of blocks. Every block accepts these common
 | `table` | `columns[]`, `rows[]` or `src`, `sort`, `search`, `csv`, `max_height`, `page_size`, `stage_column`, `vdd_filter` | sortable, filterable table with CSV export |
 | `chart` | Plotly figure: `data[]` (traces), `layout{}` or `src` (JSON `{data, layout}`), `height`, `link_designs` | any Plotly chart (lines, scatter, bar, histogram, heatmap, box, …), themed automatically |
 | `explorer` | `src` (columnar JSON), `dims[]`, `x`, `y`, `color`, `symbol`, `filters[]`, `facet_default`, `presets[]`, `highlight`, `highlight_label`, `design_key`, `label_key`, `hover[]`, `pareto_default`, `intro`, `height`, `cat_axes` | interactive design-space explorer (§5.3) |
-| `image` | `src` (hosted svg/png/webp/jpg) or `gds` + `cell`, `bg`: white/dark/none, `max_height` | figure (click to open full size) |
+| `image` | `src` (hosted svg/png/webp/jpg) or `gds` + `cell`, `bg`: white/dark/none (use `dark` for figures drawn on a dark background), `max_height` | figure (click to open full size) |
 | `layout` | `gds`, `cell` (optional sub-cell), `max_height` | rendered GDS thumbnail + link to the raw GDS in the repo |
 | `gallery` | `items[]: {label, src \| gds, cell?, caption?}`, `style`: tabs/grid, `cols`, `default` | several figures as tabs or a grid |
 | `downloads` | `items[]: {label, file \| src \| url, note?}` | link list; `file` → raw file in the repo, `src` → hosted, `url` → external |
@@ -304,7 +304,10 @@ The hub's shared options apply inside pages and detail documents too:
   { "type": "chart", "alt": "bode", "stage": "pre",  "title": "Loop gain", "src": "hub/data/x_bode_pre.json" },
   { "type": "chart", "alt": "bode", "stage": "full", "title": "Loop gain", "src": "hub/data/x_bode_post.json" }
   ```
-  The hub shows the alternative matching the selected stage. With "fill from earlier
+  The hub shows the alternative matching the selected stage. An alternative may also carry
+  `fb: true` or `fb: false` to apply only when "fill from earlier stage" is on or off. For
+  example, a Full post-PEX view mixing full and partial designs (`fb: true`) next to a
+  full-only one (`fb: false`). With "fill from earlier
   stage" on, it falls back to the nearest earlier stage and marks it. If no alternative
   fits, it shows a short "not available at this stage" note. A block with `stage` but no
   `alt` is shown only at that stage (or as a fallback). Blocks without `stage` are always
@@ -358,7 +361,7 @@ values]}` (e.g. only feasible points). `fixed_axes: true` keeps the axis ranges 
 `presets[].desc` (markdown) is shown when that preset is selected.
 
 Dim options: `type: "cat"` (categorical; `labels`, `order`, `colors: {value: "#hex"}`,
-`symbols: {value: "star"}` — any Plotly marker symbol name),
+`symbols: {value: "star"}` — any Plotly marker symbol name; colours may be theme tokens such as `"theme:ink"`),
 `log`, `better`, `unit`/`si`/`digits`. Explorer options: `cat_axes: true` lets categorical
 dims be chosen as X/Y (strip plot); `presets[]: {label, x, y, color, symbol, facet, logx,
 logy, pareto, show: {catKey: [visible values]}}`; `preset_default` (index applied on load).

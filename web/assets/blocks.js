@@ -151,7 +151,9 @@
     for (const [, list] of groups) {
       const st = pickStage(list.map((x) => x[1].stage), ctx);
       if (st) {
-        const e = list.find((x) => x[1].stage === st);
+        // alternatives may target fallback on/off (`fb: true|false`); prefer an exact fb match
+        const cands = list.filter((x) => x[1].stage === st && (x[1].fb === undefined || x[1].fb === ctx.fb));
+        const e = cands.find((x) => x[1].fb === ctx.fb) || cands[0] || list.find((x) => x[1].stage === st);
         keep.push([e[0], Object.assign({}, e[1], { _stage: st, _fallback: st !== ctx.stage })]);
       } else if (list[0][1].alt || list[0][1].title) {
         missing.push([list[0][0], { type: '_missing', title: list[0][1].title, stages: list.map((x) => x[1].stage) }]);
@@ -269,6 +271,7 @@
   R.tabs = async (el, b, ctx) => {
     const stageLabel = (t) => { if (!t.labels) return t.label; const st = pickStage(Object.keys(t.labels), ctx); return st ? t.labels[st] : t.label; };
     const tabs = (b.tabs || []).filter((t) => passGlobal(t, ctx)).map((t) => Object.assign({}, t, { label: stageLabel(t) }));
+    if (!tabs.length) { el.innerHTML = `${head(b)}<div class="note muted">No view of this block matches the current global options (V<sub>DD</sub> / technology).</div>`; return; }
     const sel = b.style === 'select' || tabs.length > 12;
     el.innerHTML = `${head(b)}${sel
       ? `<label class="tabsel">${esc(b.label || 'Show')} <select>${tabs.map((t, i) => `<option value="${i}">${esc(String(t.label).replace(/<[^>]+>/g, ''))}</option>`).join('')}</select></label>`
@@ -405,7 +408,7 @@
     if (x && typeof x === 'object') { const o = {}; for (const [k, v] of Object.entries(x)) o[k] = themeify(v, t); return o; }
     return x;
   }
-  const COLORWAY = ['#d9423a', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#17becf', '#e377c2', '#8c564b', '#bcbd22', '#7f7f7f', '#393b79', '#637939', '#a55194', '#6b6ecf'];
+  const COLORWAY = ['#d9423a', '#2f7fd1', '#2ca02c', '#ff7f0e', '#9467bd', '#17becf', '#e377c2', '#bcbd22', '#a47148', '#8c8c8c', '#5c7cfa', '#00a676', '#c2185b', '#f2b705'];
   function deepMerge(base, over) {
     if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
     const out = Array.isArray(base) ? [...base] : Object.assign({}, base);
@@ -455,7 +458,17 @@
     const height = +b.height || +fig.layout?.height || 380;
     const layout = deepMerge(baseLayout(height), themeify(fig.layout || {}));
     layout.height = height;
-    for (const [k, ax] of Object.entries(layout)) if (/^[xy]axis\d*$/.test(k) && ax && ax.type === 'log' && ax.dtick === undefined && ax.tickvals === undefined) ax.dtick = 'D2';
+    // log axes: 1-2-5 labels only when the axis spans <= 3 decades, otherwise one label per decade
+    const span = (k) => {
+      if (Array.isArray(layout[k]?.range)) return Math.abs(layout[k].range[1] - layout[k].range[0]);
+      const tag = k.replace('axis', ''), dim = k[0];
+      const vals = (fig.data || []).filter((t) => (t[`${dim}axis`] || dim) === tag).flatMap((t) => (Array.isArray(t[dim]) ? t[dim] : [])).filter((v) => typeof v === 'number' && v > 0);
+      if (!vals.length) return 99;
+      let lo = Infinity, hi = -Infinity; for (const v of vals) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      return Math.log10(hi / lo);
+    };
+    for (const [k, ax] of Object.entries(layout)) if (/^[xy]axis\d*$/.test(k) && ax && ax.type === 'log' && ax.dtick === undefined && ax.tickvals === undefined) ax.dtick = span(k) <= 3 ? 'D2' : 1;
+    if (Array.isArray(layout.updatemenus)) { const t = themeColors(); layout.updatemenus = layout.updatemenus.map((m) => Object.assign({ bgcolor: t.paper, bordercolor: t.line, font: { color: t.ink, size: 11 } }, m)); }
     const traces = themeify(filterTraces(fig.data, ctx));
     if (!traces.length) { div.innerHTML = '<div class="note muted">No data for the current options.</div>'; return; }
     await plot(div, traces, layout, b, ctx);
@@ -495,7 +508,7 @@
       let fbN = 0;
       for (const idxs of groups.values()) {
         const pick = pickStage([...new Set(idxs.map((i) => C.stage[i]).filter(Boolean))], ctx);
-        if (pick && pick !== ctx.stage) fbN++;
+        if (pick && pick !== ctx.stage && idxs.some((i) => base[i] && C.stage[i] === pick)) fbN++;
         for (const i of idxs) if (C.stage[i] != null && C.stage[i] !== pick) base[i] = 0;
       }
       const pickAll = pickStage([...new Set(C.stage.filter(Boolean))], ctx);
@@ -561,6 +574,8 @@
       el.querySelector('.ex-count').textContent = `${idx.length.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} points${stageNote}${b.design_key && b.highlight ? ' · click a ringed point to open the design' : b.design_key ? ' · click a point with a design to open it' : ''}`;
       const facets = st.facet ? catVals(st.facet).filter((v) => idx.some((i) => C[st.facet][i] === v)) : [null];
       const multi = facets.length > 1;
+      const narrow = el.clientWidth > 0 && el.clientWidth < 640;
+      const htmlLegend = multi || narrow;
       // axis ranges: shared across facets; with fixed_axes over every point of the block (stable when filtering)
       const rIdx = b.fixed_axes ? [...Array(N).keys()].filter((i) => C[st.x]?.[i] != null && C[st.y]?.[i] != null) : idx;
       const xr = D[st.x]?.type === 'cat' ? [] : rIdx.map((i) => C[st.x][i]).filter((v) => typeof v === 'number' && (!st.logx || v > 0));
@@ -573,14 +588,15 @@
       const isHi = (i) => (b.highlight ? !!C[b.highlight]?.[i] : false);
       const paretoOk = (i) => (b.pareto_include_highlight || !isHi(i)) && Object.entries(b.pareto_on || {}).every(([k, vals]) => vals.map(String).includes(String(C[k]?.[i])));
       const ink = themeColors().ink, muted = themeColors().muted;
-      const colOf = (v, ci) => colorD?.colors?.[v] || COLORWAY[ci % COLORWAY.length];
+      const TC = themeColors();
+      const colOf = (v, ci) => { const c0 = colorD?.colors?.[v]; return c0 ? (String(c0).startsWith('theme:') ? TC[String(c0).slice(6)] || c0 : c0) : COLORWAY[ci % COLORWAY.length]; };
       const symOf = (v) => D[st.symbol]?.symbols?.[v] || SYMBOLS[catVals(st.symbol).indexOf(v) % SYMBOLS.length];
       const GLYPH = { circle: '●', x: '✕', diamond: '◆', square: '■', 'triangle-up': '▲', cross: '✚', star: '★', 'triangle-down': '▼', pentagon: '⬟', hexagon: '⬢', 'circle-open': '○', 'square-open': '□', 'diamond-open': '◇', 'star-open': '☆' };
       // facet grids get one HTML legend instead of a Plotly legend per facet
-      if (multi) {
+      if (htmlLegend) {
         const sw = [];
-        if (colorD && colorD.type === 'cat') catVals(st.color).forEach((v, ci) => sw.push(`<span><i style="background:${colOf(v, ci)}"></i>${esc(label(st.color, v))}</span>`));
-        if (st.symbol) catVals(st.symbol).forEach((v) => sw.push(`<span><b class="sym">${GLYPH[symOf(v)] || '●'}</b>${esc(label(st.symbol, v))}</span>`));
+        if (colorD && colorD.type === 'cat') catVals(st.color).forEach((v, ci) => { if (idx.some((i) => C[st.color][i] === v)) sw.push(`<span><i style="background:${colOf(v, ci)}"></i>${esc(label(st.color, v))}</span>`); });
+        if (st.symbol) catVals(st.symbol).filter((v) => idx.some((i) => C[st.symbol][i] === v)).forEach((v) => sw.push(`<span><b class="sym">${GLYPH[symOf(v)] || '●'}</b>${esc(label(st.symbol, v))}</span>`));
         if (b.highlight) sw.push(`<span><b class="sym">◯</b>${esc(b.highlight_label || 'Delivered designs')}</span>`);
         if (st.pareto) sw.push(`<span><b class="sym">┈</b>${{ color: 'Pareto front per colour group', envelope: 'best-value envelope per colour group', all: 'Pareto front' }[st.pareto]}</span>`);
         plots.insertAdjacentHTML('beforebegin', '');
@@ -590,7 +606,7 @@
       for (const fv of facets) {
         const fi = fv === null ? idx : idx.filter((i) => C[st.facet][i] === fv);
         const traces = [];
-        const showL = !multi;
+        const showL = !htmlLegend;
         const mk = (sub, name, extraMarker = {}) => {
           const sy = st.symbol ? sub.map((i) => symOf(C[st.symbol][i])) : undefined;
           return {
@@ -611,7 +627,7 @@
           traces.push(mk(fi, 'points', { color: fi.map((i) => C[st.color][i]), colorscale: 'Viridis', showscale: !multi || fv === facets[0], colorbar: { title: { text: axisTitle(st.color), side: 'right' }, thickness: 12 } }));
         } else traces.push(mk(fi, 'points', { color: COLORWAY[0] }));
         // symbol legend entries (the point traces are split by colour, so symbols need their own key)
-        if (st.symbol && showL) catVals(st.symbol).forEach((v) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${D[st.symbol]?.label || st.symbol}: ${label(st.symbol, v)}`, marker: { symbol: symOf(v), color: muted, size: 8 }, hoverinfo: 'skip', legendgroup: `sym-${v}` }));
+        if (st.symbol && showL) catVals(st.symbol).filter((v) => fi.some((i) => C[st.symbol][i] === v)).forEach((v) => traces.push({ type: 'scatter', mode: 'markers', x: [null], y: [null], name: `${D[st.symbol]?.label || st.symbol}: ${label(st.symbol, v)}`, marker: { symbol: symOf(v), color: muted, size: 8 }, hoverinfo: 'skip', legendgroup: `sym-${v}` }));
         const hi = fi.filter(isHi);
         if (hi.length) traces.push(Object.assign(mk(hi, b.highlight_label || 'Delivered designs', { size: 12, opacity: 1, color: ink, symbol: 'circle-open', line: { width: 2, color: ink } }), { type: 'scatter' }));
         let frontN = 0;
