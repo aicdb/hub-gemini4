@@ -378,7 +378,7 @@
     const v = (n, d) => (cs.getPropertyValue(n) || d).trim();
     return { ink: v('--ink', '#162232'), muted: v('--muted', '#5a6b7e'), line: v('--line', '#d9e1ea'), paper: v('--paper', '#fff') };
   }
-  const COLORWAY = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5', '#0d9488', '#9333ea', '#ca8a04', '#be123c'];
+  const COLORWAY = ['#d9423a', '#2563eb', '#16a34a', '#e8a33d', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#4f46e5', '#0d9488', '#9333ea', '#a16207', '#64748b', '#be185d'];
   function deepMerge(base, over) {
     if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
     const out = Array.isArray(base) ? [...base] : Object.assign({}, base);
@@ -562,7 +562,7 @@
         if (st.pareto && fi.length && D[st.x]?.type !== 'cat' && D[st.y]?.type !== 'cat') {
           const fr = pareto(fi).sort((a, c) => C[st.x][a] - C[st.x][c]);
           frontN = fr.length;
-          traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Pareto front', x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: '#e11d48', width: 2, shape: 'hv' }, marker: { size: 5, color: '#e11d48' }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: fv === null || fv === facets[0] });
+          traces.push({ type: 'scatter', mode: 'lines+markers', name: 'Pareto front', x: fr.map((i) => C[st.x][i]), y: fr.map((i) => C[st.y][i]), line: { color: themeColors().ink, width: 2, dash: 'dot', shape: 'hv' }, marker: { size: 5, color: themeColors().ink }, text: fr.map(hoverText), hovertemplate: '%{text}<extra>Pareto</extra>', customdata: b.design_key ? fr.map((i) => C[b.design_key][i]) : undefined, showlegend: fv === null || fv === facets[0] });
         }
         const div = document.createElement('div');
         div.className = 'chart';

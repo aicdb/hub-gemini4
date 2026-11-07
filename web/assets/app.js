@@ -248,6 +248,77 @@ function renderTabs() {
   $('#tabs a.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
+
+/* ------------------------------------------------------------------ block hierarchy (overview) */
+function hierarchyHtml() {
+  const G = CAT.graph || [];
+  if (!G.length) return '';
+  const byId = Object.fromEntries(CAT.components.map((c) => [c.id, c]));
+  const nodeKey = (id) => (byId[id]?.group ? `g:${byId[id].group}` : id);
+  const nodes = new Map();
+  for (const c of CAT.components) {
+    const k = nodeKey(c.id);
+    if (!nodes.has(k)) nodes.set(k, { key: k, label: c.group || c.name, sub: c.group ? [] : null, ids: [], href: tabHref(c.id) });
+    const n = nodes.get(k); n.ids.push(c.id); if (n.sub) n.sub.push(c.name);
+  }
+  const edges = new Map();
+  for (const e of G) {
+    const a = nodeKey(e.from), b = nodeKey(e.to);
+    if (a === b) continue;
+    const k = `${a}>${b}`;
+    if (!edges.has(k)) edges.set(k, { from: a, to: b, roles: new Set(), users: 0, targets: 0 });
+    const x = edges.get(k); e.roles.forEach((r) => x.roles.add(r)); x.users += e.users; x.targets += e.targets;
+  }
+  const deps = (k) => [...edges.values()].filter((e) => e.from === k).map((e) => e.to);
+  const lvl = new Map();
+  const level = (k, seen = new Set()) => {
+    if (lvl.has(k)) return lvl.get(k);
+    if (seen.has(k)) return 0;
+    seen.add(k);
+    const d = deps(k);
+    const v = d.length ? 1 + Math.max(...d.map((x) => level(x, seen))) : 0;
+    lvl.set(k, v); return v;
+  };
+  [...nodes.keys()].forEach((k) => level(k));
+  const L = Math.max(...lvl.values());
+  const rows = Array.from({ length: L + 1 }, (_, i) => [...nodes.keys()].filter((k) => lvl.get(k) === i));
+  const W = 1100, rowH = 118, boxH = 58, top = 24;
+  const pos = new Map();
+  const place = (row, i) => { const n = row.length; const gap = W / n; row.forEach((k, j) => pos.set(k, { x: gap * (j + 0.5), y: top + (L - i) * rowH, w: Math.min(176, gap - 14) })); };
+  place(rows[0], 0);
+  for (let i = 1; i <= L; i++) {   // barycentric order: put users above the blocks they build on
+    rows[i].sort((a, b) => { const bx = (k) => { const d = deps(k).filter((x) => pos.has(x)); return d.length ? d.reduce((s2, x) => s2 + pos.get(x).x, 0) / d.length : W / 2; }; return bx(a) - bx(b); });
+    place(rows[i], i);
+  }
+  const count = (n) => n.ids.reduce((a, id) => a + byId[id].rows.filter(passGlobalRow).length, 0);
+  const H = top + L * rowH + boxH + 26;
+  const maxU = Math.max(1, ...[...edges.values()].map((e) => e.users));
+  const ePaths = [...edges.values()].map((e) => {
+    const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) return '';
+    const y1 = a.y + boxH, y2 = b.y, my = (y1 + y2) / 2;
+    const sw = 1.4 + 3 * Math.sqrt(e.users / maxU);
+    const roles = [...e.roles];
+    const tip = `${nodes.get(e.from).label} is built from ${nodes.get(e.to).label}` + (e.users ? `: ${e.users} design${e.users === 1 ? '' : 's'} reuse ${e.targets} ${nodes.get(e.to).label} design${e.targets === 1 ? '' : 's'}` : '') + (roles.length ? ` (${roles.join(', ')})` : '');
+    return `<path class="h-edge" d="M${a.x},${y1} C${a.x},${my} ${b.x},${my} ${b.x},${y2 - 6}" stroke-width="${sw.toFixed(1)}" marker-end="url(#harrow)"><title>${esc(tip)}</title></path>`;
+  }).join('');
+  const nBoxes = [...nodes.values()].map((n) => {
+    const p = pos.get(n.key);
+    const sub = n.sub ? `${n.sub.length} generators` : `${byId[n.ids[0]].title.replace(/^GF180[^ ]* /, '').slice(0, 30)}`;
+    return `<a href="${n.href}" class="h-node"><title>${esc(n.label)}${n.sub ? `: ${n.sub.join(', ')}` : ''}</title>
+      <rect x="${p.x - p.w / 2}" y="${p.y}" width="${p.w}" height="${boxH}" rx="9"/>
+      <rect class="h-bar" x="${p.x - p.w / 2}" y="${p.y}" width="5" height="${boxH}" rx="2"/>
+      <text x="${p.x}" y="${p.y + 22}" class="h-name">${esc(n.label)}</text>
+      <text x="${p.x}" y="${p.y + 40}" class="h-sub">${count(n)} designs · ${esc(sub)}</text></a>`;
+  }).join('');
+  const lvlNames = rows.map((_, i) => (i === 0 ? 'cells' : i === L ? 'systems' : 'sub-systems'));
+  const lvlLabels = rows.map((_, i) => `<text class="h-lvl" x="6" y="${top + (L - i) * rowH + boxH / 2 + 4}">${lvlNames[i]}</text>`).join('');
+  return `<section class="panel hier"><div class="section-head"><h2>Block hierarchy</h2>
+      <span class="subtle">arrow A → B: A is built from B · line width ∝ number of reusing designs · hover for details · counts follow the global options</span></div>
+    <div class="table-scroll"><svg viewBox="0 0 ${W} ${H}" class="hsvg" role="img" aria-label="Which generators are built from which">
+      <defs><marker id="harrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="h-arrow"/></marker></defs>
+      ${lvlLabels}${ePaths}${nBoxes}</svg></div></section>`;
+}
+
 /* ------------------------------------------------------------------ overview */
 async function renderOverview(main) {
   if (S.q) return renderSearch(main);
@@ -290,6 +361,7 @@ async function renderOverview(main) {
         <div class="stat"><b>${clean.toLocaleString('en-US')}</b><span>DRC + LVS clean</span></div>
       </div>
     </section>
+    ${hierarchyHtml()}
     <div class="ovgrid">${cards}</div>`;
 }
 
@@ -370,6 +442,14 @@ async function renderComponent(main) {
         <div class="links">
           ${c.repo ? `<a href="https://github.com/${esc(c.repo)}" target="_blank" rel="noopener" title="Private repository; request access from the maintainers">Source repo ↗</a>` : ''}
           <a href="data/components/${esc(c.id)}.json" download>component.json ↓</a>
+        </div>
+        <div class="links hier-links">${(() => {
+          const name = (id) => CAT.components.find((x) => x.id === id)?.name || id;
+          const chip = (e, verb) => `<a class="badge acc" href="${tabHref(e.id)}" title="${esc(`${verb} ${name(e.id)}${e.users ? `: ${e.users} designs, ${e.targets} reused ${name(e.id)} designs` : ''}${e.roles.length ? ` (${e.roles.join(', ')})` : ''}`)}">${esc(name(e.id))}${e.users ? ` <span class="n">${e.users}</span>` : ''}</a>`;
+          const b = (c.builds_on_resolved || []).map((e) => chip(e, 'built from'));
+          const u = (c.used_in || []).map((e) => chip(e, 'used in'));
+          return `${b.length ? `<span class="subtle">Built from</span> ${b.join(' ')}` : ''}${b.length && u.length ? ' <span class="subtle">·</span> ' : ''}${u.length ? `<span class="subtle">Used in</span> ${u.join(' ')}` : ''}`;
+        })()}
           ${c.origin === 'adapter' ? '<span class="badge warn" title="Converted by the hub\'s bootstrap adapter; the generator repo has not published its own export yet">bootstrap adapter</span>' : ''}
         </div>
       </div>
@@ -646,6 +726,15 @@ async function renderDetail(main, c) {
           <div class="badges">${phys}</div>
         </div>
         ${params.length ? `<div class="panel"><div class="section-head"><h2>Parameters</h2></div><table class="mt"><tbody>${params.map(([k, v]) => `<tr><td>${Blocks.inline(k)}</td><td>${esc(typeof v === 'number' ? num(v, 4) : typeof v === 'object' ? JSON.stringify(v) : v)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        ${(() => {
+          const uses = (d.uses || []);
+          const usedBy = c.used_by?.[d.id] || [];
+          if (!uses.length && !usedBy.length) return '';
+          const li = (x, comp, title) => `<li>${x.missing ? `<span class="subtle">${esc(comp)}/${esc(x.design)} (not on the hub)</span>` : `<a href="${tabHref(x.component, x.design)}">${esc(title)}</a> <span class="subtle">· ${esc(comp)}</span>`}${x.role ? ` — ${esc(x.role)}` : ''}</li>`;
+          return `<div class="panel"><div class="section-head"><h2>Hierarchy</h2></div>
+            ${uses.length ? `<div class="subtle">Built from</div><ul class="hlist">${uses.map((x) => li(x, x.component_name || x.component, x.title || x.design)).join('')}</ul>` : ''}
+            ${usedBy.length ? `<div class="subtle">Used in ${usedBy.length} design${usedBy.length === 1 ? '' : 's'}</div><ul class="hlist">${usedBy.slice(0, 50).map((x) => li(x, x.component_name || x.component, x.title)).join('')}${usedBy.length > 50 ? `<li class="subtle">… and ${usedBy.length - 50} more</li>` : ''}</ul>` : ''}</div>`;
+        })()}
         <div class="panel" id="dls"></div>
       </div>
     </div>

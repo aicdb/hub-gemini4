@@ -103,7 +103,8 @@ docs/
               "status": { "metric": "range", "good": 95, "warn": 50 } },   // optional: colour cells by thresholds (direction from metric.better)
   "card_metrics": ["a0", "ugb", "power", "area"],   // up to 12; the first is the headline
   "cards_group_by": "class",                     // optional axis key (or list) to group the card grid
-  "families": [ … ],                            // optional sub-tabs (§4.3)
+  "builds_on": [ { "id": "opa", "role": "core OTA" }, { "id": "switch", "role": "chopper switches" } ],  // §4.5
+  "families": [ … ],                            // optional sub-tabs (§4.4)
   "pages": [ … ],                               // extra pages next to "Designs" (§4.2)
   "designs": [ … ]                              // §4.1
 }
@@ -148,6 +149,8 @@ docs/
   "images": [ { "label": "Annotated schematic (post-PEX)", "src": "designs/x/schematic_pex.svg" },
               { "label": "Cap array", "gds": "designs/x/x.gds.gz", "cell": "sc_cap_16b" } ],
   "downloads": [ { "label": "Testbench", "file": "designs/x/tb.spice" } ],
+  "uses": [ { "component": "opa", "design": "200f-folded_cascode_nmos_1v8_0p1u_1u_subth", "role": "core OTA" },
+            { "component": "switch", "design": "cmos__1p8v__10u-100u", "role": "input chopper" } ],   // §4.5
   "detail": "hub/designs/2p-folded_cascode_nmos_1v8_10u_100u_weak.json"   // §5: all detail sections
 }
 ```
@@ -200,6 +203,27 @@ For variants of one generator that need different matrices or metrics: `families
 label, summary, matrix?, card_metrics?, cards_group_by?}]` plus `design.family`. Each family
 becomes a sub-tab of the Designs view. Unrelated generators should be separate components
 (§4.3) instead.
+
+### 4.5 Block hierarchy (reuse between components)
+
+Bigger blocks are built from smaller ones: an ECG front end reuses op-amps and switches,
+SAR and ΣΔ ADCs reuse comparators, switches and op-amps, LDOs reuse an op-amp as error
+amplifier. Declare this so the hub can draw the hierarchy on the overview page and
+cross-link designs:
+
+- `builds_on` (component level): the components this generator draws sub-blocks from,
+  with a short role. Use component ids, or a collection's source id (e.g. `aux`).
+- `uses` (design level): the exact sub-block designs this design instantiates. Give
+  `component` (hub component id), `design` (that component's hub design id) and `role`.
+  If the design reuses a cell that is not a published hub design (e.g. a variant), you can
+  still list it; the hub marks it "not on the hub".
+
+The hub resolves every `uses` entry across components at build time, so ids must match the
+other component's hub design ids exactly. It then:
+- draws the component graph (cells → sub-systems → systems) on the overview page,
+- shows "Built from" / "Used in" chips on each component tab,
+- lists "Built from" and the reverse "Used in" designs on every design page (e.g. an op-amp
+  page lists every ECG/LDO/ADC design that uses it).
 
 ## 5. Content blocks
 

@@ -277,6 +277,9 @@ def validate(ex: Export, rep: Report, exclude=()) -> Refs:
         fam_ids.add(f["id"])
         check_view(f, f'families[{f["id"]}]')
 
+    for j, b in enumerate(comp.get("builds_on") or []):
+        if not (isinstance(b, dict) and b.get("id")):
+            rep.err(f"builds_on[{j}]: needs id (+ optional role)")
     page_ids = set()
     for i, pg in enumerate(comp.get("pages", []) or []):
         w = f"pages[{i}]"
@@ -368,6 +371,9 @@ def validate(ex: Export, rep: Report, exclude=()) -> Refs:
         if d.get("detail"):
             refs.hosted.setdefault(d["detail"], f"{tag}.detail")
             refs.containers.append((d["detail"], f"{tag}.detail"))
+        for j, u in enumerate(d.get("uses") or []):
+            if not (isinstance(u, dict) and u.get("component") and u.get("design")):
+                rep.err(f"{tag}.uses[{j}]: needs component + design (+ optional role)")
 
     # container docs (pages, design details): parse and walk their blocks
     for rel, where in refs.containers:
@@ -620,6 +626,58 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
     return True, size
 
 
+def link_hierarchy(out: Path, catalog: dict):
+    """Resolve design-level `uses` across components, build reverse `used_by`, and the component graph."""
+    comps = {}
+    for c in catalog["components"]:
+        f = out / "data" / "components" / f"{c['id']}.json"
+        comps[c["id"]] = (f, json.loads(f.read_text()))
+    groups = {}
+    for cid, (_, comp) in comps.items():
+        if comp.get("group"):
+            groups.setdefault(comp.get("source"), []).append(cid)
+    titles = {cid: {d["id"]: d["title"] for d in comp["designs"]} for cid, (_, comp) in comps.items()}
+    edges = {}   # (from, to) -> {roles:set, users:set, targets:set, declared:bool}
+    dangling = 0
+    for cid, (_, comp) in comps.items():
+        for b in comp.get("builds_on") or []:
+            for to in ([b["id"]] if b["id"] in comps else groups.get(b["id"], [])):
+                e = edges.setdefault((cid, to), {"roles": set(), "users": set(), "targets": set(), "declared": False})
+                e["declared"] = True
+                if b.get("role"):
+                    e["roles"].add(b["role"])
+        for d in comp["designs"]:
+            for u in d.get("uses") or []:
+                to, tid = u.get("component"), u.get("design")
+                if to not in comps or tid not in titles[to]:
+                    dangling += 1
+                    if dangling <= 12:
+                        print(f"  [warn] {cid}/{d['id']}: uses {to}/{tid} which is not in the hub")
+                    u["missing"] = True
+                    continue
+                u["title"] = titles[to][tid]
+                u["component_name"] = comps[to][1]["name"]
+                tgt = comps[to][1].setdefault("used_by", {}).setdefault(tid, [])
+                tgt.append({"component": cid, "component_name": comp["name"], "design": d["id"], "title": d["title"], "role": u.get("role")})
+                e = edges.setdefault((cid, to), {"roles": set(), "users": set(), "targets": set(), "declared": False})
+                e["users"].add(d["id"]); e["targets"].add(tid)
+                if u.get("role"):
+                    e["roles"].add(u["role"])
+    if dangling > 12:
+        print(f"  [warn] ... {dangling} unresolved cross-component uses in total")
+    for cid, (f, comp) in comps.items():
+        comp["builds_on_resolved"] = [{"id": to, "roles": sorted(e["roles"]), "users": len(e["users"]), "targets": len(e["targets"])}
+                                      for (fr, to), e in sorted(edges.items()) if fr == cid]
+        comp["used_in"] = [{"id": fr, "roles": sorted(e["roles"]), "users": len(e["users"]), "targets": len(e["targets"])}
+                           for (fr, to), e in sorted(edges.items()) if to == cid]
+        f.write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
+    catalog["graph"] = [{"from": fr, "to": to, "roles": sorted(e["roles"]), "users": len(e["users"]), "targets": len(e["targets"])}
+                        for (fr, to), e in sorted(edges.items())]
+    if catalog["graph"]:
+        print(f"hierarchy: {len(catalog['graph'])} component edges, "
+              f"{sum(e['users'] for e in catalog['graph'])} design-level reuse links")
+
+
 def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
           cache_dir: Path, jobs: int) -> int:
     exclude = cfg.get("exclude", [])
@@ -664,6 +722,7 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
         finally:
             ex.close()
 
+    link_hierarchy(out, catalog)
     (out / "data" / "catalog.json").write_text(json.dumps(catalog, separators=(",", ":"), ensure_ascii=False))
     (out / "data" / "build.json").write_text(json.dumps(build_info, indent=1))
     budget = cfg.get("budget_mb", 1000)
