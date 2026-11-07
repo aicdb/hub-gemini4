@@ -22,6 +22,7 @@ Stdlib only.
 """
 import json
 import math
+import re
 from decimal import ROUND_HALF_UP, Decimal
 import sys
 from pathlib import Path
@@ -273,12 +274,52 @@ def stage_result(m, c, note):
     for key, _l, _u, _s, _d, _b, field, scale in METRICS:
         v = m.get(field)
         mm[key] = None if v is None else v * scale
+    if not LAY[c["key"]]["complete"]:
+        mm.pop("area")  # full-cell area of a multi-bank cell is a formula estimate (only one unit bank is drawn): not a result
     ok = robust(m, c["imax"])
     r = {"metrics": mm, "robust": ok, "note": f"{note}; valid {range_txt(m.get('valid'))}; R_on grade {m.get('grade') or 'below D'}"}
     # 15 PVT points: R_on (sizing target) and leakage are checked at the worst of the 15 points, so all pass iff the worst does
     if m.get("ron_wc") is not None and m["ron_wc"] <= m["rt"] * 1.001 and m.get("leak_wc") is not None and m["leak_wc"] <= LEAKF * c["imax"] * 1.001:
         r["pvt"] = {"pass": 15, "total": 15}
     return r
+
+
+# ============================================================================= drawn layout vs reported cell
+# The generator draws, verifies (DRC/LVS) and extracts one *unit bank* when the switch is wider than its physical bank
+# limit; the reported layout width/height/area of such a cell are a formula estimate for the full multi-bank cell, and
+# its post-PEX netlist is the unit-bank extraction with devices multiplied to the full width and parasitic C scaled.
+# Detect it from docs/ alone: the published GDS's drawn bounding box differs from the reported cell size.
+LAY = {}
+for _c in CARDS:
+    if _c["status"]["sim"] != "done":
+        continue
+    _k, _m = _c["key"], _c["m"]
+    _g = docs / "designs" / _k / f"{_k}.gds.gz"
+    _bb = gds_bbox(_g) if _g.is_file() else None
+    _ok = bool(_bb and _m.get("layout_w") and abs(_bb[0] - _m["layout_w"]) < 0.5 and abs(_bb[1] - _m["layout_h"]) < 0.5)
+    LAY[_k] = {"drawn": _bb, "complete": _ok}
+POST_STAGE = {k: "full" if v["complete"] else "partial" for k, v in LAY.items()}
+N_COMPLETE = sum(1 for v in LAY.values() if v["complete"])
+N_UNIT = len(LAY) - N_COMPLETE
+
+
+def est(c):
+    """True when the card's reported layout area is the generator's multi-bank estimate"""
+    return not LAY.get(c["key"], {}).get("complete", True)
+
+
+def area_lbl(c, a):
+    return f"≈ {area(a)}" if est(c) and a else area(a)
+
+
+def drawn_txt(c):
+    bb = LAY[c["key"]]["drawn"]
+    return f"{fx(bb[0], 1)} × {fx(bb[1], 1)} µm = {area(bb[0] * bb[1])}" if bb else "—"
+
+
+MIXED_NOTE = (f"Post-PEX values: {N_COMPLETE} cards are extractions of the complete drawn cell (full post-PEX), the other {N_UNIT} are "
+              "extractions of the drawn unit bank scaled to the full switch width (partial post-PEX); layout areas marked ≈ are the "
+              "generator's estimate for the full multi-bank cell, which is not drawn.")
 
 
 # ============================================================================= design detail documents
@@ -308,9 +349,14 @@ def stats_keyres(d, view):
     ]
     if m.get("vgs_on") is not None:
         items.append(("On-state gate drive", f"{fx(m['vgs_on'], 2)} V", "V<sub>gate</sub> − V<sub>in</sub> at the test level"))
-    items.append(("Area", area(m["area_um2"]) if m.get("area_um2") else "layout pending",
-                  f"{fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm · {L['naux']} auxiliary slice{'s' if L['naux'] > 1 else ''}" if L
-                  else f"devices {area(m.get('act_um2'))} + MIM {area(m.get('mim_um2'))}"))
+    if est(c):
+        items.append(("Area (estimated)", area_lbl(c, m.get("area_um2")),
+                      f"multi-bank estimate {fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm · {L['naux']} auxiliary slice{'s' if L['naux'] > 1 else ''}; "
+                      f"drawn unit bank {drawn_txt(c)}"))
+    else:
+        items.append(("Area", area(m["area_um2"]) if m.get("area_um2") else "layout pending",
+                      f"{fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm · {L['naux']} auxiliary slice{'s' if L['naux'] > 1 else ''}" if L
+                      else f"devices {area(m.get('act_um2'))} + MIM {area(m.get('mim_um2'))}"))
     return m, {"type": "stats", "stage": STAGE_OF[view], "alt": "keyres",
                "items": [{"label": l, "value": v, **({"sub": s} if s else {})} for l, v, s in items]}
 
@@ -328,14 +374,15 @@ def spec_table(d, m, view):
                  f"{fx(100 * m['stress_ratio'], 0)} % of rating (peak {fx(100 * m['stress_peak_ratio'], 0)} %)", bool(m.get("stress_ok"))])
     V, L = d.get("verify"), d.get("layout")
     if V:
-        rows.append(["DRC clean (PDK KLayout deck)", "0 violations" if V["drc"]["clean"] else json.dumps(V["drc"]["violations"]), bool(V["drc"]["clean"])])
-        rows.append(["LVS match (PDK KLayout deck)", "netlists match" if V["lvs"]["match"] else "mismatch", bool(V["lvs"]["match"])])
+        unit = " — drawn unit bank" if est(c) else ""
+        rows.append([f"DRC clean (PDK KLayout deck){unit}", "0 violations" if V["drc"]["clean"] else json.dumps(V["drc"]["violations"]), bool(V["drc"]["clean"])])
+        rows.append([f"LVS match (PDK KLayout deck){unit}", "netlists match" if V["lvs"]["match"] else "mismatch", bool(V["lvs"]["match"])])
     if L and L.get("em"):
         rows.append(["EM: DC current density in the met3 S/D stripes ≤ 1 mA/µm",
                      ", ".join(f"{e['dev']} {fx(e['j_stripe_ma_per_um'], 2)} mA/µm" for e in L["em"]), all(e["ok"] for e in L["em"])])
     return {"type": "table", "title": "Specification checks", "stage": STAGE_OF[view], "alt": "spec", "csv": False, "search": False,
-            "columns": [{"key": "k", "label": "Check", "type": "text"}, {"key": "v", "label": "Value", "type": "text"},
-                        {"key": "r", "label": "Result", "type": "text"}],
+            "columns": [{"key": "r", "label": "Result", "type": "text"}, {"key": "k", "label": "Check", "type": "text"},
+                        {"key": "v", "label": "Value", "type": "text"}],
             "rows": [{"k": k, "v": v, "r": {"v": "pass" if ok else "fail", "s": "good" if ok else "bad"}} for k, v, ok in rows]}
 
 
@@ -345,10 +392,13 @@ KNOB_NAME = {"rp": "P/N width ratio W_p/W_n", "kcb": "C_B (pump) / switch gate c
 
 def overview_blocks(d, key):
     c = d["card"]
-    blocks = [{"type": "note", "stage": "full", "tone": "info",
+    unit = (f" **Partial extraction:** only one unit bank of this cell is drawn ({drawn_txt(c)}); its Magic extraction was scaled by the "
+            "generator to the full switch width (devices multiplied, parasitic capacitances scaled, MIM capacitors set to the full-cell area), "
+            "so these post-PEX results are *partial post-PEX*.") if est(c) else ""
+    blocks = [{"type": "note", "stage": STAGE_OF["post"], "tone": "info",
                "text": "**Post-PEX view:** every result below is from the extracted layout netlist (R<sub>on</sub>, range, leakage, timing and "
                        "energy over PVT, charge injection, isolation, THD, device stress); only the design data (sizing, test conditions) "
-                       "and the layout area are shared with the schematic view."}]
+                       "and the layout area are shared with the schematic view." + unit}]
     notes = "\n\n".join(f"<small>{n}</small>" for n in d["circuit"].get("notes") or [])
     blocks.append({"type": "section", "title": "Topology", "blocks": [{"type": "markdown", "text": f"{DESC[c['topo']]}\n\n{notes}"}]})
     keyres, specs = [], []
@@ -400,12 +450,12 @@ def schematic_blocks(d, key):
     reg = lambda g: "" if g is None else "WI" if g >= 18 else "MI" if g >= 8 else "SI"  # noqa: E731
     rs = {"WI": "good", "MI": "muted", "SI": "warn"}
     cols = [{"key": "dev", "label": "Dev", "type": "text"}, {"key": "model", "label": "Model", "type": "text"},
-            {"key": "role", "label": "Role", "type": "text"}, {"key": "W", "label": "W", "unit": "µm", "digits": 5},
-            {"key": "L", "label": "L", "unit": "µm", "digits": 3}, {"key": "nf", "label": "nf", "digits": 5},
-            {"key": "gt", "label": "gm/Id target", "unit": "1/V", "digits": 3}, {"key": "gs", "label": "gm/Id sim", "unit": "1/V", "digits": 3},
-            {"key": "vgs", "label": "V<sub>GS</sub>", "unit": "V", "digits": 4}, {"key": "vsb", "label": "V<sub>SB</sub>", "unit": "V", "digits": 4},
+            {"key": "role", "label": "Role", "type": "text"}, {"key": "W", "label": "W (µm)", "digits": 5},
+            {"key": "L", "label": "L (µm)", "digits": 3}, {"key": "nf", "label": "nf", "digits": 5},
+            {"key": "gt", "label": "gm/Id target (1/V)", "digits": 3}, {"key": "gs", "label": "gm/Id sim (1/V)", "digits": 3},
+            {"key": "vgs", "label": "V<sub>GS</sub> (V)", "digits": 4}, {"key": "vsb", "label": "V<sub>SB</sub> (V)", "digits": 4},
             {"key": "inv", "label": "Inv.", "type": "text", "title": "inversion level of gm/Id sim: WI ≥ 18, MI ≥ 8, SI < 8 (1/V)"},
-            {"key": "st", "label": "stress ox / ds", "unit": "V", "type": "text"}, {"key": "rating", "label": "rating", "unit": "V", "digits": 3},
+            {"key": "st", "label": "stress ox / ds (V)", "type": "text"}, {"key": "rating", "label": "rating (V)", "digits": 3},
             {"key": "nodes", "label": "D/G/S/B", "type": "text"}]
     for view, src in (("pre", d["char"]), ("post", d["post"])):
         op, stv = (src or {}).get("op") or {}, (src or {}).get("stress") or {}
@@ -550,9 +600,12 @@ def simulation_blocks(d):
     V = d.get("verify") or {}
     px = V.get("pex") or {}
     rp = px.get("r_path") or {}
-    note = (f"Post-PEX: Magic extraction of the verified layout (hierarchical, {px.get('n_c', 0):,} parasitic capacitances ≥ 0.01 fF, MIM and junction "
+    c = d["card"]
+    what = (f"of the drawn unit bank ({drawn_txt(c)}), scaled by the generator to the full switch width (devices multiplied, parasitic C scaled, "
+            "MIM capacitors set to the full-cell area) — **partial post-PEX**") if est(c) else "of the complete verified cell — **full post-PEX**"
+    note = (f"Post-PEX: Magic extraction {what} (hierarchical, {px.get('n_c', 0):,} parasitic capacitances ≥ 0.01 fF, MIM and junction "
             f"geometry) plus the drawn series metal resistance of the switch path (in {si(rp.get('in') or 0, 'Ω')}, out {si(rp.get('out') or 0, 'Ω')}); "
-            "same benches and test conditions as the schematic results. Dotted curves: the schematic.")
+            "same benches and test conditions as the schematic results. Dotted R<sub>on</sub> curve: the schematic.")
     if px.get("coupling") is False:
         note += (" **Reduced extraction:** the full extraction of this cell exceeds the 30-min run limit, so coupling capacitance between nets is omitted "
                  "(devices and capacitance to substrate only).")
@@ -565,8 +618,8 @@ def simulation_blocks(d):
     order = ["ron", "leak", "won", "woff", "wave", "q", "iso", "thd"]
     charts.sort(key=lambda b: order.index(b["alt"]))
     tables.sort(key=lambda b: b["alt"])
-    return [{"type": "note", "stage": "full", "tone": "info", "text": note},
-            {"type": "note", "stage": "pre", "tone": "muted", "text": "Schematic (pre-PEX) netlist, Cadence Spectre. Dotted R<sub>on</sub> curve: the extracted (post-PEX) netlist for comparison."},
+    return [{"type": "note", "stage": STAGE_OF["post"], "alt": "simnote", "tone": "info", "text": note},
+            {"type": "note", "stage": "pre", "alt": "simnote", "tone": "muted", "text": "Schematic (pre-PEX) netlist, Cadence Spectre. Dotted R<sub>on</sub> curve: the extracted (post-PEX) netlist for comparison."},
             {"type": "section", "cols": 2, "blocks": charts},
             {"type": "section", "cols": 2, "blocks": [b for b in tables if b["alt"] == "tpvt"] + [b for b in tables if b["alt"] == "qpvt"]}]
 
@@ -590,7 +643,10 @@ def layout_blocks(d, key):
     asp = L.get("aspect") or min(L["width_um"], L["height_um"]) / max(L["width_um"], L["height_um"])
     grid = L.get("aux_grid")
     grid_txt = f", {grid[0]} × {grid[1]} grid" if grid and L["naux"] > 1 else ""
-    kv += [{"label": "Cell size", "value": f"{fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm = {area(L['area_um2'])}"},
+    if est(c):
+        kv.append({"label": "Drawn GDS (unit bank)", "value": drawn_txt(c), "s": "warn"})
+    kv += [{"label": "Cell size (estimated, multi-bank)" if est(c) else "Cell size",
+            "value": f"{fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm = {area(L['area_um2'])}"},
            {"label": "Aspect ratio", "value": fx(asp, 2)},
            {"label": "Switch banks", "value": f"switch folded into {L['banks']} banks" if L.get("banks", 1) > 1 else "1"},
            {"label": "Auxiliary slices", "value": f"{L['naux']} ({fx(L['aux']['width_um'], 0)} × {fx(L['aux']['height_um'], 0)} µm each{grid_txt})"}]
@@ -602,9 +658,17 @@ def layout_blocks(d, key):
                {"label": "Coupling capacitance", "value": "extracted" if px.get("coupling") is not False else "omitted (reduced extraction)"},
                {"label": "Series stripe R added at IN / OUT", "value": f"{si(rp.get('in') or 0, 'Ω')} / {si(rp.get('out') or 0, 'Ω')}"},
                {"label": "Missing ports", "value": ", ".join(px.get("missing_ports") or []) or "none"}]
-    blocks = [{"type": "layout", "title": "Layout (gLayout primitives, GF180MCU-D)", "gds": f"designs/{key}/{key}.gds.gz", "max_height": 720,
-               "caption": "Rendered from the GDS by the hub (click to open the raw GDS in the repository)."},
-              {"type": "kv", "cols": 2, "items": kv}]
+    blocks = []
+    if est(c):
+        blocks.append({"type": "note", "tone": "warn", "title": "Unit-bank layout.",
+                       "text": f"The published GDS contains one unit bank of this switch ({drawn_txt(c)}). The cell size, bank count and auxiliary-slice "
+                               f"grid below ({fx(L['width_um'], 1)} × {fx(L['height_um'], 1)} µm, {L.get('banks', 1)} banks, {L['naux']} slices) are the "
+                               "generator's estimate for the full multi-bank cell, which is not drawn; DRC, LVS and the Magic extraction were run on the "
+                               "unit bank (the post-PEX netlist is scaled to the full width, see the Simulation tab)."})
+    blocks += [{"type": "layout", "title": "Layout (gLayout primitives, GF180MCU-D)" + (" — drawn unit bank" if est(c) else ""),
+                "gds": f"designs/{key}/{key}.gds.gz", "max_height": 720,
+                "caption": "Rendered from the GDS by the hub (click to open the raw GDS in the repository)."},
+               {"type": "kv", "cols": 2, "items": kv}]
     rt = c["m"]["rt"]
     rows = []
     for a in L.get("arrays") or []:
@@ -619,7 +683,9 @@ def layout_blocks(d, key):
                    "rows": rows,
                    "caption": "Stripe R: estimated series resistance of the met3 source + drain stripes (0.09 Ω/□, current collected uniformly along each "
                               "stripe → R/3 per stripe, stripes in parallel), per bank; not part of the schematic R<sub>on</sub>, added to the extracted "
-                              "netlist at its IN/OUT pins for the post-PEX benches. *Estimate from the drawn geometry, not a simulation result.*"})
+                              "netlist at its IN/OUT pins for the post-PEX benches. *Estimate from the array geometry, not a simulation result.*"
+                              + (" For this cell the array rows / stripes are the generator's plan for the full multi-bank cell (only one unit bank is drawn)."
+                                 if est(c) else "")})
     em = L.get("em") or []
     txt = []
     if em:
@@ -664,10 +730,22 @@ for c in CARDS_SORTED:
     base = f"designs/{key}"
     d = load(f"{base}/data.json")
     verify, L = d.get("verify") or {}, d.get("layout") or {}
+    STAGE_OF["post"] = POST_STAGE[key]
+    unit = est(c)
+    pex_txt = (docs / base / f"{key}.pex.spice").read_text() if (docs / base / f"{key}.pex.spice").is_file() else ""
+    capfix = any(re.match(r"^C\S*\s+(ntop\s+vss|vss\s+ntop|vb\s+vss|vss\s+vb)\s", ln) for ln in pex_txt.splitlines())
     results = {"pre": stage_result(m, c, "Schematic netlist (Cadence Spectre), 15 PVT points (5 corners × 3 temperatures)")}
     if mp:
-        results["full"] = stage_result(mp, c, "Magic extraction of the complete verified cell (device geometry, parasitic C ≥ 0.01 fF incl. coupling) "
-                                              "plus the met3 stripe series R at IN/OUT; same benches, 15 PVT points")
+        if unit:
+            note = (f"Magic extraction of the drawn unit bank only ({drawn_txt(c)}; the full multi-bank cell is not drawn), scaled by the generator "
+                    "to the full switch width (devices multiplied, parasitic C scaled, MIM caps set to the full-cell area), plus the met3 stripe "
+                    "series R at IN/OUT; same benches, 15 PVT points")
+        else:
+            note = ("Magic extraction of the complete drawn cell (device geometry, parasitic C ≥ 0.01 fF incl. coupling) plus the met3 stripe "
+                    "series R at IN/OUT; same benches, 15 PVT points")
+        if capfix:
+            note += "; the generator scales the extracted ntop–vss / vb–vss capacitances by 0.25"
+        results[POST_STAGE[key]] = stage_result(mp, c, note)
     files = {k: f"{base}/{v}" for k, v in (
         ("schematic", "schematic.svg"), ("gds", f"{key}.gds.gz"), ("netlist", "netlist.spice"), ("pex_netlist", f"{key}.pex.spice"),
         ("lvs_netlist", "lvs_reference.spice"), ("data", "data.json")) if (docs / base / v).is_file()}
@@ -680,6 +758,7 @@ for c in CARDS_SORTED:
         tags.append("overstress")
     if m.get("em_ok") is False:
         tags.append("EM-limited")
+    tags.append("unit-bank layout" if unit else "complete layout")
     params = {"R_on target (5 % VDD / I_max)": si(m["rt"], "Ω"), "I_max (class maximum)": si(c["imax"], "A"),
               "Main switch width W_s": f"{fx(m['ws'] / 1000, 3)} mm" if m["ws"] >= 1000 else f"{fx(m['ws'], 2)} µm",
               "Test level (input)": f"{fx(m['vtest'], 3)} V", "Load R_L": si(m["rl"], "Ω"), "Hold cap C_H": si(m["ch"], "F"),
@@ -687,18 +766,24 @@ for c in CARDS_SORTED:
               "THD tone (amplitude @ centre)": f"{fx(m.get('thd_amp'), 3)} V @ {fx(m.get('thd_vc'), 3)} V",
               "Auxiliary slices": m.get("naux"), "Switch banks": m.get("banks"),
               "Device / MIM area": f"{area(m.get('act_um2'))} / {area(m.get('mim_um2'))}"}
+    if unit:
+        params["Estimated full-cell size (multi-bank, not drawn)"] = f"{fx(m['layout_w'], 1)} × {fx(m['layout_h'], 1)} µm = {area(m['area_um2'])}"
     params.update({KNOB_NAME.get(k, k): v for k, v in (c.get("knobs") or {}).items()})
     designs.append({
         "id": key, "title": c["name"],
         "summary": f"Sized for I<sub>max</sub>·R<sub>on</sub> ≤ 5 % VDD at I<sub>max</sub> = {si(c['imax'], 'A')} (R<sub>on</sub> target {si(m['rt'], 'Ω')}) "
                    f"over the valid signal range at all 15 PVT points. Results: Overview · Schematic · Simulation · Layout tabs below; "
-                   f"the global *Simulation stage* switches between the schematic (pre-PEX) and the extracted-layout (full post-PEX) results.",
+                   f"the global *Simulation stage* switches between the schematic (pre-PEX) and the extracted-layout results"
+                   + (f" (*partial post-PEX*: only one unit bank of this cell is drawn and extracted, {drawn_txt(c)}; the reported cell size is an estimate)."
+                      if unit else " (*full post-PEX*: complete drawn cell extracted)."),
         "vdd": c["vdd"], "axes": {"topology": c["topo"], "class": c["iclass"]}, "tags": tags,
         "physical": {"drc": st.get("drc"), "lvs": st.get("lvs"), "pex": pex.get("ok") if pex else (True if mp else None),
-                     "area_um2": m.get("area_um2"), "width_um": m.get("layout_w"), "height_um": m.get("layout_h")},
+                     **({"area_um2": LAY[key]["drawn"][0] * LAY[key]["drawn"][1], "width_um": LAY[key]["drawn"][0], "height_um": LAY[key]["drawn"][1]}
+                        if unit and LAY[key]["drawn"] else {"area_um2": m.get("area_um2"), "width_um": m.get("layout_w"), "height_um": m.get("layout_h")})},
         "results": results, "params": params, "files": files, "images": images,
         "detail": write(f"designs/{key}.json", detail_doc(d, key)),
     })
+STAGE_OF["post"] = "partial"   # page views mix full (complete-cell) and partial (unit-bank) extractions
 DESIGN_IDS = {x["id"] for x in designs}
 done = [c for c in CARDS_SORTED if c["status"]["sim"] == "done"]
 
@@ -715,7 +800,9 @@ def page_overview():
             {"label": "layouts DRC + LVS clean", "value": str(sum(1 for c in cs if c["status"].get("drc") and c["status"].get("lvs")))},
             {"label": "meet the R<sub>on</sub> target (grade A/B)", "value": str(sum(1 for c in done if mv(c, view).get("grade") in ("A", "B")))},
             {"label": "post-PEX simulated (extracted netlists)", "value": str(sum(1 for c in cs if c.get("mp")))},
-            {"label": "not applicable (n/a)", "value": str(len(na_cards))}]})
+            {"label": "not applicable (n/a)", "value": str(len(na_cards))}],
+            **({"caption": MIXED_NOTE + " DRC/LVS were run on the drawn GDS (the unit bank for multi-bank cells)."} if view == "post" else
+               {"caption": f"DRC/LVS were run on the drawn GDS: the complete cell for {N_COMPLETE} cards, one unit bank for the other {N_UNIT}."})})
     # coverage matrix (heatmap with the old colour code and n/a cells)
     cols = [(v, k) for v in META["vdds"] for k in ICLS]
     for view in ("pre", "post"):
@@ -733,13 +820,14 @@ def page_overview():
                 m = mv(c, view)
                 cov = m.get("coverage")
                 zr.append(None if cov is None else 2 if cov > 0.97 else 1 if cov > 0 else 0)
-                tr.append("…" if cov is None else f"{jsround(100 * cov)} %<br>{area(m['area_um2']) if m.get('area_um2') else '…'}")
-                cr.append([c["key"], f"{c['name']}<br>valid {range_txt(m.get('valid'))} · area {area(m.get('area_um2'))}<br>R_on wc {si(m.get('ron_wc'), 'Ω')} · {grade_txt(m)}"])
+                tr.append("…" if cov is None else f"{jsround(100 * cov)} %<br>{area_lbl(c, m['area_um2']) if m.get('area_um2') else '…'}")
+                cr.append([c["key"], f"{c['name']}<br>valid {range_txt(m.get('valid'))} · area {area_lbl(c, m.get('area_um2'))}{' (estimated, unit bank drawn)' if est(c) else ''}<br>R_on wc {si(m.get('ron_wc'), 'Ω')} · {grade_txt(m)}"])
             z.append(zr); text.append(tr); cd.append(cr)
         cs_ = [[0, "#e5e7eb"], [0.1667, "#e5e7eb"], [0.1667, "#ffd8d6"], [0.5, "#ffd8d6"], [0.5, "#fdeeb8"], [0.8333, "#fdeeb8"], [0.8333, "#cdeed6"], [1, "#cdeed6"]]
         blocks.append({"type": "chart", "stage": STAGE_OF[view], "alt": "covmx", "title": "Coverage matrix", "height": 700, "link_designs": True,
                        "caption": "One cell per design card. The value is the valid signal range as a fraction of the supply (green: rail-to-rail, amber: partial, "
-                                  "red: none) and the cell's area; grey **n/a**: not applicable (see the table below). Click a cell to open the design. "
+                                  "red: none) and the cell's area (**≈** = the generator's estimate for a multi-bank cell of which only one unit bank is drawn); "
+                                  "grey **n/a**: not applicable (see the table below). Click a cell to open the design. "
                                   "The built-in *Designs → Matrix* view shows the same grid with any metric.",
                        "data": [{"type": "heatmap", "z": z, "text": text, "texttemplate": "%{text}", "textfont": {"size": 11, "color": "#1f2937"},
                                  "x": [f"{v} V<br>{icl_of(k)}" for v, k in cols], "y": [SHORT[t] for t in ORDER], "customdata": cd,
@@ -762,8 +850,9 @@ def page_overview():
                               + [{"key": g, "label": f"{g} ({jsround(100 * f)} %)" + (" target" if f == DROP else ""), "unit": "Ω", "si": True} for g, f in GRADES]
                               + [{"key": "n", "label": "cards"}], "rows": rows})
     # comparison table (old list "Comparison table") at both stages
-    rows = []
+    rows_by = {"pre": [], "post": []}
     for view in ("pre", "post"):
+        rows = rows_by[view]
         for c in done:
             m = mv(c, view)
             if view == "post" and not c.get("mp"):
@@ -773,7 +862,9 @@ def page_overview():
                          "grade": {"v": grade_txt(m), "s": grade_s(m.get("grade"))}, "flat": m.get("ron_flat"), "roff": m.get("roff_wc"),
                          "ton": m.get("t_on"), "toff": m.get("t_off"), "e": m.get("e_vdd"), "q": m.get("q_vtest"), "qmax": m.get("q_absmax"),
                          "iso": m.get("iso_10m"), "thd": m.get("thd_db"), "rc": m["ron_coff_fs"] * 1e-15 if m.get("ron_coff_fs") is not None else None,
-                         "area": m.get("area_um2"), "status": status_txt(c, view), "stage": STAGE_OF[view], "_design": c["key"]})
+                         "area": {"v": m.get("area_um2"), "s": "muted", "title": "estimated full-cell area (only one unit bank is drawn)"} if est(c) else m.get("area_um2"),
+                         "lay": "unit bank (area ≈)" if est(c) else "complete", "status": status_txt(c, view),
+                         "stage": "pre" if view == "pre" else POST_STAGE[c["key"]], "_design": c["key"]})
     tcols = [{"key": "design", "label": "Design", "type": "design"}, {"key": "vdd", "label": "V<sub>DD</sub>", "unit": "V"},
              {"key": "valid", "label": "Valid range", "type": "text"}, {"key": "cov", "label": "Range", "unit": "% VDD", "better": "high"},
              {"key": "ron", "label": "Ron", "unit": "Ω", "si": True, "better": "low"}, {"key": "ronwc", "label": "Ron wc", "unit": "Ω", "si": True, "better": "low"},
@@ -783,11 +874,15 @@ def page_overview():
              {"key": "q", "label": "Qinj", "unit": "C", "si": True}, {"key": "qmax", "label": "|Q| max", "unit": "C", "si": True, "better": "low"},
              {"key": "iso", "label": "Iso 10M", "unit": "dB", "better": "low"}, {"key": "thd", "label": "THD", "unit": "dB", "better": "low"},
              {"key": "rc", "label": "Ron·Coff", "unit": "s", "si": True, "better": "low"}, {"key": "area", "label": "Area", "unit": "µm²", "digits": 4, "better": "low"},
-             {"key": "status", "label": "Status", "type": "text"}, {"key": "stage", "label": "Stage", "type": "text"}]
-    blocks.append({"type": "table", "title": "Comparison table", "src": write("data/compare_table.json", {"columns": tcols, "rows": rows}),
-                   "columns": tcols, "stage_column": "stage", "sort": {"key": "design", "dir": "asc"}, "page_size": 400, "csv_name": "switch_comparison",
-                   "caption": "Every characterised design in one sortable table (click a header). Rows open the design. Follows the global "
-                              "*Simulation stage* (pre-PEX = schematic, full post-PEX = extracted layout) and V<sub>DD</sub> filter."})
+             {"key": "lay", "label": "Layout", "type": "text"}, {"key": "status", "label": "Status", "type": "text"}, {"key": "stage", "label": "Stage", "type": "text"}]
+    for view in ("pre", "post"):
+        blocks.append({"type": "table", "title": "Comparison table", "stage": STAGE_OF[view], "alt": "cmptab",
+                       "src": write(f"data/compare_table_{view}.json", {"columns": tcols, "rows": rows_by[view]}),
+                       "columns": tcols, "sort": {"key": "design", "dir": "asc"}, "page_size": 400, "csv_name": f"switch_comparison_{view}",
+                       "caption": "Every characterised design in one sortable table (click a header). Rows open the design. Follows the global "
+                                  "*Simulation stage* (Pre-PEX = schematic; post-PEX = extracted layout) and V<sub>DD</sub> filter."
+                                  + (" " + MIXED_NOTE + " The *Stage* column gives each row's extraction coverage." if view == "post" else
+                                     " Areas in grey are the generator's estimates for multi-bank cells.")})
     blocks.append({"type": "table", "title": "Not applicable cards", "search": False, "csv": False,
                    "caption": "These matrix positions are part of the generator's grid but are not built: no simulation, layout or results exist, "
                               "so they are not design records on the hub.",

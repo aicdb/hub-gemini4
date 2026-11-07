@@ -163,7 +163,10 @@ def line(name, x, y, color=None, dash=None, width=2, mode="lines", **kw):
 
 
 def chart(title, data, xt=None, yt=None, layout=None, height=None, caption=None, **kw):
-    lay = {"xaxis": {"title": {"text": xt or ""}}, "yaxis": {"title": {"text": yt or ""}}}
+    hh = height or 380
+    # legend below the x-axis title (the hub default overlaps it on short charts)
+    lay = {"xaxis": {"title": {"text": xt or ""}}, "yaxis": {"title": {"text": yt or ""}},
+           "legend": {"yanchor": "top", "y": R(-62.0 / max(120, hh - 80), 3)}}
     for k, v in (layout or {}).items():
         if isinstance(v, dict) and isinstance(lay.get(k), dict):
             lay[k] = {**lay[k], **v}
@@ -422,7 +425,7 @@ def detail_doc(c, d):
         blocks.append(note("This card shares its SPICE waveform/FFT record with " + ", ".join(f"[`{x}`](#/sar/{x.replace('_', '%5F')})" for x in twins)
                            + " (same ULP core simulation, different target sample rate).", "muted"))
     elif FFT_TWINS.get(cid):
-        blocks.append(note("The 32 FFT output codes of this card are identical to those of "
+        blocks.append(note(f"The {fp.get('n_fft')} FFT output codes of this card are identical to those of "
                            + ", ".join(f"[`{x}`](#/sar/{x.replace('_', '%5F')})" for x in FFT_TWINS[cid])
                            + " (duplicated simulation record in the generator's cache).", "muted"))
     pv_src, pv = own_pv(c, d)
@@ -875,7 +878,7 @@ def detail_doc(c, d):
         t6.append(chart("Floorplan sketch (from the region table)", [
             {"type": "scatter", "mode": "text", "x": [R(g["x0"] + g["w"] / 2) for g in regs], "y": [R(g["y0"] + g["h"] / 2) for g in regs],
              "text": [g.get("name") for g in regs], "textfont": {"size": 10}, "hoverinfo": "text", "showlegend": False}],
-            "x (µm)", "y (µm)", {"shapes": shapes, "yaxis": {"scaleanchor": "x", "range": [0, hq or None]}, "xaxis": {"range": [0, wq or None]}},
+            "x (µm)", "y (µm)", {"shapes": shapes, "yaxis": {"scaleanchor": "x", "scaleratio": 1, "constrain": "domain", "range": [-2, R((hq or 0) + 2)]}, "xaxis": {"constrain": "domain", "range": [-2, R((wq or 0) + 2)]}},
             height=420, caption="Drawn from the placement table above (the old site showed the table only)."))
     t6.append({"type": "downloads", "title": "Files", "items": [
         {"label": "Full-chip GDSII (.gds.gz)", "file": gds},
@@ -1141,7 +1144,7 @@ dims = [
     {"key": "nbits", "label": "Resolution", "type": "cat", "order": ["8-bit", "9-bit", "10-bit", "12-bit"]},
     {"key": "supply", "label": "Supply", "type": "cat", "order": ["1.8 V", "3.3 V"]},
     {"key": "tier", "label": "Sample-rate regime", "type": "cat", "labels": TIER_LABEL, "order": TIER_ORDER},
-    {"key": "arch", "label": "Architecture", "type": "cat", "labels": ARCH_ALL, "order": list(SWEEP_ARCH) + [a for a, _ in ARCHS]},
+    {"key": "arch", "label": "Architecture", "type": "cat", "labels": ARCH_ALL, "order": list(dict.fromkeys(list(SWEEP_ARCH) + [a for a, _ in ARCHS]))},
     {"key": "cap", "label": "CDAC capacitor", "type": "cat", "labels": CAP_LABEL, "order": ["mom", "mim"]},
     {"key": "comp", "label": "Comparator", "type": "cat"},
     {"key": "sw", "label": "S/H switch", "type": "cat"},
@@ -1280,7 +1283,8 @@ for k in sorted(PV_BY_MACRO, key=lambda k: (MACROS.get(k, {}).get("nbits", 0), k
     corners = pv.get("corners") or []
     figs = {"data": [line(co.get("label"), list(range(len(co.get("trace_res_lsb") or []))), RL(co.get("trace_res_lsb"), 5), [GRAY, BLUE, GREEN, AMBER, PURPLE][i % 5],
                           "dash" if i == 0 else None, mode="lines+markers") for i, co in enumerate(corners)],
-            "layout": {"xaxis": {"title": {"text": "Bit-cycling step index j"}}, "yaxis": {"title": {"text": "Residue V_diff (LSB)"}}}}
+            "layout": {"xaxis": {"title": {"text": "Bit-cycling step index j"}}, "yaxis": {"title": {"text": "Residue V_diff (LSB)"}},
+                       "legend": {"yanchor": "top", "y": -0.22}}}
     dump(OUT / rel, figs)
     macro_detail.append({"label": k, "blocks": [
         chart(f"`{k}`: 5-corner bit-cycling residue (SPICE)", None, height=360, src=f"hub/{rel}",

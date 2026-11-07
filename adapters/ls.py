@@ -235,7 +235,7 @@ class Ctx:
             for st, _ in STAGES:
                 r = self.opregion(st, tid, m)
                 if r:
-                    blocks.append({"type": "chart", "stage": st, "alt": f"opr-{tid}-{m}", "title": f"{tid} — {lab}",
+                    blocks.append({"type": "chart", "stage": st, "alt": f"opr-{tid}-{m}",
                                    "src": r[0], "height": 430, "caption": r[1]})
             tabs.append({"label": lab, "blocks": blocks})
         return {"type": "tabs", "style": "select", "label": "Metric", "tabs": tabs}
@@ -315,8 +315,8 @@ class Ctx:
             t["textfont"] = {"size": 8, "color": "#111111"}
             traces.append(t)
         xd = [[0, 0.46], [0.54, 1]]
-        yd = [[0.56, 1], [0, 0.44]]
-        lay = {"margin": {"t": 50, "l": 100, "b": 90}, "height": 1100, "showlegend": False}
+        yd = [[0.555, 0.95], [0, 0.395]]
+        lay = {"margin": {"t": 30, "l": 100, "b": 90}, "height": 1150, "showlegend": False}
         xt = "Input Domain [VSS1, VDD1] where VDD1 − VSS1 = 0.8V" if shifted else "Input Domain Span VDD1 − VSS1 (with VDD1 = 0.8V)"
         yt = "Output Domain [VSS2, VDD2] (VDD2 − VSS2 = 0.8V)" if shifted else "Output Span VDD2 − VSS2 (VDD2 = 0.8V)"
         sub = ["Both domains have local VDD=0.8V; axes sweep VSS1 & VSS2 ∈ [0.0V, 2.5V]" if shifted else
@@ -329,7 +329,7 @@ class Ctx:
                                   "tickfont": {"size": 9}, "title": {"text": xt, "font": {"size": 11}}}
             lay[f"yaxis{sfx}"] = {"domain": yd[i // 2], "anchor": f"x{sfx}", "type": "category",
                                   "tickfont": {"size": 9}, "title": {"text": yt, "font": {"size": 11}}}
-            ann.append({"xref": "paper", "yref": "paper", "x": xd[i % 2][0], "y": yd[i // 2][1] + 0.035, "xanchor": "left",
+            ann.append({"xref": "paper", "yref": "paper", "x": xd[i % 2][0], "y": yd[i // 2][1] + 0.008, "xanchor": "left",
                         "yanchor": "bottom", "showarrow": False, "align": "left",
                         "text": f"<b>{plots[i][2]}</b><br><span style='font-size:10px'>{sub[i]}</span>", "font": {"size": 12}})
         lay["annotations"] = ann
@@ -373,7 +373,7 @@ class Ctx:
             for st, _ in STAGES:
                 src, note = self.vss2d(st, tid, mode)
                 if src:
-                    blocks.append({"type": "chart", "stage": st, "alt": f"v2-{tid}-{mode}", "src": src, "height": 1100,
+                    blocks.append({"type": "chart", "stage": st, "alt": f"v2-{tid}-{mode}", "src": src, "height": 1150,
                                    "caption": "Cell colour: emerald (lowest) → violet → rose (highest) among passing cells of the "
                                               "plot; red = FAIL; hover a cell for rails and all metrics."})
                     blocks.append({"type": "note", "stage": st, "alt": f"v2n-{tid}-{mode}", "tone": "muted", "text": note})
@@ -711,8 +711,8 @@ def domains(c: Ctx):
     for st in ("pre", "full"):
         for r in c.S[st].get("hvt_pvt_summary") or []:
             did = hv_id(r["domain_label"])
-            hv.setdefault(did, dict(id=did, src=r["domain_label"], label=f"{fv(r['vddl'])} → {fv(r['vddh'])} V (HV)",
-                                    title=f"0-{fv(r['vddl'])}V → 0-{fv(r['vddh'])}V (HV-tolerant, 25 MHz)", vssl=0.0,
+            hv.setdefault(did, dict(id=did, src=r["domain_label"], label=f"{r['vddl']:.1f} → {r['vddh']:.1f} V (HV)",
+                                    title=f"0-{r['vddl']:.1f}V → 0-{r['vddh']:.1f}V (HV-tolerant, 25 MHz)", vssl=0.0,
                                     vddl=r["vddl"], vssh=0.0, vddh=r["vddh"], kind="hvt", hv=True))
     order = [d for d, *_ in FLAG if d in doms] + [d for d in doms if d not in [x for x, *_ in FLAG]]
     order += sorted(hv, key=lambda k: (hv[k]["vddh"], hv[k]["vddl"]))
@@ -925,6 +925,7 @@ def sibling_table(c: Ctx, tid, cur):
                          "robust": r.get("robust")})
     return {"type": "table", "title": "All crossings of this topology", "stage_column": "stage", "search": False, "csv": False,
             "columns": [{"key": "design", "label": "Crossing", "type": "design"}, {"key": "cur", "label": "", "type": "text"},
+                        {"key": "stage", "label": "Stage", "type": "text"},
                         {"key": "tpd", "label": "tpd", "unit": "s", "si": True, "digits": 4},
                         {"key": "pstat", "label": "P<sub>stat</sub>", "unit": "W", "si": True},
                         {"key": "edyn", "label": "E<sub>dyn</sub>", "unit": "J", "si": True},
@@ -1024,7 +1025,7 @@ def detail_blocks(c: Ctx, t, d, rec, P):
     B.append({"type": "section", "title": "gLayout physical layout & post-PEX parasitic extraction", "cols": 2,
               "blocks": [{"type": "kv", "cols": 1, "items": pex_kv(t)},
                          {"type": "image", "title": "gLayout render", "src": (t.get("pex_meta") or {}).get("layout_png") or f"assets/layout_{tid}.png",
-                          "bg": "dark", "max_height": 520}]})
+                          "bg": "white", "max_height": 520}]})
     B.append({"type": "section", "title": "SPICE netlist (schematic / Magic RC-extracted)", "collapsed": True,
               "blocks": netlist_blocks(t, "net")})
     B.append({"type": "section", "title": "Other crossings of this topology", "blocks": [sibling_table(c, tid, rec["id"])]})

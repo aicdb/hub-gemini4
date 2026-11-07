@@ -108,7 +108,7 @@ def load_export(cid: str | None, docs: Path, rep: Report) -> Export | None:
         return None
     tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
     out = Path(tmp.name)
-    r = subprocess.run([sys.executable, str(adapter), str(docs), str(out)], capture_output=True, text=True,
+    r = subprocess.run([sys.executable, str(adapter), str(docs.resolve()), str(out.resolve())], capture_output=True, text=True,
                        cwd=str(HUB_ROOT / "adapters"))
     if r.returncode != 0 or not (out / "component.json").is_file():
         rep.err(f"adapter {adapter.name} failed (exit {r.returncode}):\n{(r.stderr or r.stdout)[-3000:]}")
