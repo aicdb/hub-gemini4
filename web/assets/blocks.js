@@ -234,7 +234,7 @@
   function layoutHtml(item, ctx) {
     const t = ctx.thumb(item.gds, item.cell);
     const link = ctx.repo(item.gds);
-    const dims = t && t.width_um ? `${num(t.width_um, 4)} × ${num(t.height_um, 4)} µm` : '';
+    const dims = t && t.width_um ? `GDS bounding box ${num(t.width_um, 4)} × ${num(t.height_um, 4)} µm` : '';
     const cell = t?.cell || item.cell || '';
     return `<div class="layout-thumb">${t ? `<a class="fig dark" href="${link}" target="_blank" rel="noopener" title="Open the GDS file in the source repository (requires repo access)"><img class="raster" loading="lazy" src="${ctx.src(t.src)}" alt="Layout ${esc(cell)}" style="max-height:${+item.max_height || 560}px"></a>` : '<div class="fig ph">no layout preview</div>'}
       <div class="lt-meta"><span class="mono">${esc(cell)}</span>${dims ? ` · ${dims}` : ''} · <a href="${link}" target="_blank" rel="noopener">GDS in repo ↗</a></div></div>`;

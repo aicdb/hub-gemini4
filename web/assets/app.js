@@ -205,7 +205,7 @@ function passGlobalRow(row) {
 function designText(c, d) {
   if (!d._txt) {
     const ax = Object.entries(d.axes || {}).map(([k, v]) => c._axisLabel[k]?.[v]?.label || v);
-    d._txt = [d.id, d.title, ...(d.tags || []), ...ax, c.name, c.title, c.group || ''].join(' ').toLowerCase();
+    d._txt = [d.id, d.title, ...(d.tags || []), ...ax, c.name, c.title, c.group || '', String(d.summary || '').replace(/[*_`#>|]/g, ' ')].join(' ').toLowerCase();
   }
   return d._txt;
 }
@@ -719,10 +719,12 @@ async function renderDetail(main, c) {
   for (const im of d.images || []) figs.push({ label: im.label, src: im.src, gds: im.gds, cell: im.cell, caption: im.caption, bg: im.bg });
   const fam = c._fam[d.family];
 
-  const metricsWith = c.metrics.filter((m) => STAGES.some((s) => d.results?.[s]?.metrics?.[m.key] != null));
-  const stageHead = STAGES.map((s) => `<th class="${s === S.stage ? 'cur' : ''}">${STAGE_LABEL[s]}</th>`).join('');
+  // only the stages that exist somewhere in this component (e.g. no empty 'Partial' column for aux)
+  const DST = STAGES.filter((st) => c.designs.some((x) => x.results?.[st]));
+  const metricsWith = c.metrics.filter((m) => DST.some((s) => d.results?.[s]?.metrics?.[m.key] != null));
+  const stageHead = DST.map((s) => `<th class="${s === S.stage ? 'cur' : ''}">${STAGE_LABEL[s]}</th>`).join('');
   const preM = d.results?.pre?.metrics || {};
-  const mrows = metricsWith.map((m) => `<tr><td${m.desc ? ` title="${esc(m.desc)}"` : ''}>${esc(m.label)}${m.desc ? ' <span class="subtle">ⓘ</span>' : ''}</td>${STAGES.map((s) => {
+  const mrows = metricsWith.map((m) => `<tr><td${m.desc ? ` title="${esc(m.desc)}"` : ''}>${esc(m.label)}${m.desc ? ' <span class="subtle">ⓘ</span>' : ''}</td>${DST.map((s) => {
     const v = d.results?.[s]?.metrics?.[m.key];
     let delta = '';
     if (s !== 'pre' && v != null && preM[m.key] != null && preM[m.key] !== 0 && v !== preM[m.key]) {
@@ -732,8 +734,8 @@ async function renderDetail(main, c) {
     }
     return `<td class="${s === S.stage ? 'cur' : ''}">${fmt(v, m)}${delta}</td>`;
   }).join('')}</tr>`).join('');
-  const extraRow = (label, fn) => `<tr><td>${label}</td>${STAGES.map((s) => `<td class="${s === S.stage ? 'cur' : ''}">${d.results?.[s] ? fn(d.results[s]) : '—'}</td>`).join('')}</tr>`;
-  const anyOf = (k) => STAGES.some((s) => d.results?.[s]?.[k] != null);
+  const extraRow = (label, fn) => `<tr><td>${label}</td>${DST.map((s) => `<td class="${s === S.stage ? 'cur' : ''}">${d.results?.[s] ? fn(d.results[s]) : '—'}</td>`).join('')}</tr>`;
+  const anyOf = (k) => DST.some((s) => d.results?.[s]?.[k] != null);
   const ver = (anyOf('pvt') ? extraRow('PVT corners passing', (x) => (x.pvt ? `${x.pvt.pass}/${x.pvt.total}` : '—')) : '') +
     (anyOf('mc') ? extraRow('Monte Carlo passing', (x) => (x.mc ? `${x.mc.pass}/${x.mc.total}` : '—')) : '') +
     (anyOf('robust') ? extraRow('Robust (generator criterion)', (x) => (x.robust === true ? '✓' : x.robust === false ? '✗' : '—')) : '');
