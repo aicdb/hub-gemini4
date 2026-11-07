@@ -216,7 +216,15 @@ table.mt thead th.cur { color: var(--accent); }
 .dl { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
 .tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
 
-footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px; }
+footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px 16px 28px; border-top: 1px solid var(--line); margin-top: 8px; }
+footer .credit { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px 10px; font-size: 13px; color: var(--ink); margin-bottom: 8px; }
+footer .credit .sep { color: var(--muted); }
+footer a.cc { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+footer a.cc:hover { text-decoration: none; }
+footer a.cc:hover span { text-decoration: underline; }
+footer .cc-badge { display: block; height: 28px; width: auto; }
+footer .buildinfo { font-size: 11.5px; }
+@media (max-width: 600px) { footer .credit .sep { display: none; } footer .credit { flex-direction: column; } }
 .empty-state { color: var(--muted); padding: 30px; text-align: center; }
 
 @media (max-width: 900px) {
