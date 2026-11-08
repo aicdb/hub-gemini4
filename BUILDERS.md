@@ -27,9 +27,9 @@ The steps for a repository:
 3. Commit and push. The hub republishes within 6 hours, or immediately with
    `gh workflow run publish.yml -R aicdb/hub-gemini4`.
 
-The exporter is looked up in this order: a committed `docs/hub/component.json`, then the
-repository's `hub/export.py`, then a bootstrap adapter `adapters/<id>.py` in the hub
-repository (used only for repositories that have no exporter yet).
+The export is looked up in this order: a committed `docs/hub/component.json` (normally absent:
+`docs/hub/` is git-ignored), then the repository's `hub/export.py`, which the hub runs as
+`python3 -I hub/export.py --docs docs --out <empty dir>`.
 
 ---
 

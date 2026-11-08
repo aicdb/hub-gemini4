@@ -379,7 +379,6 @@ async function renderOverview(main) {
       <div class="ovnums"><div><b>${withStage.length}</b>shown</div><div><b>${rows.length}</b>designs</div>
         <div><b>${rows.filter((r) => r[4]).length}</b>DRC+LVS clean</div>${c.families.length ? `<div><b>${c.families.length}</b>families</div>` : ''}</div>
       <div class="stagebars">${bars}</div>
-      ${c.origin === 'adapter' ? '<span class="badge warn" title="Data converted by the hub\'s bootstrap adapter; the repo has not published its own hub export yet">bootstrap adapter</span>' : ''}
     </a>`;
   }).join('');
   main.innerHTML = `
@@ -488,7 +487,6 @@ async function renderComponent(main) {
           const u = (c.used_in || []).map((e) => chip(e, 'used in'));
           return `${b.length ? `<span class="subtle">Built from</span> ${b.join(' ')}` : ''}${b.length && u.length ? ' <span class="subtle">·</span> ' : ''}${u.length ? `<span class="subtle">Used in</span> ${u.join(' ')}` : ''}`;
         })()}
-          ${c.origin === 'adapter' ? '<span class="badge warn" title="Converted by the hub\'s bootstrap adapter; the generator repo has not published its own export yet">bootstrap adapter</span>' : ''}
         </div>
       </div>
       <div class="stats">

@@ -9,8 +9,8 @@ lives only in the hub ([BUILDERS.md](BUILDERS.md)); generator repositories conta
 ```
 <name>-gen-<variant>/
 ├── README.md          what the generator does, layout, quick start, design-point workflow, publishing
-├── AGENTS.md          instructions for coding agents (canonical; GEMINI.md / CLAUDE.md, where they
-│                      exist, only point here)
+├── AGENTS.md          instructions for coding agents (canonical; tool-specific files such as
+│                      GEMINI.md, where they exist, only point here)
 ├── Makefile           the uniform command interface (§3)
 ├── points.json        the design-point registry: the single source of truth for what is delivered (§2)
 ├── <pkg>/             the generator package (sizing, netlisting, layout, simulation, …)
@@ -119,11 +119,21 @@ python3 scripts/build.py --docs-only [--point ID …]
 
 - `hub/export.py` is standard-library Python and reads only `docs/`, `points.json` and `hub/`
   (the hub's CI checks out only those). CLI: `python3 hub/export.py [--docs docs] [--out docs/hub]`.
+  The exporter also:
+  - runs in isolated mode (`python3 -I hub/export.py …`, which is how the hub runs it), so it puts its own
+    directory on `sys.path` before importing its helper modules;
+  - replaces a previous export: if `--out` contains a `component.json` it is cleared first, so removed
+    points leave no stale files; if `--out` is not empty and has no `component.json` (e.g. `docs/` itself)
+    it stops with an error and writes nothing;
+  - prints one warning per registered, published point it cannot export yet (no results), and still succeeds;
+  - derives counts that depend on the registered points (designs, topologies, supplies, …) from the data
+    instead of writing them into prose.
 - `docs/` holds published data only: no website files, no pre-rendered layout images (the hub
   renders GDS thumbnails), no uncompressed GDS, no duplicates.
 - Results follow the hub's honesty rule (BUILDERS.md §6): only simulated values in `results`;
   model or placeholder values are labelled.
 - Generated and intermediate files are git-ignored; scratch, logs and caches are not committed.
-- Agent instructions live in `AGENTS.md`. `GEMINI.md` / `CLAUDE.md` exist only as pointers to it.
+- Agent instructions live in `AGENTS.md`. Tool-specific instruction files (e.g. `GEMINI.md`) exist only
+  as pointers to it.
 - Commit messages describe what changed and why for the repository owners; no tool attribution
   lines.

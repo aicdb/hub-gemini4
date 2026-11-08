@@ -2,7 +2,7 @@
 """hubkit — build, validate and preview the AICDB analog hub (schema aicdb-hub/2).
 
   validate DOCS_DIR [--id ID]    check a component export (DOCS_DIR/hub/component.json, or the
-                                 hub's bootstrap adapter for ID) incl. pages, detail docs, blocks
+                                 output of the repo's hub/export.py) incl. pages, detail docs, blocks
   preview  DOCS_DIR [--id ID]    build a one-component hub and serve it on http://127.0.0.1:8000
   build    --root DIR            assemble the full site from every source in sources.json
 
@@ -11,8 +11,8 @@ What gets published: ONLY files referenced as hosted (`src` of blocks, pages, de
 GDS files, netlists and other `file` references are NOT published; the site links to the raw
 file in the (private) source repository at the exported commit.
 
-Paths: "hub/..." resolves inside the export directory (docs/hub/ for a native export, the
-adapter's output dir otherwise); any other relative path resolves inside docs/.
+Paths: "hub/..." resolves inside the export directory (docs/hub/ for a committed export, the
+exporter's output dir otherwise); any other relative path resolves inside docs/.
 Python >= 3.9 stdlib; thumbnails additionally need `pip install gdstk pillow`.
 """
 from __future__ import annotations
@@ -93,7 +93,8 @@ class Export:
 def _run_export(script: Path, args: list[str], cid: str, rep: Report, label: str, origin: str, docs: Path) -> Export | None:
     tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
     out = Path(tmp.name)
-    r = subprocess.run([sys.executable, str(script), *args(docs.resolve(), out.resolve())], capture_output=True, text=True,
+    # -I: isolated mode (no PYTHON* env, no user site-packages, script dir not implied) — exporters are stdlib only
+    r = subprocess.run([sys.executable, "-I", str(script), *args(docs.resolve(), out.resolve())], capture_output=True, text=True,
                        cwd=str(script.parent))
     if r.returncode != 0 or not (out / "component.json").is_file():
         rep.err(f"{label} failed (exit {r.returncode}):\n{(r.stderr or r.stdout)[-3000:]}")
@@ -110,7 +111,7 @@ def _run_export(script: Path, args: list[str], cid: str, rep: Report, label: str
 
 def load_export(cid: str | None, docs: Path, rep: Report, exporter: str = "hub/export.py") -> Export | None:
     """Order: committed docs/hub/component.json → the repo's own exporter (<repo>/hub/export.py, run
-    with --docs/--out) → the hub's bootstrap adapter adapters/<id>.py."""
+    isolated with --docs/--out into a fresh temp dir)."""
     native = docs / "hub" / "component.json"
     repo_exporter = docs.parent / exporter
     if not native.is_file() and repo_exporter.is_file():
@@ -123,28 +124,8 @@ def load_export(cid: str | None, docs: Path, rep: Report, exporter: str = "hub/e
             rep.err(f"{native}: invalid JSON: {e}")
             return None
         return Export(cid or comp.get("id"), docs, docs / "hub", comp, "native")
-    if not cid:
-        rep.err("no docs/hub/component.json and no --id given for an adapter")
-        return None
-    adapter = HUB_ROOT / "adapters" / f"{cid}.py"
-    if not adapter.is_file():
-        rep.err(f"no docs/hub/component.json and no adapters/{cid}.py")
-        return None
-    tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
-    out = Path(tmp.name)
-    r = subprocess.run([sys.executable, str(adapter), str(docs.resolve()), str(out.resolve())], capture_output=True, text=True,
-                       cwd=str(HUB_ROOT / "adapters"))
-    if r.returncode != 0 or not (out / "component.json").is_file():
-        rep.err(f"adapter {adapter.name} failed (exit {r.returncode}):\n{(r.stderr or r.stdout)[-3000:]}")
-        tmp.cleanup()
-        return None
-    try:
-        comp = json.loads((out / "component.json").read_text())
-    except json.JSONDecodeError as e:
-        rep.err(f"adapter output is not valid JSON: {e}")
-        tmp.cleanup()
-        return None
-    return Export(cid, docs, out, comp, "adapter", tmp)
+    rep.err(f"no docs/hub/component.json and no {exporter} next to {docs} (see REPO_STANDARD.md)")
+    return None
 
 
 # ----------------------------------------------------------------------------- reference collection

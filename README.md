@@ -19,12 +19,12 @@ One GitHub Pages site for every analog generator repo: **<https://aicdb.github.i
 ## How it works
 
 ```
-sources.json ──► publish.yml ──► sparse clone docs/ of each source repo (HUB_SOURCES_TOKEN)
+sources.json ──► publish.yml ──► sparse clone docs/ + hub/ of each source repo (HUB_SOURCES_TOKEN)
                                     │
                                     ▼
                      tools/hubkit.py build
-                       • the repo's own hub/export.py (standard), or a committed
-                         docs/hub/component.json, or a bootstrap adapters/<id>.py
+                       • the repo's own hub/export.py (REPO_STANDARD.md), or a
+                         committed docs/hub/component.json
                        • validate component, pages, design detail docs and all blocks
                        • copy only referenced (hosted) files to c/<id>/
                        • render GDS thumbnails (tools/gdsthumb.py, cached)
