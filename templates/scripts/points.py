@@ -14,7 +14,8 @@ Hook (optional) scripts/points_hook.py may define:
   make_id(point: dict) -> str               id for a new point (default: points.json "id_format")
   validate(point: dict) -> list[str]        extra validation errors (e.g. unsupported combination)
   artefact_dirs(point_id: str) -> list[str] published folders of a point, relative to the repo
-                                            (default: ["docs/designs/<id>"])
+                                            (default: ["docs/designs/<id>"]; [] = none expected,
+                                            e.g. a point marked n/a)
   ignore_dirs() -> list[str]                folders under docs/designs that are not design points
   fields_for(point: dict) -> dict           the field spec that applies to this point (e.g. per family)
 """
@@ -88,6 +89,11 @@ def parse_kv(items: list[str]) -> dict:
         except json.JSONDecodeError:
             out[k] = v                      # bare strings
     return out
+
+
+def artefact_dirs(point_id: str) -> list[str]:
+    dirs = hook("artefact_dirs", point_id, default=None)
+    return [f"docs/designs/{point_id}"] if dirs is None else list(dirs)
 
 
 def fields_for(reg: dict, point: dict) -> dict:
@@ -174,7 +180,7 @@ def cmd_remove(reg, a):
     save(reg)
     print(f"removed {a.id} from points.json")
     if a.purge:
-        for d in hook("artefact_dirs", a.id, default=None) or [f"docs/designs/{a.id}"]:
+        for d in artefact_dirs(a.id):
             path = ROOT / d
             if path.is_dir():
                 shutil.rmtree(path)
@@ -192,12 +198,12 @@ def cmd_check(reg, a):
         for e in validate(reg, p, allow_new=False):
             errs.append(f"{p['id']}: {e}")
         if p.get("publish", True):
-            for d in hook("artefact_dirs", p["id"], default=None) or [f"docs/designs/{p['id']}"]:
+            for d in artefact_dirs(p["id"]):
                 if not (ROOT / d).is_dir():
                     warns.append(f"{p['id']}: no published artefacts in {d}/ (not built yet?)")
     known = set()
     for p in reg["points"]:
-        for d in hook("artefact_dirs", p["id"], default=None) or [f"docs/designs/{p['id']}"]:
+        for d in artefact_dirs(p["id"]):
             known.add(str(Path(d)))
     ignore = set(hook("ignore_dirs", default=None) or [])
     for base in sorted({str(Path(d).parent) for d in known}):

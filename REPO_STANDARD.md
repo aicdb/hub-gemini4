@@ -27,10 +27,26 @@ lives only in the hub ([BUILDERS.md](BUILDERS.md)); generator repositories conta
 │   └── INVENTORY.md   what the retired website showed and where it lives on the hub
 ├── docs/              published data, read by the hub (no HTML/JS/CSS)
 │   ├── data/          component-level data (indexes, sweeps, design-space data)
-│   └── designs/<id>/  per-design artefacts: *.gds.gz, netlists, schematic SVGs, evidence JSON
-├── build/             intermediate outputs (git-ignored)
+│   ├── designs/<id>/  per-design artefacts: *.gds.gz, netlists, schematic SVGs, evidence JSON
+│   └── subblocks/<source>/  files shared by many designs (e.g. sibling-library schematics), once
+├── build/             intermediate outputs and raw simulation results (git-ignored)
+├── .gitignore         starts with templates/gitignore (common block), then repository lines
 └── .github/workflows/hub-check.yml   validates the hub export on every push
 ```
+
+Nothing else is tracked at the top level, except an optional `ref/` with reference papers and
+datasheets. Code lives in `<pkg>/` and `scripts/`; raw farm results, layout working files and
+caches live in `build/`. A tool-specific instruction file (e.g.
+`GEMINI.md`) is optional; if present it is exactly `templates/GEMINI.md` (one line importing AGENTS.md).
+
+- `docs/designs/<id>/` is the default folder of a point. A repository may group folders
+  differently (e.g. `docs/designs/<load>/<card>/`, or one folder per topology) when
+  `points_hook.artefact_dirs()` says so; folders that are not points are listed in `ignore_dirs()`.
+- A file that many designs share is stored once under `docs/subblocks/<source>/` and referenced
+  from each design, never copied into every design folder.
+- Artefact names for new generators: `data.json` (evidence), `<id>.gds.gz`, `schematic.svg`,
+  `netlist.spice`, `lvs_reference.spice`, `pex.spice`. Existing repositories keep their names
+  (the hub links them).
 
 `docs/hub/` is generated (`make hub`) and git-ignored. The hub's CI runs `hub/export.py`
 itself, so the repository only needs to keep `docs/` and `hub/` up to date.
@@ -42,8 +58,10 @@ itself, so the repository only needs to keep `docs/` and `hub/` up to date.
   "schema": "aicdb-points/1",
   "component": "opa",                                   // hub component id
   "id_format": "{arch}_{vdd_tag}_{iclass}_{regime}",    // how ids are formed (documentation)
+  "hook": "scripts/points_hook.py",                      // the repository's rules (documentation)
+  "notes": "…",                                          // optional: how ids / fields are to be read
   "fields": {                                           // the parameter space of one design point
-    "arch":   { "label": "Architecture", "values": ["nmos_5t", "miller", "…"] },
+    "arch":   { "label": "Architecture", "values": ["nmos_5t", "miller", "…"], "doc": "optional explanation" },
     "vdd":    { "label": "Supply (V)",   "values": [1.8, 3.3] },
     "iclass": { "label": "Current class", "values": ["0p1u_1u", "1u_10u", "10u_100u"] }
   },
@@ -58,6 +76,7 @@ itself, so the repository only needs to keep `docs/` and `hub/` up to date.
   these, and the hub export publishes exactly these (unless `"publish": false`).
 - A point has its field values, a stable `id` (used in URLs and folder names), and optional
   `publish`, `note` and repository-specific settings (e.g. targets, knobs).
+- `fields.*.label` is a human-readable name (no code paths; put those in `fields.*.doc`).
 - `fields.*.values` documents the allowed values. `scripts/points.py add` validates against it
   (`--allow-new` extends a field when the generator supports a new value).
 - Collections of several small generators (e.g. `aux`) add a `family` field; `points_hook.fields_for()`
@@ -96,7 +115,11 @@ Removing a point: `make remove POINT=<id> PURGE=1 && make docs && make hub`, the
 ## 4. Templates
 
 Copy these from the hub repository unchanged: `templates/scripts/points.py`, `templates/Makefile`,
-`templates/registry.py` (into the package) and `templates/.github/workflows/hub-check.yml`.
+`templates/registry.py` (into the package) and `templates/.github/workflows/hub-check.yml`;
+`templates/GEMINI.md` too, if the repository keeps a tool-specific pointer file.
+
+Start from these and fill them in: `templates/gitignore` (the common block heads `.gitignore`),
+`templates/README.md` and `templates/AGENTS.md` (§7).
 
 ## 5. `scripts/build.py` contract
 
@@ -113,7 +136,17 @@ python3 scripts/build.py --docs-only [--point ID …]
 - `--dry-run` prints the plan (stages × points, external tools / compute farm needed) and runs nothing.
 - `--docs-only` regenerates `docs/` from existing build outputs for the registered points (and
   removes published data of points that are no longer registered).
-- `--stages` lists the stage names it accepts in `--help`.
+- `--stages` lists the stage names it accepts in `--help`, which starts by citing this section.
+- `--point` may be repeated and takes comma-separated ids; `--all` and `--point` exclude each
+  other. Unknown points or stages and registry errors (the rules of `make check`) stop the run
+  before anything is done, with exit status 2.
+- `--force` redoes the selected points' stages. Stages that work on the whole component
+  (look-up tables, global sweeps) are forced only when named in `--stages`.
+- `make docs` never loses published data because build outputs are missing: a registered point
+  whose outputs are not in `build/` keeps its published files (with a notice), and a missing
+  component-level input keeps the published file it would have produced (with a warning). So
+  `make docs` in a fresh clone leaves `docs/` unchanged. Removing a point from the registry is
+  the only way to unpublish it; the docs stage always runs when asked, also for an empty registry.
 
 ## 6. Rules
 
@@ -126,8 +159,12 @@ python3 scripts/build.py --docs-only [--point ID …]
     points leave no stale files; if `--out` is not empty and has no `component.json` (e.g. `docs/` itself)
     it stops with an error and writes nothing;
   - prints one warning per registered, published point it cannot export yet (no results), and still succeeds;
-  - derives counts that depend on the registered points (designs, topologies, supplies, …) from the data
-    instead of writing them into prose.
+  - derives counts and lists that depend on the registered points (designs, topologies, supplies, …)
+    from the data instead of writing them into prose;
+  - is deterministic: the same `docs/`, `points.json` and `hub/` give byte-identical output (dates
+    come from the data, never from the clock or file times);
+  - parses its arguments in `main()`, and exits with status 2 (and says how to recover) when it
+    refuses an `--out`.
 - `docs/` holds published data only: no website files, no pre-rendered layout images (the hub
   renders GDS thumbnails), no uncompressed GDS, no duplicates.
 - Results follow the hub's honesty rule (BUILDERS.md §6): only simulated values in `results`;
@@ -137,3 +174,12 @@ python3 scripts/build.py --docs-only [--point ID …]
   as pointers to it.
 - Commit messages describe what changed and why for the repository owners; no tool attribution
   lines.
+
+## 7. README, AGENTS.md and INVENTORY.md
+
+- `README.md` follows `templates/README.md`: the same sections in the same order, and the shared
+  text of *Quick start*, *Design points* and *Publishing to the hub*, with this repository's values.
+  Examples work when copied. No counts of registered points (`make points` lists them).
+- `AGENTS.md` follows the numbered sections of `templates/AGENTS.md`.
+- `hub/INVENTORY.md` is written for the owners: what the retired website showed and where each
+  item is on the hub, intended differences from the old site, and known gaps.

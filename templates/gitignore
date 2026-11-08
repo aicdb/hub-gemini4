@@ -1,0 +1,13 @@
+# --- AICDB generator standard (common block, templates/gitignore) ---
+build/
+docs/hub/
+.hub/
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.venv/
+*.log
+.DS_Store
+# --- repository-specific ---
