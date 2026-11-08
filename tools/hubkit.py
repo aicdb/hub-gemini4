@@ -91,6 +91,7 @@ class Export:
 
 
 def _run_export(script: Path, args: list[str], cid: str, rep: Report, label: str, origin: str, docs: Path) -> Export | None:
+    script = script.resolve()        # it runs with cwd = its own directory, so never pass a relative path
     tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
     out = Path(tmp.name)
     # -I: isolated mode (no PYTHON* env, no user site-packages, script dir not implied) — exporters are stdlib only
@@ -787,7 +788,7 @@ def main(argv=None):
 
     if a.cmd == "build":
         only = set(a.only.split(",")) if a.only else None
-        sources = [(s, a.root / s["repo"].split("/")[-1] / s.get("dir", "docs"))
+        sources = [(s, a.root.resolve() / s["repo"].split("/")[-1] / s.get("dir", "docs"))
                    for s in cfg["components"] if not only or s["id"] in only]
         rc = build(cfg, sources, a.out, a.link, a.strict, a.thumb_cache, a.jobs)
         if a.serve and rc in (0, 1):
