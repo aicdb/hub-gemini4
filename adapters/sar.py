@@ -1147,7 +1147,6 @@ for c in order:
         rw = raw_fft(fp.get("codes_uncalibrated"), fp.get("n_fft"), fp.get("m_bin"))
         if rw:
             params["Raw uncalibrated SPICE codes: ENOB / SNDR / SFDR (hub FFT)"] = f"{rw['enob']} b / {rw['sndr_db']} dB / {rw['sfdr_db']} dB"
-    params["PEX coverage"] = "CDAC macro Magic-extracted; switch, comparator and op-amp from the siblings' PEX netlists; SAR logic schematic; top level not extracted"
     uses = [{"component": "sa", "design": c["comp_key"], "role": "comparator"},
             {"component": "switch", "design": c["sw_key"], "role": "S/H switch"},
             {"component": "opa", "design": c["opa_vcm_key"].replace("/", "-"), "role": "VCM buffer"},
@@ -1161,7 +1160,7 @@ for c in order:
         "axes": {"mode": MODE_OF(c), "topology": c["arch"], "nbits": str(c["nbits"]), "tier": c["fs_tier"], "cap": c["cap_type"]},
         "tags": tags,
         "physical": {"drc": lay.get("drc_clean", c.get("drc_clean")), "lvs": lay.get("lvs_clean", c.get("lvs_clean")),
-                     "pex": None,  # only the CDAC macro is extracted, not the full chip
+                     "pex": "partial",  # only the CDAC macro is extracted (sub-blocks use sibling PEX netlists), not the top level
                      "area_um2": c.get("area_um2"), "width_um": c.get("width_um"), "height_um": c.get("height_um")},
         "results": {"partial": part},
         "params": {k: v for k, v in params.items() if v not in (None, "")},

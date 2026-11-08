@@ -1464,7 +1464,11 @@ db_blocks = [
                  {"label": "Dropout vs I_q", "x": "iq", "y": "do_max", "show": {}},
                  {"label": "PSRR 1 kHz vs I_q", "x": "iq", "y": "psrr1k", "show": {}}],
      "preset_default": 0,
-     "caption": "Pre-PEX stage: explored candidates (dots) + delivered cards (rings, click to open). Full post-PEX stage: the delivered designs simulated on their "
+     "table": {"columns": ["arch", "vin_c", "vout", "cls", "src", "iq", "ugb", "pm", "zeta", "lreg", "lreg_r", "do_max", "linreg", "psrr1k", "area",
+                           {"key": "target", "label": "Target card", "type": "design"}],
+               "page_size": 300, "csv_name": "ldo-database-selection"},
+     "caption": "The table under the plot is the old “Database table”: it lists exactly the points shown (chips, ranges, stage, V<sub>DD</sub>), "
+                "sortable, with CSV export; candidate columns copied from the delivered card stay empty (see the note above). Pre-PEX stage: explored candidates (dots) + delivered cards (rings, click to open). Full post-PEX stage: the delivered designs simulated on their "
                 "extracted netlists (every point is a ringed design). Old controls: V<sub>IN</sub> / V<sub>OUT</sub> / I<sub>load</sub> single-select filters → chips "
                 "(V<sub>OUT</sub> is fixed per V<sub>IN</sub>; the global V<sub>DD</sub> option also applies); x / y axis selectors → X / Y (all 16 old metrics, plus "
                 "Architecture as a categorical axis); the old “distribution per architecture” box plots → the box-plot section below and the *Distribution per "
@@ -1540,31 +1544,6 @@ db_blocks.append(sec("Best value per architecture", [{"type": "tabs", "id": "met
                      intro="Old chart “Best <y> vs V<sub>OUT</sub>” (best over all feasible points of each architecture at the selected V<sub>IN</sub> and class). "
                            "Each V<sub>IN</sub> has a single V<sub>OUT</sub>, so the hub plots the best value against the load class, one chart per supply "
                            "(every old selection is one point here); pick the metric below."))
-# database table
-tcols = [{"key": "arch", "label": "Architecture", "type": "text"}, {"key": "pol", "label": "Polarity", "type": "text"},
-         {"key": "vv", "label": "V_IN→V_OUT", "type": "text"}, {"key": "load", "label": "Load", "type": "text"},
-         {"key": "pt", "label": "Point", "type": "text"},
-         {"key": "iq", "label": "I_q", "unit": "A", "si": True, "better": "low"},
-         {"key": "ugb", "label": "UGB", "unit": "Hz", "si": True, "better": "high"}, {"key": "pm", "label": "PM", "unit": "°", "digits": 3, "better": "high"},
-         {"key": "zeta", "label": "ζ", "digits": 2}, {"key": "lreg", "label": "Load reg", "unit": "V", "si": True, "better": "low"},
-         {"key": "lreg_r", "label": "R_out", "unit": "Ω", "si": True, "better": "low"}, {"key": "do_max", "label": "Dropout", "unit": "V", "si": True, "better": "low"},
-         {"key": "linreg", "label": "Line", "unit": "mV/V", "digits": 3, "better": "low"}, {"key": "psrr1k", "label": "PSRR 1k", "unit": "dB", "digits": 3, "better": "high"},
-         {"key": "area", "label": "Area", "unit": "µm²", "digits": 4, "better": "low"}, {"key": "target", "label": "Target card", "type": "design"},
-         {"key": "vdd", "label": "V_DD", "unit": "V"}, {"key": "stage", "label": "Stage", "type": "text"}]
-trows = []
-for i in range(NR):
-    trows.append([ARCH_SHORT.get(cols["arch"][i], cols["arch"][i]), POL_LABEL.get(cols["pol"][i], cols["pol"][i]),
-                  f"{cols['vin_c'][i]}→{jsn(cols['vout'][i])} V", icls_label(cols["cls"][i]),
-                  "delivered card" if cols["src"][i] == "delivered" else "explored candidate",
-                  cols["iq"][i], cols["ugb"][i], cols["pm"][i], cols["zeta"][i], cols["lreg"][i], cols["lreg_r"][i], cols["do_max"][i], cols["linreg"][i],
-                  cols["psrr1k"][i], cols["area"][i], cols["target"][i], cols["vdd"][i], cols["stage"][i]])
-wjson("data/db_table.json", {"columns": tcols, "rows": r5(trows)})
-db_blocks.append({"type": "table", "title": "Database table", "src": "hub/data/db_table.json", "stage_column": "stage", "sort": {"key": "iq", "dir": "asc"},
-                  "page_size": 300,
-                  "caption": "Pre-PEX stage: every nominally feasible explored point plus the delivered cards (*Point* column); candidate columns that the repo copies from "
-                             "the delivered card are left empty (see the correction note). Full post-PEX stage: the delivered designs on their extracted netlists. "
-                             "Follows the global V<sub>DD</sub> option. The table does not follow the explorer's chips (renderer limitation): type in the filter box to "
-                             "select like the old table, e.g. `3.3→1.8 10–100 nA` or `Pos Miller delivered`. Click a header to sort; CSV export of the filtered rows."})
 wjson("pages/db.json", {"blocks": [b for b in db_blocks if b]})
 
 # --- Methodology (verbatim from index.html)

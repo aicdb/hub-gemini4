@@ -16,7 +16,8 @@ Verified on the built preview (Phase C) for 8b/1v8/MOM/CIFB-Split (pre), 10b/1v8
 2. Global Verification Stage switch (Pre-Layout / Post-Cap-PEX / Full-Chip PEX). — ✓ hub Simulation option (fix round 2):
    Pre-PEX → view 1; Partial post-PEX → view 3 (assembled "full-chip" deck = library sub-block PEX + cap PEX + routing C, compact
    controller instead of the routed sdm2bin → partial coverage per §6) with view 2 (cap-array PEX) as an alternative tab
-   (`tabs` id `view`, stage `partial`). No Full post-PEX stage (Methodology → Stage mapping explains why).
+   (one tabs block per staged item, unique ids `view_<alt>`, short labels "3. Full-Chip PEX (assembled)" /
+   "2. Post-Cap-PEX (cap only)"; no horizontal page scroll at 420 px). No Full post-PEX stage (Methodology → Stage mapping explains why).
    `results` hold only SPICE (analog I_DD, I_DD·V_DD, integrator swings) and extraction (C_u, a1, a2 at partial); all model
    figures (ENOB/SNDR/power/FoM/PVT/MC) are labelled model blocks (stage alternatives per view).
 3. Section nav tabs with counts. — ✓ Designs + 5 page tabs; counts in header stats (48 cap macros, 12 sdm2bin, 362,880 sweep).
@@ -31,8 +32,9 @@ Verified on the built preview (Phase C) for 8b/1v8/MOM/CIFB-Split (pre), 10b/1v8
 ## C. sec-cards
 12. Coverage matrix (rows VDD × arch, cols res × cap with OSR; cell ENOB/SNDR/power/FoM_S/PVT ≥/DRC-LVS; click → design). — ✓ old layout and
     cell contents (model figures) → Summary "Interactive 96-Card … Coverage Matrix — model figures" (staged per view, ENOB links open the card).
-    Designs → Matrix: rows architecture × cap, cols resolution (12 columns), cells = SPICE analog power, Int-1/Int-2 swing, extracted a1
-    (+ presets I_DD/power, swings, extracted C_u/a1/a2).
+    Designs → Matrix (round 3): rows resolution × cap (12), cols architecture (4 per V_DD = 8, fits 1440 px); cells = SPICE analog power,
+    Int-1/Int-2 swing, extracted a1 (+ presets I_DD/power, swings, extracted C_u/a1/a2). The Summary model matrix keeps the old
+    8 × 12 orientation with compact cells (fits 1440 px).
 13. Filter pills (resolution w/ OSR, VDD, cap, architecture) + count line. — ✓ Designs axis filter chips (labels carry OSR) + global VDD option.
 14. Sort select (matrix order, ENOB, power, FoM_W, FoM_S, area). — ✓ model sorts: Summary master table (sortable by every model column);
     Designs → Cards/Table sort by SPICE/extraction metrics (generator order = old matrix order). Area: physical (full precision).
@@ -102,7 +104,8 @@ Verified on the built preview (Phase C) for 8b/1v8/MOM/CIFB-Split (pre), 10b/1v8
     side-by-side bars, corrected "configs with a feasible best combo" wording, deliverable overlay clickable) + "Sweep dimensions" table +
     main explorer over 1,041 points (809 cloud + 83 global Pareto + 53 further per-group Pareto + 96 delivered with Feasible = n/a; old arch
     colours; Pareto off by default and restricted to feasible points; "old chart 1" preset shows the stored Pareto set; facet-like presets
-    labelled "(cloud sample)").
+    labelled "(cloud sample)"). Round 3: column "Pareto of its group" — one *Group* chip + *yes* reproduces each old facet-selector
+    Pareto set exactly (counts 13/13/13/15/12/12/13/12 verified).
 
 ## H. sec-method
 52. 4 methodology cards verbatim. — ✓ Method page (markdown, verbatim bullets) + captions on count/sinc inconsistencies, stage-mapping table,
@@ -121,4 +124,4 @@ Verified on the built preview (Phase C) for 8b/1v8/MOM/CIFB-Split (pre), 10b/1v8
     supplies comparator characterization data), so no `sar` entry.
 
 Coverage: 54 items — 52 ✓, 2 partial ✗ (zone coordinates, cap-spec density/Pelgrom fields: absent from the data, empty/undefined on the old site).
-Review fix round: 25 non-renderer gaps fixed (see report); renderer gaps 21/22/27 fixed in the hub.
+Review fix round: 25 non-renderer gaps fixed (see report); renderer gaps 21/22/27 fixed in the hub. Round 3: gaps 4, 7, 9, 22, the view-tab regression and the shared `t.view` id fixed; gm/I_D table and card component summary fit at 1440 px (wide numeric tables — master, candidates, macro tables — still scroll inside their own frame, as on the old site).

@@ -189,7 +189,7 @@ Honesty decisions (details on the *Library notes & caveats* page):
 | 10 | half-even vs toFixed | ✓ Decimal ROUND_HALF_UP in nf/zin_s/pw_s |
 | 11 | THD floor on ccia_dsl_1v8_ln | ✓ THD dropped from results, shown "≤ 0.005 % (floor)" |
 | 12 | reuse counts | ✓ distinct cards; OTA usage only on 200f rows |
-| 13 | VDD filter / deep links | ✓ per-card tabs carry `vdd`, parity traces `meta.vdd`, all tabs have `id` (card, wave, curves, tornado, senscard, xsima, xsimb); row `_href` not added (tab index shifts with the VDD filter) |
+| 13 | VDD filter / deep links | ✓ per-card tabs carry `vdd`, parity traces `meta.vdd`, all tabs have `id` (card, wave, curves, tornado, senscard, xsima, xsimb); Benchmark-B rows carry a *curves* link `t.xsimb=<card id>` (tab `key`, round 3) |
 | 14 | wide tables | ✓ column `wrap`, calibration-cell column moved next to source, reuse tables full width, DB split in two, trade-off numbers first |
 | 15 | modebar over legends | ✓ renderer |
 | 16 | 1B ticks / IRN unit | ✓ renderer SI ticks; IRN dim unit Vrms |
@@ -197,7 +197,19 @@ Honesty decisions (details on the *Library notes & caveats* page):
 | 18 | empty DB at full/fb=0, DB intro | ✓ renderer note; intro reworded to the global Simulation option |
 | 19 | card metrics | ✓ f_L, boost, IBL-off |Z_in| added |
 | 20 | separate VDD tabs | ✓ one tabs block for both charts |
-| 21 | matrix header context | ✓ IBL type as second row axis (old subtitle); ✗ V_CM in group header (renderer) |
+| 21 | matrix header context | ✓ IBL type as second row axis (old subtitle); V_CM via `vdd_labels` (round 3) |
 | 22 | KPI tile overflow | ✓ OTA id removed from the sub-text |
 
 New requirement: `builds_on` (opa, switch, sa) + per-design `uses` (core OTA, aux/DSL/PGA/buffer OTA, chopper, S&H, comparator) — all 162 references resolve in a build with opa/switch/sa (0 unresolved).
+
+## Round 3 (ecg-round3.json)
+
+| item | status |
+|---|---|
+| gap 14 wide tables | ✓ measured at 1440 px, no overflow on Database (both tables), Sensitivity (guide + architecture), Design space trade-off, Cross-check A/B, Reuse (OTA/switch/comparator), detail OP/sensitivity tables: units moved into headers, grouped headers, merged cells. Remaining: the hub's built-in Designs *Table* view (title + 3 axis columns, renderer-built, nowrap) still scrolls; default columns reduced via `table_metrics` |
+| preset colour regression | ✓ every preset sets colour = architecture / symbol = point type except "Colour by point type" |
+| DB intro claim | ✓ reworded (no "no horizontal scrolling" claim) |
+| notes "PVT/MC not evaluated" wording | ✓ now describes the neutral cell colour + legend |
+| new: `vdd_labels` | ✓ V_CM in the supply headers |
+| new: tabs `key` | ✓ xsim A/B and sens card tabs keyed by device/card id; Benchmark-B *curves* link |
+| forced dtick | none in the adapter |

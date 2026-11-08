@@ -331,7 +331,8 @@ def validate(ex: Export, rep: Report, exclude=()) -> Refs:
                 continue
             for mk, mv in (r.get("metrics") or {}).items():
                 if mk not in mkeys:
-                    rep.warn(f"{tag}: results.{st} has undeclared metric {mk!r} (ignored by UI)")
+                    if mv is not None:
+                        rep.warn(f"{tag}: results.{st} has undeclared metric {mk!r} (ignored by UI)")
                 elif mv is not None and not _is_num(mv):
                     rep.err(f"{tag}: results.{st}.metrics.{mk} must be number or null")
             for cnt in ("pvt", "mc"):

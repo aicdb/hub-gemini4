@@ -592,12 +592,12 @@ def device_table(card, stage):
                      "vds": r(d.get("vds_mv")), "vth": r(d.get("vth_mv")), "vdsat": r(d.get("vdsat_mv")),
                      "reg": cell(reg, "bad" if "triode" in reg.lower() else "good" if "sat" in reg.lower() else None)})
     return table("Transistor Sizing & Simulated Operating Point Table (Nominal TT, 27 °C)",
-                 [col("inst", "Instance"), col("block", "Sub-block"), col("role", "Role"), col("model", "Model"),
-                  col("wf", "W<sub>f</sub>", "μm"), col("l", "L", "μm"), col("m", "m"), col("wt", "W<sub>tot</sub>", "μm"),
-                  col("tg", "g<sub>m</sub>/I<sub>D</sub> target", "V⁻¹"), col("gs", "g<sub>m</sub>/I<sub>D</sub> sim", "V⁻¹", digits=4),
-                  col("id", "I<sub>D</sub>", "nA", digits=4), col("gm", "g<sub>m</sub>", "nS", digits=4), col("gds", "g<sub>ds</sub>", "nS", digits=3),
-                  col("vgs", "V<sub>GS</sub>", "mV", digits=4), col("vds", "V<sub>DS</sub>", "mV", digits=4), col("vth", "V<sub>th</sub>", "mV", digits=4),
-                  col("vdsat", "V<sub>DSAT</sub>", "mV", digits=3), col("reg", "Region")],
+                 [col("inst", "Instance"), col("block", "Block"), col("role", "Role", wrap=True), col("model", "Model"),
+                  col("wf", "W<sub>f</sub> (μm)"), col("l", "L (μm)"), col("m", "m"), col("wt", "W<sub>tot</sub> (μm)"),
+                  col("tg", "g<sub>m</sub>/I<sub>D</sub> tgt"), col("gs", "g<sub>m</sub>/I<sub>D</sub> sim", digits=4),
+                  col("id", "I<sub>D</sub> (nA)", digits=4), col("gm", "g<sub>m</sub> (nS)", digits=4), col("gds", "g<sub>ds</sub> (nS)", digits=3),
+                  col("vgs", "V<sub>GS</sub> (mV)", digits=4), col("vds", "V<sub>DS</sub> (mV)", digits=4), col("vth", "V<sub>th</sub> (mV)", digits=4),
+                  col("vdsat", "V<sub>DSAT</sub> (mV)", digits=3), col("reg", "Region")],
                  rows, stage=stage, alt="devices", search=False,
                  caption="g<sub>m</sub> converted from the stored µS value (the old site showed this column empty); g<sub>ds</sub> and V<sub>th</sub> added from the same OP record.")
 

@@ -11,12 +11,12 @@ Status legend: **✓** reproduced (location given) · **≈** reproduced with a 
 component pages `?page=db|method|about`.
 
 STATUS after the review fix round (validate ✓ 0 warnings; preview with opa + sa: 192 reuse links resolved; screenshots of cards, matrix
-presets, table, detail tabs incl. deep links, DB page, opa “Used in”, hierarchy graph; no console errors): **83 items — 78 ✓, 5 ≈, 0 ✗**
+presets, table, detail tabs incl. deep links, DB page, opa “Used in”, hierarchy graph; no console errors): **83 items — 79 ✓, 4 ≈, 0 ✗**
 (≈: B8 / H6 noise is a placeholder and not exported; J2 layout SVG viewer → GDS thumbnail (hub rule); D9 best value per load class
-instead of per V_OUT; D10 DB table does not follow the explorer chips). Placeholder / constant
+instead of per V_OUT). Placeholder / constant
 sub-values are labelled (†/‡) instead of shown as results.
 
-Open renderer requests: a table that follows an explorer's chip filters (D10); explorer point counter counting highlighted rows separately and chip lists built from the rows of the current stage; `minexponent` on explorer axes.
+Open renderer requests: explorer point counter counting highlighted rows separately and chip lists built from the rows of the current stage; `minexponent` on explorer axes.
 
 ## A. Global chrome
 
@@ -72,7 +72,7 @@ Open renderer requests: a table that follows an explorer's chip filters (D10); e
 | D7 | Caption "N feasible points shown · black diamonds: delivered analog design cards" / "N laid-out designs shown (extracted netlists)" | ✓ explorer point count + caption |
 | D8 | "Distribution per architecture (selection)" box plots of the y metric | ✓ *db* “Distribution per architecture”: Plotly box plots per architecture and supply for every metric (select, stage alternatives) + explorer strip presets (categorical X) |
 | D9 | "Best <y> vs V_OUT" line chart per architecture at the selected VIN and class (max for PM, ζ, A0, PSRR, UGB, current capability; min otherwise) | ≈ *db* “Best value per architecture”: one chart per supply (block-level VDD) vs load class, every metric, stage alternatives (V_OUT is fixed per V_IN, so each old selection is one point) |
-| D10 | "Database table": Architecture, VIN→VOUT, Load, Iq, UGB, PM°, ζ, Load reg mV, R_out Ω, Dropout mV, Line mV/V, PSRR 1k, Area µm²; first 300 of the selection, sortable; caption "N of M selected points" | ≈ *db* “Database table” with all 13 old columns + Polarity, Point (explored / delivered), target-card link, V_DD, stage; follows stage + VDD; does not follow the explorer chips (renderer limitation, caption explains text filtering) |
+| D10 | "Database table": Architecture, VIN→VOUT, Load, Iq, UGB, PM°, ζ, Load reg mV, R_out Ω, Dropout mV, Line mV/V, PSRR 1k, Area µm²; first 300 of the selection, sortable; caption "N of M selected points" | ✓ *db* explorer-linked table “Points shown (N)” under the plot: all 13 old columns + Point, target-card link; lists exactly the points shown (chips, ranges, stage, VDD), sortable, CSV (replaces the static table) |
 | D11 | Point hover text (arch, VIN→VOUT, class, Iq, UGB, PM, ζ, load reg, dropout, line reg, PSRR1k) | ✓ explorer hover: label + Iq, UGB, PM, ζ, load reg, dropout, line reg, PSRR 1k |
 
 ## E. Design detail (`#d/<key>/<tab>`) — header

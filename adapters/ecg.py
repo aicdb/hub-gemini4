@@ -237,6 +237,7 @@ def main():
             ],
         },
         "card_metrics": ["zin", "power", "a_lna", "f_h", "f_l", "boost", "zin_off", "thd", "area"],
+        "table_metrics": ["zin", "power", "a_lna", "f_h", "boost", "thd"],
         "cards_group_by": "topology",
         "vdd_labels": {f"{sp['vdd']:g}": f"V<sub>DD</sub> = {sp['vdd']:g} V (V<sub>CM</sub> = {sp['vcm']:.2f} V)" for sp in meta.get("supplies") or []},
         "builds_on": [{"id": "opa", "role": "core LNA OTA + DSL / PGA / buffer OTAs (200 fF library)"},

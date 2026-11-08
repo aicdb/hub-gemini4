@@ -143,11 +143,11 @@ SPICE-only ENOB/SNDR params (HS); arch summary retitled (HS regime only); real s
 stage tags (dse `stage` column, replica traces `meta.stage`, SPICE blocks `stage: partial`); replica charts split by supply
 (`meta.vdd`) + hidden "as published" traces + retitled + omitted cards named + P_leak hover; wrap/reorder of wide tables;
 `vdd` columns on library tables; renderer-default legends, no backticks in trace names; matrix `status` on ENOB shortfall
-(failed-FFT / LU cells grey); "None / None" row removed; ENOB/DNL/INL/FoM digits; PEX coverage param (physical.pex stays
-null: only the CDAC is extracted); cloud sampling and 11–14 b infeasibility explained; explorer hover extended; detail tabs
+(failed-FFT / LU cells grey); "None / None" row removed; ENOB/DNL/INL/FoM digits; physical PEX status (see below); cloud sampling and 11–14 b infeasibility explained; explorer hover extended; detail tabs
 `id: pane` + deep links `?t.pane=3`, per-macro tabs ids; operating-mode axis (grouped ULP filter); presets reset Pareto;
 Pareto `group` column + preset; short metric labels with `desc`; floorplan short labels.
-Renderer issues (4) were fixed in the hub.
+Renderer issues (4) were fixed in the hub. New: `builds_on` + per-design `uses` (comparator, S/H switch, VCM buffer,
+input driver; all 432 resolve against the sa/switch/opa builds).
 
 ## Round 3 (sar-round3.json)
 
@@ -159,9 +159,8 @@ Renderer issues (4) were fixed in the hub.
   (fits at 1440 px). Long op-amp keys in Parameters get spaces around "/" (420 px overflow).
 - Overview stage row/caveat (SNR, loop-unrolled exclusions) corrected; published-FoM tooltips per reason; raw-error colouring
   uses the ±1 LSB threshold; `enob_raw` removed from card metrics. Preset `show` leak fixed in the renderer.
-- Not changed: `physical.pex` stays null ("PEX n/a") — only the CDAC is extracted and the schema has no partial-PEX state;
-  the coverage is stated in the Parameters ("PEX coverage"). New: `builds_on` + per-design `uses` (comparator, S/H switch, VCM buffer,
-input driver; all 432 resolve against the sa/switch/opa builds).
+- `physical.pex: "partial"` on all 108 designs (amber "PEX partial" badge): only the CDAC macro is Magic-extracted; the
+  sub-blocks use the siblings' PEX netlists; top level not extracted. The former "PEX coverage" parameter was dropped.
 
 ## Results / honesty mapping
 
