@@ -689,6 +689,40 @@ def link_hierarchy(out: Path, catalog: dict):
               f"{sum(e['users'] for e in catalog['graph'])} design-level reuse links")
 
 
+def link_foundations(cfg: dict, catalog: dict):
+    """Bottom tier of the block hierarchy: technology-level foundations (PDK primitive devices, standard
+    cells) declared in sources.json `foundations`, with the components that build on them.
+    `used_by` keys are component ids or source ids (a source id covers every component of a collection;
+    a component id given as well overrides that role)."""
+    built = {c["id"] for c in catalog["components"]}
+    configured = {s["id"] for s in cfg.get("components") or []}
+    by_source: dict[str, list[str]] = {}
+    for c in catalog["components"]:
+        by_source.setdefault(c["source"], []).append(c["id"])
+    tiers = []
+    for f in cfg.get("foundations") or []:
+        roles: dict[str, str] = {}
+        used = f.get("used_by") or {}
+        for key, role in used.items():            # collections first …
+            if key not in built:
+                for cid in by_source.get(key, []):
+                    roles[cid] = role
+        for key, role in used.items():            # … then single components override
+            if key in built:
+                roles[key] = role
+        # a key of a source left out of this build (`--only`, `preview`) is fine; warn only about typos
+        unknown = [k for k in used if k not in built and k not in by_source and k not in configured
+                   and not any(k.startswith(f"{s}-") and s not in by_source for s in configured)]
+        if unknown:
+            print(f"  [warn] foundation {f.get('id')}: used_by names no component of this build "
+                  f"(a typo, or not exported yet): {', '.join(unknown)}")
+        users = [{"component": c["id"], "role": roles[c["id"]]} for c in catalog["components"] if c["id"] in roles]
+        tiers.append({k: f[k] for k in ("id", "name", "title", "technology") if k in f} | {"users": users})
+    catalog["foundations"] = tiers
+    if tiers:
+        print("foundations: " + ", ".join(f"{t['name']} ← {len(t['users'])} component{'' if len(t['users']) == 1 else 's'}" for t in tiers))
+
+
 def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
           cache_dir: Path, jobs: int) -> int:
     exclude = cfg.get("exclude", [])
@@ -734,6 +768,7 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
             ex.close()
 
     link_hierarchy(out, catalog)
+    link_foundations(cfg, catalog)
     (out / "data" / "catalog.json").write_text(json.dumps(catalog, separators=(",", ":"), ensure_ascii=False))
     (out / "data" / "build.json").write_text(json.dumps(build_info, indent=1))
     budget = cfg.get("budget_mb", 1000)

@@ -229,10 +229,40 @@ cross-link designs:
 
 The hub resolves every `uses` entry across components at build time, so ids must match the
 other component's hub design ids exactly. It then:
-- draws the component graph (cells → sub-systems → systems) on the overview page,
+- draws the component graph (cells → sub-systems → systems, above the foundation tier
+  described below) on the overview page,
 - shows "Built from" / "Used in" chips on each component tab,
 - lists "Built from" and the reverse "Used in" designs on every design page (e.g. an op-amp
   page lists every ECG/LDO/ADC design that uses it).
+
+**Foundation tier.** Under the components, the overview draws the technology libraries that
+the generators build on: **PDK PCells** (the PDK's primitive devices: MOSFETs, MIM
+capacitors, resistors, varactors, plus the devices a generator draws itself on the PDK layers,
+such as MOM finger capacitors) and **Stdcell** (the `gf180mcu_fd_sc_mcu7t5v0` standard cells).
+This tier is hub-side metadata, not part of your export. It is declared in the hub's
+`sources.json` under `foundations`:
+
+```jsonc
+"foundations": [
+  { "id": "stdcell", "name": "Stdcell", "technology": "gf180mcuD",
+    "title": "gf180mcu_fd_sc_mcu7t5v0 standard cells — longer description …",
+    "used_by": { "sar": "one-line role, ≤ 80 characters", "sdm": "…" } }
+]
+```
+
+- `title`: the text before ` — ` is the short description printed on the library's slab;
+  the full title appears in its tooltip and in the list view.
+- `used_by` keys are component ids or a collection's source id (`aux` covers every `aux-*`
+  component, including families added later, so keep its role true for all of them). A
+  component id listed as well overrides its collection's role. A component that does not use
+  the library is simply left out.
+
+`hubkit.py build` resolves this into `foundations` in `data/catalog.json` (`link_foundations`)
+and warns about keys that match no component of the build (a typo, or a component not exported
+yet). A slab's design count is the number of designs of the generators that use it (with the
+current global options), not a per-design check. When your generator starts or stops using a
+library (for example, it begins to instantiate standard cells), or adds a family whose devices
+differ, update `used_by` in the hub's `sources.json`, or ask the hub maintainer to.
 
 ## 5. Content blocks
 

@@ -288,74 +288,983 @@ function renderTabs() {
 
 
 /* ------------------------------------------------------------------ block hierarchy (overview) */
+/* Layered stack: one full-width band per tier (systems … building blocks) above the foundation tier, the
+   technology libraries (PDK PCells, standard cells) drawn as a platform. An arrow A → B means "A is built
+   from B". Connectors are orthogonal, leave and enter on ports spread along the boxes and run on
+   crossing-minimised tracks; a link that skips a tier passes through a free gap of it, and the links of
+   several blocks to one library merge into one trunk. Pointing at or focusing a block traces its links
+   and spells them out in the caption under the drawing; the <details> list repeats everything as text. */
+const HIER = { ctx: null, font: '', avail: 0, info: new Map(), hint: '', quiet: false };
+/** width the diagram may use without scrolling: #main minus the panel's padding and border */
+function hierAvail() {
+  const m = $('#main');
+  if (!m) return 1100;
+  const cs = getComputedStyle(m);
+  return Math.floor(m.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 38);
+}
+/** rendered text width (px) in the page font, so boxes are sized before the SVG exists */
+function hierTextW(s, px, wt = 400) {
+  if (!HIER.ctx) { HIER.ctx = document.createElement('canvas').getContext('2d'); HIER.font = getComputedStyle(document.body).fontFamily; }
+  HIER.ctx.font = `${wt} ${px}px ${HIER.font}`;
+  return HIER.ctx.measureText(String(s)).width;
+}
+function hierFit(s, px, wt, max) {
+  s = String(s);
+  if (hierTextW(s, px, wt) <= max) return s;
+  while (s.length > 1 && hierTextW(`${s}…`, px, wt) > max) s = s.slice(0, -1);
+  return `${s.trimEnd()}…`;
+}
+function hierWrap(s, px, wt, max, lines = 2) {
+  // words; one too long for a line breaks at its camel-case humps / digits, as a last resort anywhere
+  const parts = [];
+  for (const w of String(s).split(/\s+/).filter(Boolean)) {
+    if (hierTextW(w, px, wt) <= max) { parts.push([w, ' ']); continue; }
+    w.replace(/([a-z])(?=[A-Z0-9])|([A-Za-z])(?=[0-9])/g, '$1$2\u0000').split('\u0000').forEach((p, i) => {
+      for (let q = p; q;) {
+        let k = q.length;
+        while (k > 1 && hierTextW(q.slice(0, k), px, wt) > max) k--;
+        parts.push([q.slice(0, k), i || q !== p ? '' : ' ']);
+        q = q.slice(k);
+      }
+    });
+  }
+  const out = [];
+  let cur = '';
+  for (const [w, sp] of parts) {
+    const t = cur ? `${cur}${sp}${w}` : w;
+    if (!cur || hierTextW(t, px, wt) <= max) cur = t; else { out.push(cur); cur = w; }
+  }
+  if (cur) out.push(cur);
+  if (out.length > lines) out.splice(lines - 1, out.length, out.slice(lines - 1).join(' '));
+  return out.map((l) => hierFit(l, px, wt, max));
+}
+/** narrowest width (4 px steps) at which s wraps onto `lines` lines between whole words without being cut */
+function hierWrapW(s, px, wt, lines) {
+  const full = Math.ceil(hierTextW(s, px, wt)), word = Math.max(...String(s).split(/\s+/).map((w) => Math.ceil(hierTextW(w, px, wt))));
+  for (let w = Math.max(word, Math.ceil(full / lines)); w < full; w += 4) if (!hierWrap(s, px, wt, w, lines).some((l) => l.endsWith('…'))) return w;
+  return full;
+}
+/** span of a horizontal run in an inter-tier gap. A run has upper legs (ups: x where it comes down from the tier
+    above) and lower legs (downs: x where it continues to the tier below); a trunk shared by several links is one
+    run with several upper legs. s.src / s.dst: the block of each upper / lower leg (none for a pass-through),
+    s.from / s.to: the blocks the run leaves from / goes into */
+function hierSpan(s) {
+  const all = s.ups.concat(s.downs);
+  s.lo = Math.min(...all); s.hi = Math.max(...all);
+  s.u = s.ups.reduce((x, y) => x + y, 0) / s.ups.length; s.d = s.downs.reduce((x, y) => x + y, 0) / s.downs.length;
+  return s;
+}
+const hierNear = (a, b, m) => a.lo < b.hi + m && b.lo < a.hi + m;
+/** crossings when run a lies on a track above run b: b's upper legs / a's lower legs cut through the other run.
+    Cutting a leg of the block the run itself leaves from (or goes into) counts double: next to the box it reads as
+    a bus joining those ports. An arriving leg right beside a departing one costs extra (they read as one line). */
+function hierRunCost(a, b) {
+  if (!hierNear(a, b, 2)) return 0;
+  const inside = (x, s) => x > s.lo + 0.5 && x < s.hi - 0.5;
+  let c = 0;
+  for (const x of b.ups) if (inside(x, a)) c += a.from?.has(b.src?.get(x)) ? 2 : 1;
+  for (const x of a.downs) { if (inside(x, b)) c += b.to?.has(a.dst?.get(x)) ? 2 : 1; for (const y of b.ups) if (Math.abs(x - y) < 10) c += 3; }
+  return c;
+}
+/** order the horizontal runs of one inter-tier gap so few connectors cross, then pack them on tracks.
+    Sets s.lv on every run that moves sideways, segs.cost (the crossings), and returns the number of tracks. */
+function hierTracks(segs) {
+  segs.forEach(hierSpan);
+  const T = segs.filter((s) => s.hi - s.lo > 0.5);
+  const near = hierNear, cost = hierRunCost;
+  const total = (o) => { let c = 0; for (let i = 0; i < o.length; i++) for (let j = i + 1; j < o.length; j++) c += cost(o[i], o[j]); return c; };
+  const improve = (ord) => {
+    for (let it = 0, moved = true; moved && it < 40; it++) {
+      moved = false;
+      for (let i = 0; i < ord.length; i++) {
+        const s = ord[i], rest = ord.slice(0, i).concat(ord.slice(i + 1));
+        let c = rest.reduce((t, r) => t + cost(s, r), 0), cur = c, best = 0, bestC = c;
+        for (let p = 1; p <= rest.length; p++) {
+          c += cost(rest[p - 1], s) - cost(s, rest[p - 1]);
+          if (p === i) cur = c;
+          if (c < bestC) { bestC = c; best = p; }
+        }
+        if (bestC < cur) { rest.splice(best, 0, s); ord.splice(0, ord.length, ...rest); moved = true; }
+      }
+    }
+    return ord;
+  };
+  // a few deterministic starts (local search alone can stall), keep the order with the fewest crossings
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const dir = (s) => (s.d > s.u ? -s.u : s.u - 1e6);
+  const starts = [(a, b) => dir(a) - dir(b), (a, b) => a.u - b.u, (a, b) => b.u - a.u, (a, b) => a.d - b.d, (a, b) => b.d - a.d,
+    (a, b) => (a.hi - a.lo) - (b.hi - b.lo)].map((f) => T.slice().sort(f));
+  for (let k = 0; k < 8; k++) starts.push(T.map((x) => [rnd(), x]).sort((a, b) => a[0] - b[0]).map((x) => x[1]));
+  // pack: a run takes the first track below every earlier run it overlaps (28 px apart, so runs never read as one line)
+  const pack = (o) => { o.forEach((s, i) => { s.lv = 0; for (let j = 0; j < i; j++) if (near(o[j], s, 28)) s.lv = Math.max(s.lv, o[j].lv + 1); }); return o.length ? 1 + Math.max(...o.map((s) => s.lv)) : 0; };
+  let ord = [], score = Infinity;
+  for (const st of starts) { const o = improve(st), sc = total(o) * 100 + pack(o); if (sc < score) { score = sc; ord = o; } }
+  segs.cost = total(ord);
+  return pack(ord);
+}
+/** orthogonal polyline with rounded corners */
+function hierPath(pts, r) {
+  const P = [];
+  for (const p of pts) { const q = P[P.length - 1]; if (!q || Math.abs(q[0] - p[0]) > 0.01 || Math.abs(q[1] - p[1]) > 0.01) P.push(p); }
+  for (let i = P.length - 2; i > 0; i--) {
+    const [a, b, c] = [P[i - 1], P[i], P[i + 1]];
+    if ((Math.abs(a[0] - b[0]) < 0.01 && Math.abs(b[0] - c[0]) < 0.01) || (Math.abs(a[1] - b[1]) < 0.01 && Math.abs(b[1] - c[1]) < 0.01)) P.splice(i, 1);
+  }
+  const f = (v) => +v.toFixed(1);
+  let d = `M${f(P[0][0])},${f(P[0][1])}`;
+  for (let i = 1; i < P.length - 1; i++) {
+    const [x0, y0] = P[i - 1], [x1, y1] = P[i], [x2, y2] = P[i + 1];
+    const l1 = Math.hypot(x1 - x0, y1 - y0), l2 = Math.hypot(x2 - x1, y2 - y1), rr = Math.min(r, l1 / 2, l2 / 2);
+    d += ` L${f(x1 - ((x1 - x0) / l1) * rr)},${f(y1 - ((y1 - y0) / l1) * rr)} Q${f(x1)},${f(y1)} ${f(x1 + ((x2 - x1) / l2) * rr)},${f(y1 + ((y2 - y1) / l2) * rr)}`;
+  }
+  const z = P[P.length - 1];
+  return `${d} L${f(z[0])},${f(z[1])}`;
+}
+
 function hierarchyHtml() {
-  const G = CAT.graph || [];
-  if (!G.length) return '';
-  const byId = Object.fromEntries(CAT.components.map((c) => [c.id, c]));
+  const FD = (CAT.foundations || []).filter((f) => f && f.id);
+  if (!(CAT.graph || []).length && !FD.length) return '';
+  const comps = CAT.components;
+  const byId = Object.fromEntries(comps.map((c) => [c.id, c]));
   const nodeKey = (id) => (byId[id]?.group ? `g:${byId[id].group}` : id);
-  const nodes = new Map();
-  for (const c of CAT.components) {
+  const fmtN = (v) => v.toLocaleString('en-US');
+  const plural = (n, w, pl = `${w}s`) => `${fmtN(n)} ${n === 1 ? w : pl}`;
+  const and = (a) => (a.length < 3 ? a.join(' and ') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+  const cut = (s, n) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+  const names = (ids) => ids.map((id) => byId[id]?.name || id);
+  const f1 = (v) => +v.toFixed(1);
+
+  /* ---- model: component nodes (a group collapses into one), "built from" edges, foundation tier */
+  const N = new Map();
+  comps.forEach((c, i) => {
     const k = nodeKey(c.id);
-    if (!nodes.has(k)) nodes.set(k, { key: k, label: c.group || c.name, sub: c.group ? [] : null, ids: [], href: tabHref(c.id) });
-    const n = nodes.get(k); n.ids.push(c.id); if (n.sub) n.sub.push(c.name);
-  }
-  const edges = new Map();
-  for (const e of G) {
-    const a = nodeKey(e.from), b = nodeKey(e.to);
-    if (a === b) continue;
+    if (!N.has(k)) N.set(k, { key: k, kind: 'c', label: c.group || c.name, group: c.group || null, ids: [], ord: i });
+    N.get(k).ids.push(c.id);
+  });
+  for (const n of N.values()) n.count = n.ids.reduce((a, id) => a + shownRows(byId[id]).length, 0);
+  const E = [], EK = new Map();
+  const edgeOf = (a, b, kind) => {
     const k = `${a}>${b}`;
-    if (!edges.has(k)) edges.set(k, { from: a, to: b, roles: new Set(), users: 0, targets: 0 });
-    const x = edges.get(k); e.roles.forEach((r) => x.roles.add(r)); x.users += e.users; x.targets += e.targets;
+    if (!EK.has(k)) { const e = { a, b, kind, roles: new Set(), users: 0, targets: 0, mem: new Map(), xs: {}, lv: {} }; EK.set(k, e); E.push(e); }
+    return EK.get(k);
+  };
+  for (const g of CAT.graph || []) {
+    const a = nodeKey(g.from), b = nodeKey(g.to);
+    if (a === b || !N.has(a) || !N.has(b)) continue;
+    const e = edgeOf(a, b, 'c');
+    (g.roles || []).forEach((r) => e.roles.add(r));
+    e.users += g.users || 0; e.targets += g.targets || 0;
   }
-  const deps = (k) => [...edges.values()].filter((e) => e.from === k).map((e) => e.to);
+  const CE = E.slice();
+  // level = longest "built from" chain below a block (0 = cells)
   const lvl = new Map();
   const level = (k, seen = new Set()) => {
     if (lvl.has(k)) return lvl.get(k);
     if (seen.has(k)) return 0;
     seen.add(k);
-    const d = deps(k);
+    const d = CE.filter((e) => e.a === k).map((e) => e.b);
     const v = d.length ? 1 + Math.max(...d.map((x) => level(x, seen))) : 0;
-    lvl.set(k, v); return v;
+    lvl.set(k, v);
+    return v;
   };
-  [...nodes.keys()].forEach((k) => level(k));
-  const L = Math.max(...lvl.values());
-  const rows = Array.from({ length: L + 1 }, (_, i) => [...nodes.keys()].filter((k) => lvl.get(k) === i));
-  const W = 1100, rowH = 118, boxH = 58, top = 24, gutter = 96;
-  const pos = new Map();
-  const place = (row, i) => { const n = row.length; const gap = (W - gutter) / n; row.forEach((k, j) => pos.set(k, { x: gutter + gap * (j + 0.5), y: top + (L - i) * rowH, w: Math.min(190, gap - 16) })); };
-  place(rows[0], 0);
-  for (let i = 1; i <= L; i++) {   // barycentric order: put users above the blocks they build on
-    rows[i].sort((a, b) => { const bx = (k) => { const d = deps(k).filter((x) => pos.has(x)); return d.length ? d.reduce((s2, x) => s2 + pos.get(x).x, 0) / d.length : W / 2; }; return bx(a) - bx(b); });
-    place(rows[i], i);
+  [...N.keys()].forEach((k) => level(k));
+  for (let i = CE.length - 1; i >= 0; i--) {     // a cycle in the data would point a link upwards: leave it out of the drawing
+    const e = CE[i];
+    if (lvl.get(e.a) <= lvl.get(e.b)) { CE.splice(i, 1); E.splice(E.indexOf(e), 1); EK.delete(`${e.a}>${e.b}`); }
   }
-  const count = (n) => n.ids.reduce((a, id) => a + shownRows(byId[id]).length, 0);
-  const H = top + L * rowH + boxH + 26;
-  const maxU = Math.max(1, ...[...edges.values()].map((e) => e.users));
-  const ePaths = [...edges.values()].map((e) => {
-    const a = pos.get(e.from), b = pos.get(e.to); if (!a || !b) return '';
-    const y1 = a.y + boxH, y2 = b.y, my = (y1 + y2) / 2;
-    const sw = 1.4 + 3 * Math.sqrt(e.users / maxU);
-    const roles = [...e.roles];
-    const tip = `${nodes.get(e.from).label} is built from ${nodes.get(e.to).label}` + (e.users ? `: ${e.users} design${e.users === 1 ? '' : 's'} reuse ${e.targets} ${nodes.get(e.to).label} design${e.targets === 1 ? '' : 's'}` : '') + (roles.length ? ` (${roles.join(', ')})` : '');
-    return `<path class="h-edge" d="M${a.x},${y1} C${a.x},${my} ${b.x},${my} ${b.x},${y2 - 6}" stroke-width="${sw.toFixed(1)}" marker-end="url(#harrow)"><title>${esc(tip)}</title></path>`;
-  }).join('');
-  const nBoxes = [...nodes.values()].map((n) => {
-    const p = pos.get(n.key);
-    const sub = n.sub ? ` · ${n.sub.length} generators` : '';
-    return `<a href="${n.href}" class="h-node"><title>${esc(n.label)}${n.sub ? `: ${n.sub.join(', ')}` : ` — ${esc(byId[n.ids[0]].title)}`}</title>
-      <rect x="${p.x - p.w / 2}" y="${p.y}" width="${p.w}" height="${boxH}" rx="9"/>
-      <rect class="h-bar" x="${p.x - p.w / 2}" y="${p.y}" width="5" height="${boxH}" rx="2"/>
-      <text x="${p.x}" y="${p.y + 22}" class="h-name">${esc(n.label)}</text>
-      <text x="${p.x}" y="${p.y + 40}" class="h-sub">${count(n).toLocaleString('en-US')} designs${esc(sub)}</text></a>`;
-  }).join('');
-  const lvlNames = rows.map((_, i) => (i === 0 ? 'cells' : i === L ? 'systems' : 'sub-systems'));
-  const lvlLabels = rows.map((_, i) => `<text class="h-lvl" x="6" y="${top + (L - i) * rowH + boxH / 2 + 4}">${lvlNames[i]}</text>`).join('');
-  return `<section class="panel hier"><div class="section-head"><h2>Block hierarchy</h2>
-      <span class="subtle">arrow A → B: A is built from B · line width ∝ number of reusing designs · hover for details · counts follow the global options</span></div>
-    <div class="table-scroll"><svg viewBox="0 0 ${W} ${H}" class="hsvg" role="img" aria-label="Which generators are built from which">
-      <defs><marker id="harrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="h-arrow"/></marker></defs>
-      ${lvlLabels}${ePaths}${nBoxes}</svg></div></section>`;
+  const L = Math.max(0, ...lvl.values());
+  let RL = L, FL = L + 1;              // last component row, foundation row (a tier that wraps adds a row)
+  const F = FD.map((f, i) => ({ key: `f:${f.id}`, kind: 'f', label: f.name || f.id, f, ord: i, use: new Map(), t: FL }));
+  for (const fn of F) {
+    for (const u of fn.f.users || []) {
+      const ids = byId[u.component] ? [u.component] : comps.filter((c) => c.source === u.component).map((c) => c.id);
+      for (const id of ids) {
+        if (!fn.use.has(id)) fn.use.set(id, new Set());
+        if (u.role) fn.use.get(id).add(u.role);
+        const e = edgeOf(nodeKey(id), fn.key, 'f');
+        if (!e.mem.has(id)) e.mem.set(id, new Set());
+        if (u.role) { e.mem.get(id).add(u.role); e.roles.add(u.role); }
+      }
+    }
+  }
+  const FE = E.filter((e) => e.kind === 'f');
+  E.forEach((e, i) => { e.id = `e${i}`; });
+  let tiers = L + 1 + (F.length ? 1 : 0);            // rows, foundation included
+  const byKey = (k) => N.get(k) || F.find((f) => f.key === k);
+  for (const fn of F) {           // what a library slab says: short title, users and their designs (global options)
+    const used = [...fn.use.keys()];
+    fn.designs = used.reduce((a, id) => a + shownRows(byId[id]).length, 0);
+    fn.desc = String(fn.f.title || '').split(' — ')[0];
+    fn.cnt = used.length ? `${plural(used.length, 'generator')} · ${plural(fn.designs, 'design')}` : 'not used yet';
+    fn.who = used.length && used.length <= 3 ? `used by ${and(names(used))}` : '';
+  }
+
+  /* ---- tiers and a crossing-minimised order (barycentre sweeps over the component edges) */
+  const R = Array.from({ length: L + 1 }, () => []);
+  for (const n of N.values()) { n.t = L - lvl.get(n.key); R[n.t].push(n); }
+  R.forEach((row) => row.sort((a, b) => a.ord - b.ord));
+  const linked = new Set(CE.flatMap((e) => [e.a, e.b]));
+  const rel = () => R.forEach((row) => row.forEach((n, i) => { n.r = (i + 0.5) / row.length; }));
+  const crossings = () => {
+    rel();
+    let c = 0;
+    for (let i = 0; i < CE.length; i++) for (let j = i + 1; j < CE.length; j++) {
+      const p = CE[i], q = CE[j];
+      if (p.a !== q.a && p.b !== q.b && (N.get(p.a).r - N.get(q.a).r) * (N.get(p.b).r - N.get(q.b).r) < 0) c++;
+    }
+    return c;
+  };
+  const sweep = (row, up) => {
+    rel();
+    const key = new Map(row.map((n) => {
+      const nb = CE.filter((e) => (up ? e.a === n.key : e.b === n.key)).map((e) => N.get(up ? e.b : e.a));
+      return [n, !linked.has(n.key) ? 2 + n.ord / 1e4 : nb.length ? nb.reduce((s, m) => s + m.r, 0) / nb.length : n.r];
+    }));
+    row.sort((a, b) => key.get(a) - key.get(b) || a.ord - b.ord);
+  };
+  sweep(R[L], true);
+  let best = crossings(), snap = R.map((r) => r.slice());
+  for (let it = 0; it < 6 && best > 0; it++) {
+    for (let t = 1; t <= L; t++) sweep(R[t], false);
+    for (let t = L - 1; t >= 0; t--) sweep(R[t], true);
+    const c = crossings();
+    if (c < best) { best = c; snap = R.map((r) => r.slice()); }
+  }
+  snap.forEach((r, t) => { R[t] = r; });
+  // blocks nobody links to go to both ends, so the shared ones sit under the tier that uses them
+  R.forEach((row, t) => {
+    const iso = row.filter((n) => !linked.has(n.key));
+    if (!iso.length || iso.length === row.length) return;
+    const core = row.filter((n) => linked.has(n.key));
+    iso.forEach((n, i) => (i % 2 ? core.unshift(n) : core.push(n)));
+    R[t] = core;
+  });
+  const band = R.map((_, t) => t);      // row -> tier (the rows of a wrapped tier share one band)
+
+  /* ---- sizes: wide layout with a label gutter, or a compact one (rotated tier names) for phones */
+  const avail = hierAvail();
+  HIER.avail = avail;
+  const span = (e) => [byKey(e.a).t, byKey(e.b).t];
+  const trunkAt = (fn, t) => FE.filter((e) => e.b === fn.key && e.bun && byKey(e.a).t < t);   // links in fn's trunk at tier t
+  let pass = [];
+  const relevel = () => {
+    R.forEach((row, t) => row.forEach((n) => { n.t = t; }));
+    RL = R.length - 1; FL = RL + 1; tiers = RL + 1 + (F.length ? 1 : 0);
+    F.forEach((fn) => { fn.t = FL; });
+    // a library link that skips a row joins its library's trunk (one line per library through each row)
+    for (const e of FE) e.bun = byKey(e.a).t < RL;
+    pass = Array(tiers).fill(0);        // links that cross each row
+    for (const e of CE) { const [ta, tb] = span(e); for (let t = ta + 1; t < tb; t++) pass[t]++; }
+    for (const fn of F) for (let t = 1; t <= RL; t++) if (trunkAt(fn, t).length) pass[t]++;
+  };
+  relevel();
+  const subOf = (n, P) => `${plural(n.count, 'design')}${n.group && P.wide ? ` · ${n.ids.length} generators` : ''}`;
+  const MODES = {
+    wide: { wide: true, gut: 188, padL: 22, padR: 20, nodeH: 54, nameFs: 13.5, subFs: 11.5, minW: 132, maxW: 220, gapMin: 40, gapMax: 132, pitch: 8, depth: 7, gapH: 46, r: 6 },
+    medium: { wide: true, gut: 142, padL: 18, padR: 16, nodeH: 54, nameFs: 13.5, subFs: 11.5, minW: 118, maxW: 200, gapMin: 30, gapMax: 110, pitch: 8, depth: 7, gapH: 44, r: 6 },
+    compact: { wide: false, gut: 30, padL: 14, padR: 14, nodeH: 50, nameFs: 12.5, subFs: 11, minW: 104, maxW: 172, gapMin: 30, gapMax: 84, pitch: 7, depth: 6, gapH: 40, r: 5 },
+  };
+  const mk = (mode, tight = false) => {
+    const P = { ...MODES[mode] }, wide = P.wide;
+    if (tight) Object.assign(P, { padL: 8, padR: 8, gapMin: P.gapMin - 8, minW: P.minW - 8 });   // to avoid a short scroll
+    const room = avail - P.gut - P.padL - P.padR;
+    // a name too long for the widest box wraps onto two lines (and makes its tier's boxes taller)
+    P.names = (n) => (hierTextW(n.label, P.nameFs, 700) + 30 <= P.maxW ? [n.label] : hierWrap(n.label, P.nameFs, 700, P.maxW - 30, 2));
+    const need = (n) => Math.min(P.maxW, Math.max(P.minW, ...P.names(n).map((s) => hierTextW(s, P.nameFs, 700) + 30), hierTextW(subOf(n, P), P.subFs) + 28));
+    P.h = R.map((row) => P.nodeH + (row.some((n) => P.names(n).length > 1) ? P.nameFs + 2.5 : 0));
+    // one width per tier (tidy columns) when the tier fits that way, else each box its own width;
+    // a collapsed group sizes itself (its subtitle is longer)
+    P.w = R.map((row) => Math.max(P.minW, ...row.filter((n) => !n.group).map(need)));
+    P.uni = R.map(() => true);
+    P.nw = (n) => (!P.uni[n.t] ? need(n) : n.group ? Math.max(P.w[n.t], need(n)) : P.w[n.t]);
+    const stack = (row) => (row.some((n) => n.group) ? 8 : 0);
+    const capMin = Math.floor((P.gapMin - 20) / P.pitch) + 1;
+    const rowW = (row, t) => row.reduce((a, n) => a + P.nw(n), 0) + (row.length - 1) * P.gapMin + stack(row) + 20 + Math.max(0, pass[t] - (row.length + 1) * capMin) * P.pitch;
+    R.forEach((row, t) => { if (rowW(row, t) > room) P.uni[t] = false; });
+    P.rowW = R.map(rowW);
+    // a slab fits its name and counts on one line and its description / users on one line each (wrapped beyond
+    // that); when the libraries are what makes the stage too wide, the counts go under the name and the texts
+    // wrap onto two lines instead
+    const line = (s) => (s ? Math.min(hierTextW(s, P.subFs), wide ? 380 : 250) + 32 : 0);
+    const slabRow = (ws) => (F.length ? ws.reduce((a, b) => a + b, 0) + (F.length - 1) * 16 : 0);
+    P.slabMin = F.map((fn) => Math.max(wide ? 200 : 150, hierTextW(fn.label, P.nameFs + 0.5, 700) + hierTextW(fn.cnt, P.subFs) + 56, line(fn.desc), line(fn.who)));
+    if (slabRow(P.slabMin) > Math.max(room, ...P.rowW)) {
+      const two = (s) => (s ? Math.min(hierWrapW(s, P.subFs, 400, 2), wide ? 380 : 250) + 32 : 0);
+      P.slabMin = F.map((fn) => Math.max(wide ? 170 : 130, hierTextW(fn.label, P.nameFs + 0.5, 700) + 32, hierTextW(fn.cnt, P.subFs) + 32, two(fn.desc), two(fn.who)));
+    }
+    P.slabW = slabRow(P.slabMin);
+    P.need = Math.max(...P.rowW, P.slabW);
+    P.W = P.gut + P.padL + P.need + P.padR;
+    return P;
+  };
+  let P = mk('wide');
+  if (P.W > avail) P = mk('medium');
+  if (P.W > avail) { const c = mk('compact'); if (c.W <= avail) P = c; }      // smaller boxes, one row per tier
+  // on a desktop a tier still too wide for the panel wraps onto two rows (bracketed as one tier in the gutter),
+  // rather than everything shrinking and scrolling (unless the libraries alone are too wide: no wrap helps then)
+  if (P.W > avail && avail >= 900 && P.slabW <= avail - P.gut - P.padL - P.padR) {
+    const room = avail - P.gut - P.padL - P.padR;
+    let split = false;
+    for (let t = R.length - 1; t >= 0; t--) {
+      if (P.rowW[t] <= room || R[t].length < 2) continue;
+      // the blocks that tiers above are built from go on the first row, so their links need not pass the second
+      const inUse = (n) => CE.some((e) => e.b === n.key);
+      const first = new Set(R[t].filter(inUse).concat(R[t].filter((n) => !inUse(n))).slice(0, Math.ceil(R[t].length / 2)));
+      R.splice(t, 1, R[t].filter((n) => first.has(n)), R[t].filter((n) => !first.has(n)));
+      band.splice(t, 1, band[t], band[t]);
+      split = true;
+    }
+    if (split) { relevel(); P = mk('wide'); if (P.W > avail) P = mk('medium'); }
+  }
+  if (P.W > avail) P = mk('compact');
+  if (P.W > avail && P.W - avail < 80) { const c = mk('compact', true); if (c.W <= avail) P = c; }
+  const W = Math.max(avail, Math.ceil(P.W));
+  const sx0 = P.gut + P.padL, sx1 = W - P.padR, S = sx1 - sx0;
+
+  /* ---- x: each tier centred in its band, gaps capped */
+  R.forEach((row) => {
+    const n = row.length, sw = row.reduce((a, nd) => a + P.nw(nd), 0);
+    const g = n > 1 ? Math.max(P.gapMin, Math.min(P.gapMax, (S - sw) / n)) : 0;
+    let x = sx0 + (S - (sw + (n - 1) * g)) / 2;
+    row.forEach((nd) => { nd.w = P.nw(nd); nd.x = x; nd.cx = x + nd.w / 2; x += nd.w + g; });
+  });
+  // foundation slabs: one platform across the stage; order and boundaries chosen so most links drop straight down
+  // cost of one slab: sideways jogs (a link arriving beside it; any jog costs, a small one looks like a mistake),
+  // a jogging link landing right next to a straight one, and a trunk that finds no free gap above the slab
+  const rowGaps = (dx) => {              // free x ranges of the tier right above the slabs, where a trunk can pass
+    const out = [];
+    let l = sx0 - P.padL + 10;
+    for (const nd of R[RL]) { out.push([l, nd.x + dx - 10]); l = nd.x + dx + nd.w + (nd.group ? 8 : 0) + 10; }
+    out.push([l, sx1 + P.padR - 10]);
+    return out.filter(([g0, g1]) => g1 >= g0);
+  };
+  const slabUsers = (fn, dx = 0) => {    // where its links arrive from: the blocks right above, and the trunk (if any)
+    const es = FE.filter((e) => e.b === fn.key), bun = es.filter((e) => e.bun);
+    return { us: es.filter((e) => !e.bun).map((e) => byKey(e.a).cx + dx), trunk: bun.length ? bun.reduce((a, e) => a + byKey(e.a).cx, 0) / bun.length : null, dx };
+  };
+  const slabCost = (lo, hi, { us, trunk, dx }, perPx = 1) => {
+    const jogL = us.some((u) => u < lo), jogR = us.some((u) => u > hi);
+    let c = 0;
+    for (const u of us) {
+      const off = Math.max(0, lo - u, u - hi);
+      if (off > 0) c += 20 + off * perPx;
+      else if ((jogL && u < lo + 26) || (jogR && u > hi - 26)) c += 12;
+    }
+    if (trunk !== null) {
+      let best = Infinity;
+      for (const [g0, g1] of rowGaps(dx)) {
+        const l = Math.max(g0, lo + 6), r = Math.min(g1, hi - 6);       // the part of this gap over the slab
+        const run = 0.1 * Math.max(0, g0 - trunk, trunk - g1);           // the trunk's run sideways to the gap
+        best = Math.min(best, run + (l <= r ? 0 : 20 + (l - r) * perPx));
+      }
+      c += best;
+    }
+    return c;
+  };
+  const placeSlabs = () => {
+    const gap = 16, k = F.length;
+    const users = F.map((fn) => slabUsers(fn));
+    const weight = users.map((u) => 1 + u.us.length + (u.trunk === null ? 0 : 1)), totW = weight.reduce((a, b) => a + b, 0);
+    const rest = S - (k - 1) * gap - P.slabMin.reduce((a, b) => a + b, 0);
+    const prop = F.map((fn, i) => P.slabMin[i] + (rest * weight[i]) / totW);
+    const cost = (order, ws) => {          // + drift from the proportional widths
+      let x = sx0, c = 0;
+      for (const i of order) { c += slabCost(x + 16, x + ws[i] - 16, users[i]) + 0.15 * Math.abs(ws[i] - prop[i]); x += ws[i] + gap; }
+      return c;
+    };
+    const fitWidths = (order) => {
+      const ws = prop.slice();
+      for (let it = 0; it < 3; it++) for (let b = 0; b < k - 1; b++) {
+        const i = order[b], j = order[b + 1], tot = ws[i] + ws[j];
+        let bw = ws[i], bc = cost(order, ws);
+        for (let wi = P.slabMin[i]; wi <= tot - P.slabMin[j]; wi += 4) {
+          ws[i] = wi; ws[j] = tot - wi;
+          const c = cost(order, ws);
+          if (c < bc - 1e-6) { bc = c; bw = wi; }
+        }
+        ws[i] = bw; ws[j] = tot - bw;
+      }
+      return ws;
+    };
+    const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((v, i) => perms(a.filter((_, j) => j !== i)).map((q) => [v, ...q])));
+    let pick = null;
+    for (const o of k <= 4 ? perms(F.map((_, i) => i)) : [F.map((_, i) => i)]) {
+      const ws = fitWidths(o), c = cost(o, ws);
+      if (!pick || c < pick.c - 0.5) pick = { o, ws, c };
+    }
+    let x = sx0;
+    for (const i of pick.o) { F[i].x = x; F[i].w = pick.ws[i]; F[i].cx = x + F[i].w / 2; x += F[i].w + gap; }
+  };
+  // the tier right above the slabs may also slide sideways (within the stage, only as far as it removes a jog or a
+  // cramped landing) so its blocks sit over their slab
+  const slideRow = () => {
+    const row = R[RL], last = row[row.length - 1];
+    const d0 = sx0 - row[0].x, d1 = sx1 - (last.x + last.w + (last.group ? 8 : 0));
+    let bestD = 0, bestC = Infinity;
+    for (let d = Math.ceil(d0); d <= d1; d += 2) {
+      const c = F.reduce((a, fn) => a + slabCost(fn.x + 16, fn.x + fn.w - 16, slabUsers(fn, d), 0.1), 0) + 0.3 * Math.abs(d);
+      if (c < bestC - 1e-6) { bestC = c; bestD = d; }
+    }
+    row.forEach((nd) => { nd.x += bestD; nd.cx += bestD; });
+  };
+  if (F.length) for (let round = 0; round < 2; round++) { placeSlabs(); slideRow(); }
+  // a link that skips a tier crosses it through a free gap, on the way to its target and near its source;
+  // the links of several blocks to one library share one trunk there (placed over that library's slab)
+  const PG = [];                         // row -> its gaps, with the pass-throughs placed in each
+  for (let t = 1; t <= RL; t++) {
+    const row = R[t];
+    const gaps = (PG[t] = []);
+    let l = sx0 - P.padL + 10;
+    for (const nd of row) { gaps.push({ l, r: nd.x - 10, used: [], inner: gaps.length > 0 }); l = nd.x + nd.w + (nd.group ? 8 : 0) + 10; }
+    gaps.push({ l, r: sx1 + P.padR - 10, used: [], inner: false });
+    gaps.forEach((g) => { g.cap = Math.max(0, Math.floor((g.r - g.l) / P.pitch) + 1); });
+    const items = CE.filter((e) => { const [ta, tb] = span(e); return ta < t && t < tb; }).map((e) => {
+      const [ta, tb] = span(e), a = byKey(e.a), b = byKey(e.b);
+      const w = a.cx + ((b.cx - a.cx) * (t - ta)) / (tb - ta);
+      return { es: [e], want: w, lo: w, hi: w, o: a.ord + b.ord / 100 };
+    });
+    for (const fn of F) {
+      const es = trunkAt(fn, t);
+      if (!es.length) continue;
+      const from = [...new Set(es.map((e) => (byKey(e.a).t === t - 1 ? byKey(e.a).cx : e.xs[t - 1])))];
+      items.push({ es, want: from.reduce((a, b) => a + b, 0) / from.length, lo: fn.x + 22, hi: fn.x + fn.w - 22, o: 100 + fn.ord });
+    }
+    items.forEach((it) => { it.aim = Math.min(it.hi, Math.max(it.lo, it.want)); });
+    items.sort((p, q) => p.want - q.want || p.aim - q.aim || p.o - q.o);
+    const dist = (g, x) => (x < g.l ? g.l - x : x > g.r ? x - g.r : 0);
+    for (const it of items) {
+      const cost = (g) => dist(g, it.want) + 2 * Math.max(0, it.lo - g.r, g.l - it.hi);
+      const g = gaps.filter((x) => x.used.length < x.cap).sort((p, q) => cost(p) - cost(q) || dist(p, it.want) - dist(q, it.want))[0] || gaps[0];
+      g.used.push(it);
+    }
+    for (const g of gaps) {
+      if (!g.used.length) continue;
+      // straight through where the link is aimed; otherwise mid-gap (an outer gap: near the aim), within the target's span
+      const at = (it) => {
+        const want = it.aim >= g.l && it.aim <= g.r ? it.aim : g.inner ? (g.l + g.r) / 2 : Math.min(g.r - 14, Math.max(g.l + 14, it.aim));
+        const l = Math.max(g.l, it.lo), r = Math.min(g.r, it.hi);
+        return l <= r ? Math.min(r, Math.max(l, want)) : Math.min(g.r, Math.max(g.l, want));
+      };
+      // left to right in the order of where they head (a trunk bound for a slab on the left passes left of one
+      // bound for a slab further right, so the two do not cross under the gap)
+      const u = g.used.map((it) => ({ it, x: at(it) })).sort((p, q) => p.it.aim - q.it.aim || p.x - q.x || p.it.want - q.it.want || p.it.o - q.it.o);
+      for (let i = 1; i < u.length; i++) u[i].x = Math.max(u[i].x, u[i - 1].x + P.pitch);
+      if (u[u.length - 1].x > g.r) { u[u.length - 1].x = g.r; for (let i = u.length - 2; i >= 0; i--) u[i].x = Math.min(u[i].x, u[i + 1].x - P.pitch); }
+      u.forEach(({ it, x }) => it.es.forEach((e) => { e.xs[t] = x; }));
+    }
+  }
+
+  /* ---- ports, links and tracks: out-links leave from ports spread along the bottom of a block, in-links arrive on
+     ports spread along its top, each ordered by where it goes; then the runs in every gap are put on tracks */
+  const spread = (list, n, inset) => {
+    const k = list.length;
+    const sp = k > 1 ? Math.min(26, (n.w - 2 * inset) / (k - 1)) : 0;
+    list.forEach((it, i) => { it.e.xs[n.t] = n.cx + (i - (k - 1) / 2) * sp; });
+  };
+  const clampF = (fn, x) => Math.min(fn.x + fn.w - 16, Math.max(fn.x + 16, x));
+  const xs0 = new Map(E.map((e) => [e, { ...e.xs }]));      // pass-throughs only, before any port is placed
+  let gapTracks = [], gapSegs = [];
+  // a straight link (no run in a gap) crosses every run that spans it
+  const straightCost = (segs) => {
+    let c = 0;
+    for (const s of segs) {
+      if (s.hi - s.lo > 0.5) continue;
+      for (const r of segs) if (r.hi - r.lo > 0.5 && s.ups[0] > r.lo + 0.5 && s.ups[0] < r.hi - 0.5) c += r.from.has(s.src.get(s.ups[0])) ? 2 : 1;
+    }
+    return c;
+  };
+  /** place every port, then the tracks; returns the crossings. order: block key -> its out-links, left to right */
+  const route = (order = new Map()) => {
+    E.forEach((e) => { e.xs = { ...xs0.get(e) }; e.lv = {}; });
+    for (const n of N.values()) {
+      const outs = E.filter((e) => e.a === n.key).map((e) => {
+        const b = byKey(e.b);
+        const nx = b.t === n.t + 1 ? (e.kind === 'f' ? clampF(b, n.cx) : b.cx) : e.xs[n.t + 1];
+        return { e, k: nx, o: b.ord + (e.kind === 'f' ? 100 : 0) };
+      }).sort((p, q) => p.k - q.k || p.o - q.o);
+      const o = order.get(n.key);
+      if (o) outs.sort((p, q) => o.indexOf(p.e) - o.indexOf(q.e));
+      spread(outs, n, 16);
+    }
+    for (const n of N.values()) {
+      const ins = E.filter((e) => e.b === n.key).map((e) => ({ e, k: e.xs[n.t - 1], o: byKey(e.a).ord })).sort((p, q) => p.k - q.k || p.o - q.o);
+      spread(ins, n, 18);
+    }
+    // a pass-through must not run on top of another link's leg: keep it a pitch away from the legs that come down
+    // to the gap right above it (ports of the tier above, other pass-throughs) and go on from the gap right below
+    // it (ports of the tier below); the ports were spread after the gaps were filled, so nudge it within its gap
+    for (let t = 1; t <= RL; t++) {
+      for (const g of PG[t]) {
+        const its = g.used.map((it) => {
+          const own = new Set(it.es), legs = [];
+          for (const e of E) {
+            if (own.has(e)) continue;
+            const [ta, tb] = span(e);
+            if (ta <= t - 1 && tb > t - 1) legs.push(e.xs[t - 1]);
+            if (t + 1 <= RL && ta < t + 1 && tb >= t + 1) legs.push(e.xs[t + 1]);
+          }
+          return { it, x: it.es[0].xs[t], ok: (x) => legs.every((b) => Math.abs(b - x) >= P.pitch) };
+        }).sort((p, q) => p.x - q.x);
+        if (its.every((u) => u.ok(u.x))) continue;
+        // nearest free spot for each, left to right; right to left if that runs out of room
+        const place = (list, dir) => {
+          let prev = dir * -Infinity;
+          for (const u of list) {
+            const lo = dir > 0 ? Math.max(g.l, prev + P.pitch) : g.l, hi = dir > 0 ? g.r : Math.min(g.r, prev - P.pitch);
+            if (lo > hi) return false;
+            let best = Math.min(hi, Math.max(lo, u.x));
+            for (let d = 0; d <= g.r - g.l; d++) {
+              const c = [u.x - d, u.x + d].find((x) => x >= lo && x <= hi && u.ok(x));
+              if (c !== undefined) { best = c; break; }
+            }
+            u.nx = best; prev = best;
+          }
+          return true;
+        };
+        if (place(its, 1) || place(its.slice().reverse(), -1)) its.forEach((u) => u.it.es.forEach((e) => { e.xs[t] = u.nx; }));
+      }
+    }
+    // a library port sits right under the arriving line whenever that is over the slab (no jog; a trunk is one port);
+    // a link arriving beside the slab lands at the nearest free spot, never pushing a straight one aside
+    for (const fn of F) {
+      const lo = fn.x + 16, hi = fn.x + fn.w - 16, routes = new Map();
+      for (const e of FE.filter((x) => x.b === fn.key)) {
+        const k = e.bun ? 'trunk' : e.id;
+        if (!routes.has(k)) routes.set(k, { x: e.xs[RL], es: [] });
+        routes.get(k).es.push(e);
+      }
+      const rs = [...routes.values()], taken = [];
+      const free = (x, m) => taken.every((t) => Math.abs(t - x) >= m);
+      for (const r of rs.filter((q) => q.x >= lo && q.x <= hi)) { r.p = r.x; taken.push(r.x); }
+      for (const r of rs.filter((q) => q.p === undefined).sort((p, q) => Math.abs(p.x - fn.cx) - Math.abs(q.x - fn.cx))) {
+        const t = Math.min(hi, Math.max(lo, r.x)), dir = r.x > hi ? -1 : 1;
+        r.p = t;
+        for (let x = t; x >= lo && x <= hi; x += 2 * dir) if (free(x, 16)) { r.p = x; break; }
+        taken.push(r.p);
+      }
+      rs.forEach((r) => r.es.forEach((e) => { e.xs[FL] = r.p; }));
+    }
+    // a link arriving on a block must not run down right beside another link leaving the tier above (the two read
+    // as one line that seems to flow into the wrong block): slide the block's ports along its top, together if that
+    // clears them, else one by one in order, until every arriving leg is a pitch clear of the departing ones; a
+    // small jog of a link onto its own departure line is straightened while at it
+    for (let t = 0; t < tiers - 1; t++) {
+      const thru = E.filter((e) => { const [ta, tb] = span(e); return ta <= t && tb >= t + 1; });
+      for (const n of t + 1 === FL ? F : R[t + 1]) {
+        const slab = n.kind === 'f', lo = n.x + (slab ? 16 : 10), hi = n.x + n.w - (slab ? 16 : 10), gap = slab ? 16 : P.pitch;
+        const ports = [];                  // links on one port (a library trunk) move together
+        for (const e of thru.filter((x) => x.b === n.key)) {
+          let p = ports.find((q) => Math.abs(q.x - e.xs[t + 1]) < 0.5);
+          if (!p) ports.push((p = { x: e.xs[t + 1], es: [] }));
+          p.es.push(e);
+        }
+        if (!ports.length) continue;
+        ports.sort((a, b) => a.x - b.x);
+        for (const p of ports) {
+          p.deps = thru.filter((e) => !p.es.includes(e)).map((e) => e.xs[t]);
+          p.own = p.es[0].xs[t];
+        }
+        const clear = (p, x) => p.deps.every((d) => Math.abs(d - x) >= P.pitch);
+        const snap = (p) => Math.abs(p.own - p.x) < P.pitch && clear(p, p.own);
+        if (ports.every((p) => clear(p, p.x) && (Math.abs(p.own - p.x) < 0.5 || Math.abs(p.own - p.x) >= P.pitch))) continue;
+        // together: the smallest shift that clears every port (a straight port is not bent)
+        let best = null;
+        for (let d = 0; d <= 26 && !best; d += 0.5) {
+          for (const s of d ? [-d, d] : [0]) {
+            const xs = ports.map((p) => p.x + s);
+            if (xs[0] < lo || xs[xs.length - 1] > hi) continue;
+            if (ports.every((p, i) => clear(p, xs[i]) && (!s || Math.abs(p.own - p.x) >= 0.5))) { best = xs; break; }
+          }
+        }
+        if (best) ports.forEach((p, i) => { p.x = best[i]; });
+        else {                             // one by one, nearest clear spot, keeping the order and a gap between ports
+          let prev = -Infinity;
+          ports.forEach((p, i) => {
+            const a = Math.max(lo, prev + gap), b = hi - (ports.length - 1 - i) * gap;
+            let x = Math.min(b, Math.max(a, p.x));
+            for (let d = 0; d <= hi - lo; d += 0.5) {
+              const c = [p.x - d, p.x + d].find((v) => v >= a && v <= b && clear(p, v));
+              if (c !== undefined) { x = c; break; }
+            }
+            p.x = x; prev = x;
+          });
+        }
+        ports.forEach((p, i) => {           // straighten a small jog when its own line is clear and in order
+          if (snap(p) && (i === 0 || p.own - ports[i - 1].x >= gap) && (i === ports.length - 1 || ports[i + 1].x - p.own >= gap) && p.own >= lo && p.own <= hi) p.x = p.own;
+          p.es.forEach((e) => { e.xs[t + 1] = p.x; });
+        });
+      }
+    }
+    gapTracks = []; gapSegs = [];
+    for (let t = 0; t < tiers - 1; t++) {
+      const groups = new Map();          // one run per link, or per library trunk
+      for (const e of E) {
+        const [ta, tb] = span(e);
+        if (ta > t || tb < t + 1) continue;
+        const k = e.bun ? `b${e.b}` : e.id;
+        if (!groups.has(k)) groups.set(k, { key: k, es: [], ups: [], downs: [], src: new Map(), dst: new Map() });
+        const g = groups.get(k);
+        g.es.push(e);
+        if (!g.ups.some((x) => Math.abs(x - e.xs[t]) < 0.5)) { g.ups.push(e.xs[t]); if (ta === t) g.src.set(e.xs[t], e.a); }
+        if (!g.downs.some((x) => Math.abs(x - e.xs[t + 1]) < 0.5)) { g.downs.push(e.xs[t + 1]); if (tb === t + 1) g.dst.set(e.xs[t + 1], e.b); }
+      }
+      const segs = [...groups.values()];
+      segs.forEach((s) => { s.from = new Set(s.src.values()); s.to = new Set(s.dst.values()); });
+      gapTracks.push(hierTracks(segs));
+      segs.forEach((s) => { if (s.lv !== undefined) s.es.forEach((e) => { e.lv[t] = s.lv; }); });
+      gapSegs.push(segs);
+    }
+    return gapSegs.reduce((a, segs) => a + segs.cost + straightCost(segs), 0);
+  };
+  // second pass: re-order each block's out-ports by the tracks their runs took (a run on a high track should leave
+  // from the end of the row it heads for, not pass right under the box through its siblings' legs); kept only if
+  // the drawing crosses less overall
+  const crossed = route(), order = new Map();
+  for (const n of N.values()) {
+    const t = n.t, segs = gapSegs[t] || [];
+    const outs = E.filter((e) => e.a === n.key).sort((p, q) => p.xs[t] - q.xs[t]);
+    const segOf = new Map(outs.map((e) => [e, segs.find((s) => s.es.includes(e))]));
+    const mov = outs.filter((e) => segOf.get(e)?.lv !== undefined);       // links that run sideways in this gap
+    if (mov.length < 2 || mov.length > 6) continue;
+    const slots = mov.map((e) => e.xs[t]);
+    const costOf = (perm) => {
+      const mod = new Map();
+      perm.forEach((e, i) => {
+        const s0 = segOf.get(e);
+        if (!mod.has(s0)) mod.set(s0, { ...s0, ups: s0.ups.slice(), src: new Map(s0.src) });
+        const m = mod.get(s0), j = m.ups.findIndex((x) => Math.abs(x - e.xs[t]) < 0.5);
+        m.src.delete(m.ups[j]); m.ups[j] = slots[i]; m.src.set(slots[i], n.key);
+      });
+      mod.forEach(hierSpan);
+      const all = segs.map((x) => mod.get(x) || x), done = new Set();
+      let c = 0;
+      for (const a of mod.values()) {
+        done.add(a);
+        for (const b of all) {
+          if (done.has(b)) continue;
+          if (b.lv === undefined) { if (b.hi - b.lo <= 0.5 && b.ups[0] > a.lo + 0.5 && b.ups[0] < a.hi - 0.5) c += a.from.has(b.src.get(b.ups[0])) ? 2 : 1; continue; }
+          c += a.lv < b.lv ? hierRunCost(a, b) : b.lv < a.lv ? hierRunCost(b, a) : 0;
+        }
+      }
+      return c;
+    };
+    const perms = (a) => (a.length <= 1 ? [a] : a.flatMap((v, i) => perms(a.filter((_, j) => j !== i)).map((q) => [v, ...q])));
+    let best = mov, bestC = costOf(mov);
+    for (const pm of perms(mov)) { const c = costOf(pm); if (c < bestC) { bestC = c; best = pm; } }
+    if (best !== mov) { let i = 0; order.set(n.key, outs.map((e) => (segOf.get(e)?.lv !== undefined ? best[i++] : e))); }
+  }
+  if (order.size && route(order) > crossed) route();
+  // slab text: name (+ counts when they fit beside it), description in up to two lines, users when only a few
+  for (const fn of F) {
+    const tw = fn.w - 32;
+    fn.lines = [];
+    fn.cntFits = hierTextW(fn.label, P.nameFs + 0.5, 700) + hierTextW(fn.cnt, P.subFs) + 40 <= fn.w;
+    if (!fn.cntFits) fn.lines.push(['h-fdesc', hierFit(fn.cnt, P.subFs, 400, tw)]);
+    if (fn.desc) hierWrap(fn.desc, P.subFs, 400, tw, 2).forEach((s) => fn.lines.push(['h-fdesc', s]));
+    if (fn.who) hierWrap(fn.who, P.subFs, 400, tw, 2).forEach((s) => fn.lines.push(['h-fwho', s]));
+  }
+  const slabBody = (n) => 36 + 17 * n;               // name line + n more lines
+  P.slabH = slabBody(Math.max(1, ...F.map((fn) => fn.lines.length)));
+
+  /* ---- y: rows and the routing gaps between them */
+  const rowH = (t) => (t === FL ? P.slabH + P.depth : P.h[t] + (R[t].some((n) => n.group) ? 8 : 0));
+  const top = 22, bot = 22, padT = 18, padB = 24;
+  const rowTop = [], gapH = [];
+  let y = top;
+  for (let t = 0; t < tiers; t++) {
+    rowTop[t] = y; y += rowH(t);
+    if (t < tiers - 1) { const nl = gapTracks[t]; gapH[t] = Math.max(P.gapH, padT + padB + Math.max(0, nl - 1) * P.pitch); y += gapH[t]; }
+  }
+  const H = Math.ceil(y + bot);
+  const trackY = (t, lv) => {
+    const nl = gapTracks[t], free = gapH[t] - (nl - 1) * P.pitch;
+    return rowTop[t] + rowH(t) + (free * padT) / (padT + padB) + lv * P.pitch;
+  };
+  const yIn = (k) => rowTop[byKey(k).t];
+  const yOut = (n) => rowTop[n.t] + P.h[n.t] + (n.group ? 8 : 0);
+
+  /* ---- texts shared by tooltips, the caption and the list */
+  const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : band[t] === 0 ? 'Systems' : band[t] === L ? 'Building blocks' : 'Sub-systems');
+  const techs = [...new Set(F.map((fn) => fn.f.technology).filter(Boolean))].map((x) => techLabel(x).replace(/\s*\(.*\)\s*$/, '')).join(', ');
+  const tierDesc = (t) => (t === FL ? 'Technology libraries' : L === 0 ? 'Standalone generators' : band[t] === 0 ? 'Built from blocks below' : band[t] === L ? 'Reusable analog cells' : 'Built from blocks, reused above');
+  const tierMeta = (t) => {
+    if (t === FL) return `${techs ? `${techs} · ` : ''}${plural(F.length, 'library', 'libraries')}`;
+    const ns = R.filter((_, r) => band[r] === band[t]).flat(), gens = ns.reduce((a, n) => a + n.ids.length, 0);
+    return `${plural(gens, 'generator')} · ${fmtN(ns.reduce((a, n) => a + n.count, 0))} designs`;
+  };
+  // roles of library links, grouped role -> component ids (the members of a group may differ)
+  const byRole = (use) => {
+    const m = new Map();
+    for (const [id, s] of use) for (const r of s.size ? s : ['no role given']) { if (!m.has(r)) m.set(r, []); m.get(r).push(id); }
+    return m;
+  };
+  const why = (e) => {             // how A is built from B, in one line
+    if (e.kind === 'c') return `${e.users ? `${plural(e.users, 'design')} reuse ${fmtN(e.targets)}` : 'reused'}${e.roles.size ? ` — ${[...e.roles].join('; ')}` : ''}`;
+    const a = byKey(e.a), m = byRole(e.mem);
+    const roles = [...m].map(([r, ids]) => (a.group && m.size > 1 ? `${names(ids).join(', ')}: ${r}` : r)).join('; ');
+    return a.group ? `${e.mem.size === a.ids.length ? 'all' : `${e.mem.size} of`} ${plural(a.ids.length, 'generator')}: ${roles}` : roles;
+  };
+  const edgeTip = (e) => {
+    const a = byKey(e.a), b = byKey(e.b);
+    if (e.kind === 'c') {
+      const roles = [...e.roles];
+      return `${a.label} · built from ${b.label}${e.users ? `: ${plural(e.users, 'design')} reuse ${plural(e.targets, `${b.label} design`)} (whole catalog)` : ''}${roles.length ? `\nroles: ${roles.join('; ')}` : ''}`;
+    }
+    const mem = [...e.mem.entries()], roleTxt = (s) => ([...s].length ? [...s].join('; ') : 'no role given');
+    if (a.group) return `${a.label} · built from ${b.label} (${mem.length} of ${plural(a.ids.length, 'generator')})\n${mem.map(([id, s]) => `• ${byId[id]?.name || id}: ${roleTxt(s)}`).join('\n')}`;
+    return `${a.label} · built from ${b.label}${mem.length ? `\nrole: ${roleTxt(mem[0][1])}` : ''}`;
+  };
+  const info = (HIER.info = new Map());   // caption per block / link / trunk (shown on hover and keyboard focus)
+  const item = (label, txt) => `<b>${esc(label)}</b>${txt ? `: ${esc(txt)}` : ''}`;
+  const items = (list, max = 600) => {     // " · "-joined caption items, cut (whole items) when they get long
+    let out = '', n = 0;
+    for (const [label, txt] of list) {
+      if (n && n + label.length + txt.length > max) return `${out} · …`;
+      out += `${n ? ' · ' : ''}${item(label, txt)}`; n += label.length + txt.length + 3;
+    }
+    return out;
+  };
+
+  /* ---- markup: bands and tier labels (the gutter is its own SVG, pinned while the panel scrolls sideways) */
+  const edgeY = (t) => {      // band boundary: mid-gap, nudged so it falls between two routing tracks rather than on one
+    const mid = rowTop[t] + rowH(t) + gapH[t] / 2, nl = gapTracks[t];
+    if (!nl) return mid;
+    let b = mid, d = Infinity;
+    for (let i = -1; i < nl; i++) { const yy = trackY(t, i) + P.pitch / 2; if (Math.abs(yy - mid) < d) { d = Math.abs(yy - mid); b = yy; } }
+    return Math.abs(trackY(t, 0) - mid) < P.pitch / 2 || Math.abs(trackY(t, nl - 1) - mid) < P.pitch / 2 || (trackY(t, 0) < mid && trackY(t, nl - 1) > mid) ? b : mid;
+  };
+  const bandTop = (t) => (t === 0 ? 0 : edgeY(t - 1));
+  const bandBot = (t) => (t === tiers - 1 ? H : edgeY(t));
+  const groups = [];                    // bands: [first row, last row] of each tier
+  for (let t = 0; t < tiers; t++) {
+    if (t && t < FL && band[t] === band[t - 1]) groups[groups.length - 1][1] = t; else groups.push([t, t]);
+  }
+  const bands = (sfx, hatch) => {
+    let s = F.length && hatch ? `<defs><pattern id="h-hatch-${sfx}" class="h-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0,0 V7"/></pattern></defs>` : '';
+    groups.forEach(([t, t1], i) => {
+      const y0 = bandTop(t), y1 = bandBot(t1), box = `x="0" y="${f1(y0)}" width="${W}" height="${f1(y1 - y0)}"`;
+      s += `<rect class="h-band${t === FL ? ' base' : i % 2 ? ' alt' : ''}" ${box}/>`;
+      if (t === FL && hatch) s += `<rect fill="url(#h-hatch-${sfx})" ${box}/>`;      // faint substrate hatch under the libraries
+      if (i) s += `<line class="h-sep" x1="0" x2="${W}" y1="${f1(y0)}" y2="${f1(y0)}"/>`;
+    });
+    return s;
+  };
+  let gutter = '';
+  for (const [t, t1] of groups) {
+    const y0 = bandTop(t), y1 = bandBot(t1), cy = (rowTop[t] + rowTop[t1] + (t === FL ? P.slabH : P.h[t1])) / 2;
+    if (P.wide) {
+      const gw = P.gut - 34, meta = tierMeta(t);
+      const desc = hierWrap(tierDesc(t), 12, 400, gw, 2);
+      const metas = hierTextW(meta, 11) <= gw ? [meta] : meta.split(' · ').map((m) => hierFit(m, 11, 400, gw));
+      const lines = [[hierFit(tierName(t), 11, 700, gw - 12), 'h-tier'], ...desc.map((d) => [d, 'h-tdesc']), ...metas.map((m) => [m, 'h-tmeta'])];
+      const lh = (l) => (l[1] === 'h-tier' ? 17 : 15);
+      let yy = cy - lines.reduce((a, l) => a + lh(l), 0) / 2 + 11;
+      gutter += lines.map((l) => { const s = `<text class="${l[1]}" x="20" y="${f1(yy)}">${esc(l[0])}</text>`; yy += lh(l); return s; }).join('');
+    } else {
+      gutter += `<text class="h-tier" transform="translate(${P.gut / 2 + 4},${f1((y0 + y1) / 2)}) rotate(-90)" text-anchor="middle">${esc(hierFit(tierName(t), 10.5, 700, y1 - y0 - 12))}</text>`;
+    }
+    // a tier wrapped onto several rows: a bracket spans its rows, so the lower one does not read as a deeper tier
+    if (t1 > t && t !== FL) {
+      const bx = P.wide ? 9 : 5, b0 = rowTop[t] - 2, b1 = rowTop[t1] + rowH(t1) + 2;
+      gutter += `<path class="h-brace" d="M${bx + 4},${f1(b0)} H${bx} V${f1(b1)} H${bx + 4}"/>`;
+    }
+  }
+  gutter += `<line class="h-gline" x1="${P.gut - 0.5}" x2="${P.gut - 0.5}" y1="${P.wide ? 14 : 10}" y2="${H - (P.wide ? 14 : 10)}"/>`;
+
+  // edges: library links underneath, generator links on top (stroke width grows with the designs that reuse the block)
+  const maxU = Math.max(1, ...CE.map((e) => e.users));
+  const edgeSvg = (e) => {
+    const [ta, tb] = span(e), a = byKey(e.a);
+    const pts = [[e.xs[ta], yOut(a)]];
+    for (let t = ta; t < tb; t++) {
+      const x1 = e.xs[t], x2 = e.xs[t + 1];
+      if (Math.abs(x1 - x2) > 0.5) { const yy = trackY(t, e.lv[t] || 0); pts.push([x1, yy], [x2, yy]); }
+    }
+    const xe = e.xs[tb], ye = yIn(e.b), d = hierPath([...pts, [xe, ye - 6.5]], P.r);
+    const sw = e.kind === 'c' ? ` style="--sw:${f1(1.25 + Math.sqrt(e.users / maxU))}px"` : '';
+    info.set(e.id, `<b>${esc(a.label)}</b> · built from <b>${esc(byKey(e.b).label)}</b>: ${esc(why(e))}`);
+    return `<g class="h-edge${e.kind === 'f' ? ' f' : ''}" data-id="${e.id}" data-a="${esc(e.a)}" data-b="${esc(e.b)}"${sw}><title>${esc(edgeTip(e))}</title>
+      <path class="h-hit" d="${d}"/><path class="h-e" d="${d}"/><circle class="h-pin" cx="${f1(pts[0][0])}" cy="${f1(pts[0][1])}" r="2.3"/>
+      <path class="h-ah" d="M${f1(xe - 3.6)},${f1(ye - 7.5)} L${f1(xe + 3.6)},${f1(ye - 7.5)} L${f1(xe)},${f1(ye - 0.5)} Z"/></g>`;
+  };
+  // a library trunk: pointing at the shared part traces every link in it
+  const trunkSvg = (fn) => {
+    const es = FE.filter((e) => e.b === fn.key && e.bun);
+    if (es.length < 2) return '';
+    const t0 = Math.min(...es.map((e) => byKey(e.a).t)), seg = (t) => gapSegs[t].find((s) => s.key === `b${fn.key}`);
+    const runs = [];
+    let s = seg(t0), yy = s.lv !== undefined ? trackY(t0, s.lv) : rowTop[t0] + rowH(t0);
+    if (s.lv !== undefined) runs.push(`M${f1(s.lo)},${f1(yy)} H${f1(s.hi)}`);
+    const pts = [[s.downs[0], yy]];
+    for (let t = t0 + 1; t <= RL; t++) {
+      s = seg(t);
+      if (s.lv === undefined) continue;
+      yy = trackY(t, s.lv);
+      runs.push(`M${f1(s.lo)},${f1(yy)} H${f1(s.hi)}`);
+      pts.push([pts[pts.length - 1][0], yy], [s.downs[0], yy]);
+    }
+    pts.push([es[0].xs[FL], rowTop[FL] - 6.5]);
+    const who = es.map((e) => byKey(e.a).label);
+    info.set(`b${fn.key}`, `<b>${esc(and(who))}</b> are built from <b>${esc(fn.label)}</b> (one shared trunk)<br>${items(es.map((e) => [byKey(e.a).label, cut(why(e), 110)]))}`);
+    const tip = `${and(who)} are built from ${fn.label} (one shared trunk)\n${es.map((e) => `• ${byKey(e.a).label}: ${why(e)}`).join('\n')}`;
+    return `<g class="h-bun" data-id="b${esc(fn.key)}" data-es="${es.map((e) => e.id).join(' ')}"><title>${esc(tip)}</title><path class="h-hit" d="${runs.join(' ')} ${hierPath(pts, P.r)}"/></g>`;
+  };
+  const edgesSvg = [...FE, ...CE].map(edgeSvg).join('') + F.map(trunkSvg).join('');
+
+  // component nodes (links to their tab; a group opens its first member, the caption and list name them all)
+  const outsOf = (k) => E.filter((e) => e.a === k);
+  const insOf = (k) => E.filter((e) => e.b === k);
+  const nodeSvg = (n) => {
+    const c0 = byId[n.ids[0]], y0 = rowTop[n.t], h = P.h[n.t], w = n.w, x = n.x;
+    const from = outsOf(n.key), usedE = insOf(n.key), used = usedE.map((e) => byKey(e.a).label);
+    const tip = (n.group ? `${n.label}: ${plural(n.ids.length, 'generator')}\n${names(n.ids).join(', ')}` : `${n.label} — ${c0.title}`) +
+      `\n${fmtN(n.count)} designs with the current options` + (from.length ? `\nbuilt from: ${from.map((e) => byKey(e.b).label).join(', ')}` : '') + (used.length ? `\nused in: ${used.join(', ')}` : '');
+    // the screen-reader label carries what the link tooltips show on hover (reuse counts, roles)
+    const fromTxt = from.map((e) => `${byKey(e.b).label} (${why(e)})`);
+    const aria = `${n.label}, ${tierName(n.t)} tier: ${fmtN(n.count)} designs${n.group ? `, ${n.ids.length} generators (${names(n.ids).join(', ')})` : ''}.` +
+      (fromTxt.length ? ` Built from ${fromTxt.join('; ')}.` : '') + (used.length ? ` Used in ${and(used)}.` : '');
+    info.set(n.key, [`<b>${esc(n.label)}</b> · ${n.group ? `${plural(n.ids.length, 'generator')} (${esc(names(n.ids).join(', '))}) · ` : ''}${plural(n.count, 'design')}`,
+      from.length ? `Built from ${items(from.map((e) => [byKey(e.b).label, cut(why(e), 120)]))}` : '',
+      used.length ? `Used in ${items(usedE.map((e) => [byKey(e.a).label, cut(why(e), 80)]))}` : ''].filter(Boolean).join('<br>'));
+    const stack = n.group ? `<rect class="h-stack" x="${f1(x + 8)}" y="${f1(y0 + 8)}" width="${f1(w)}" height="${h}" rx="9"/><rect class="h-stack" x="${f1(x + 4)}" y="${f1(y0 + 4)}" width="${f1(w)}" height="${h}" rx="9"/>` : '';
+    const nm = P.names(n), lh = P.nameFs + 2.5, ny = y0 + h / 2 - 2 - ((nm.length - 1) * lh) / 2, sy = ny + (nm.length - 1) * lh + 16;
+    return `<a class="h-node t${band[n.t] === 0 && L > 0 ? ' top' : ''}" data-k="${esc(n.key)}" href="${tabHref(n.ids[0])}" aria-label="${esc(aria)}"><title>${esc(tip)}</title>
+      <rect class="h-ring" x="${f1(x - 4)}" y="${f1(y0 - 4)}" width="${f1(w + 8 + (n.group ? 8 : 0))}" height="${h + 8 + (n.group ? 8 : 0)}" rx="12"/>${stack}
+      <rect class="h-box" x="${f1(x)}" y="${f1(y0)}" width="${f1(w)}" height="${h}" rx="9"/>
+      ${nm.map((s, i) => `<text class="h-name" x="${f1(n.cx)}" y="${f1(ny + i * lh)}">${esc(hierFit(s, P.nameFs, 700, w - 18))}</text>`).join('')}
+      <text class="h-sub" x="${f1(n.cx)}" y="${f1(sy)}">${esc(hierFit(subOf(n, P), P.subFs, 400, w - 16))}</text></a>`;
+  };
+  // foundation slabs (not tabs: focusable for the trace, tooltip and caption list the users and their roles)
+  const slabSvg = (fn) => {
+    const y0 = rowTop[FL], h = P.slabH, x = fn.x, w = fn.w, used = [...fn.use.keys()];
+    const tech = fn.f.technology ? techLabel(fn.f.technology) : '';
+    const tip = `${fn.label} — ${fn.f.title || ''}${tech ? `\ntechnology: ${tech}` : ''}\n` +
+      (used.length ? `used by ${plural(used.length, 'generator')}, which ${used.length === 1 ? 'has' : 'have'} ${plural(fn.designs, 'design')} with the current options:\n${[...fn.use].map(([id, s]) => `• ${byId[id]?.name || id}${byId[id]?.group ? ` (${byId[id].group})` : ''}: ${[...s].join('; ') || 'no role given'}`).join('\n')}` : 'not used by any generator yet');
+    const aria = `${fn.label}, foundation library${tech ? ` (${tech})` : ''}${fn.desc ? `: ${fn.desc}` : ''}. ${used.length ? `Used by ${plural(used.length, 'generator')} with ${plural(fn.designs, 'design')}: ${[...fn.use].map(([id, s]) => `${byId[id]?.name || id}${s.size ? ` as ${[...s].join('; ')}` : ''}`).join(', ')}` : 'Not used by any generator yet'}.`;
+    info.set(fn.key, `<b>${esc(fn.label)}</b>${fn.desc ? ` · ${esc(fn.desc)}` : ''} · ${used.length ? `used by ${plural(used.length, 'generator')} (${plural(fn.designs, 'design')})<br>${items([...byRole(fn.use)].map(([r, ids]) => [names(ids).join(', '), r]), 420)}` : 'not used by any generator yet'}`);
+    let yy = y0 + 23 + (h - slabBody(fn.lines.length)) / 2;
+    let txt = `<text class="h-fname" x="${f1(x + 16)}" y="${f1(yy)}">${esc(hierFit(fn.label, P.nameFs + 0.5, 700, w - 32))}</text>`;
+    if (fn.cntFits) txt += `<text class="h-fcount" x="${f1(x + w - 16)}" y="${f1(yy)}">${esc(fn.cnt)}</text>`;
+    for (const [cls, s] of fn.lines) { yy += 17; txt += `<text class="${cls}" x="${f1(x + 16)}" y="${f1(yy)}">${esc(s)}</text>`; }
+    return `<g class="h-node h-found${used.length ? '' : ' unused'}" data-k="${esc(fn.key)}" tabindex="0" role="graphics-symbol" aria-label="${esc(aria)}"><title>${esc(tip)}</title>
+      <rect class="h-ring" x="${f1(x - 4)}" y="${f1(y0 - 4)}" width="${f1(w + 8)}" height="${h + P.depth + 8}" rx="12"/>
+      <rect class="h-slab-side" x="${f1(x)}" y="${f1(y0 + P.depth)}" width="${f1(w)}" height="${h}" rx="8"/>
+      <rect class="h-slab" x="${f1(x)}" y="${f1(y0)}" width="${f1(w)}" height="${h}" rx="8"/>${txt}</g>`;
+  };
+  const nodesSvg = R.flat().map(nodeSvg).join('') + F.map(slabSvg).join('');
+
+  /* ---- legend, caption and the same content as a list */
+  const key = (cls) => `<svg class="h-key${cls}" viewBox="0 0 30 10" width="30" height="10" aria-hidden="true"><path class="h-e" d="M3,5 H22"/><circle class="h-pin" cx="3" cy="5" r="2.3"/><path class="h-ah" d="M22,1.4 L29,5 L22,8.6 Z"/></svg>`;
+  const widths = `<svg class="h-key" viewBox="0 0 30 10" width="30" height="10" aria-hidden="true"><path class="h-e" d="M1,2.5 H29" style="--sw:1.25px"/><path class="h-e" d="M1,7.5 H29" style="--sw:2.25px"/></svg>`;
+  const legend = (CE.length ? `<span>${key('')}built from a generator</span>` : '') +
+    (CE.length > 1 && new Set(CE.map((e) => e.users)).size > 1 ? `<span>${widths}thicker: more designs reuse it</span>` : '') +
+    (FE.length ? `<span>${key(' f')}built from a foundation library</span>` : '');
+  HIER.hint = `${W > avail + 1 ? 'Scroll sideways for the whole diagram. ' : ''}Point at a block or a link, or Tab to a block, to trace it and read how it is built here; click a block to open its tab. Design counts follow the global options${CE.length ? '; reuse counts on links cover the whole catalog' : ''}.`;
+  const lnk = (n) => (n.kind === 'f' ? `<b>${esc(n.label)}</b>` : `<a href="${tabHref(n.ids[0])}">${esc(n.label)}</a>`);
+  const listNode = (n) => {
+    const from = outsOf(n.key), used = insOf(n.key);
+    return `<li>${lnk(n)} <span class="subtle">${n.group ? `${plural(n.ids.length, 'generator')} · ` : ''}${plural(n.count, 'design')}</span>` +
+      (n.group ? `<div>${n.ids.map((id) => `<a href="${tabHref(id)}">${esc(byId[id].name)}</a> <span class="subtle">${fmtN(shownRows(byId[id]).length)}</span>`).join(', ')}</div>` : '') +
+      (from.length ? `<div>built from ${from.map((e) => `${lnk(byKey(e.b))} <span class="subtle">(${esc(why(e))})</span>`).join(', ')}</div>` : '') +
+      (used.length ? `<div>used in ${used.map((e) => `${lnk(byKey(e.a))} <span class="subtle">(${esc(why(e))})</span>`).join(', ')}</div>` : '') + '</li>';
+  };
+  const listSlab = (fn) => `<li><b>${esc(fn.label)}</b> <span class="subtle">${esc(fn.f.title || '')}${fn.f.technology ? ` · ${esc(techLabel(fn.f.technology))}` : ''}</span>` +
+    `<div>${fn.use.size ? `used by ${plural(fn.use.size, 'generator')} (${plural(fn.designs, 'design')}):` : 'not used by any generator yet'}</div>` +
+    (fn.use.size ? `<ul>${[...byRole(fn.use)].map(([r, ids]) => `<li>${ids.map((id) => `<a href="${tabHref(id)}">${esc(byId[id]?.name || id)}</a>`).join(', ')}: ${esc(r)}</li>`).join('')}</ul>` : '') + '</li>';
+  const tierRows = groups.filter(([t]) => t !== FL).map(([t, t1]) => [tierName(t), R.slice(t, t1 + 1).flat()]);
+  const list = tierRows.map(([name, ns]) => `<li class="h-lt">${name}<ul class="hlist">${ns.map(listNode).join('')}</ul></li>`).join('') +
+    (F.length ? `<li class="h-lt">Foundation<ul class="hlist">${F.map(listSlab).join('')}</ul></li>` : '');
+  const label = `Block hierarchy diagram, ${groups.length} tiers from top to bottom: ${tierRows.map(([name, ns]) => `${name} (${ns.map((n) => n.label).join(', ')})`).join('; ')}${F.length ? `; Foundation (${F.map((f) => f.label).join(', ')})` : ''}. Arrows point from a block to what it is built from; focus a block for details.`;
+  requestAnimationFrame(hierCaptionFit);        // once the section is on the page
+  return `<section class="panel hier"><div class="section-head"><h2>Block hierarchy</h2><span class="subtle h-legend">${legend}</span></div>
+    <div class="table-scroll h-scroll" style="scroll-padding-left:${P.gut}px"><div class="h-wrap" style="width:${W}px">
+      <svg class="h-gsvg${P.wide ? '' : ' compact'}" viewBox="0 0 ${P.gut} ${H}" width="${P.gut}" height="${H}" aria-hidden="true" focusable="false">${bands('g', false)}${gutter}</svg>
+      <svg class="hsvg${P.wide ? '' : ' compact'}" viewBox="${P.gut} 0 ${W - P.gut} ${H}" width="${W - P.gut}" height="${H}" role="group" aria-label="${esc(label)}">${bands('m', true)}<g class="h-edges">${edgesSvg}</g><g class="h-lit" aria-hidden="true"></g>${nodesSvg}</svg>
+    </div></div>
+    <p class="h-info">${HIER.hint}</p>
+    <details class="hmore h-more"><summary>Read the hierarchy as a list</summary>
+      <p class="subtle h-note">Design counts follow the global options; “N designs reuse M” counts every design in the catalog.</p><ul class="h-list">${list}</ul></details></section>`;
 }
+/** with a mouse, the caption keeps room for its longer texts at the current width (up to three lines), so the page
+    below rarely moves while the pointer crosses the diagram; touch screens keep the CSS minimum */
+function hierCaptionFit() {
+  const cap = document.querySelector('section.hier .h-info');
+  if (!cap || !matchMedia('(any-hover: hover)').matches) return;
+  const probe = cap.cloneNode(false);
+  probe.style.cssText = `position:absolute;left:0;top:0;visibility:hidden;min-height:0;margin:0;width:${cap.getBoundingClientRect().width}px`;
+  cap.after(probe);
+  let h = 0;
+  for (const html of [HIER.hint, ...HIER.info.values()]) { probe.innerHTML = html; h = Math.max(h, probe.getBoundingClientRect().height); }
+  probe.remove();
+  if (h) cap.style.minHeight = `${Math.ceil(Math.min(h, 3 * (parseFloat(getComputedStyle(cap).lineHeight) || 19)))}px`;
+}
+/* hover / keyboard focus on a block, link or trunk highlights its links and neighbours and fills the caption;
+   re-layout on width changes */
+(function hierInit() {
+  let hov = null, foc = null;
+  const pick = (el) => (el && el.closest ? el.closest('svg.hsvg .h-node, svg.hsvg .h-edge, svg.hsvg .h-bun') : null);
+  const paint = () => {
+    for (const svg of document.querySelectorAll('svg.hsvg')) {
+      const el = hov && svg.contains(hov) ? hov : foc && svg.contains(foc) ? foc : null;
+      svg.querySelectorAll('.on, .nb').forEach((x) => x.classList.remove('on', 'nb'));
+      svg.classList.toggle('hl', !!el);
+      const cap = svg.closest('.hier')?.querySelector('.h-info'), top = svg.querySelector('.h-lit');
+      if (cap) cap.innerHTML = (el && HIER.info.get(el.dataset.k || el.dataset.id)) || HIER.hint;
+      top?.replaceChildren();
+      if (!el) continue;
+      el.classList.add('on');
+      const edges = [...svg.querySelectorAll('.h-edges .h-edge')];
+      const node = (k) => svg.querySelector(`.h-node[data-k="${CSS.escape(k)}"]`);
+      const lit = (g) => { if (!g) return; g.classList.add('on'); node(g.dataset.a)?.classList.add('nb'); node(g.dataset.b)?.classList.add('nb'); };
+      if (el.classList.contains('h-bun')) { const ids = el.dataset.es.split(' '); edges.filter((g) => ids.includes(g.dataset.id)).forEach(lit); }
+      else if (el.classList.contains('h-edge')) lit(el);
+      else {
+        const k = el.dataset.k;
+        edges.forEach((g) => {
+          if (g.dataset.a !== k && g.dataset.b !== k) return;
+          g.classList.add('on');
+          node(g.dataset.a === k ? g.dataset.b : g.dataset.a)?.classList.add('nb');
+        });
+      }
+      // the whole link layer dims at once (a trunk drawn by several links fades like one line) and the traced
+      // links are drawn again on top of it
+      top?.replaceChildren(...edges.filter((g) => g.classList.contains('on')).map((g) => {
+        const c = g.cloneNode(true);
+        c.querySelectorAll('title, .h-hit').forEach((x) => x.remove());
+        return c;
+      }));
+    }
+  };
+  document.addEventListener('mouseover', (e) => { const t = pick(e.target); if (t !== hov) { hov = t; paint(); } });
+  document.addEventListener('mouseout', (e) => { if (!e.relatedTarget && hov) { hov = null; paint(); } });
+  document.addEventListener('focusin', (e) => {
+    const t = pick(e.target);
+    // the browser scrolls a focused SVG element into view only when it is completely hidden: bring a block that the
+    // panel's sideways scroll cuts off fully into view (the scroll padding keeps it clear of the pinned gutter)
+    const sc = t && !HIER.quiet && t.closest('.h-scroll');
+    // a block wider than the visible part shows its left end (its name) rather than its right end
+    if (sc) t.scrollIntoView({ block: 'nearest', inline: t.getBoundingClientRect().width > sc.clientWidth - 40 ? 'start' : 'nearest' });
+    if (t !== foc) { foc = t; paint(); }
+  });
+  document.addEventListener('focusout', (e) => { if (!e.relatedTarget && foc) { foc = null; paint(); } });
+  const relayout = debounce(() => {
+    const sec = document.querySelector('section.hier');
+    if (!sec || !CAT || Math.abs(hierAvail() - HIER.avail) < 1) return;
+    const sl = sec.querySelector('.h-scroll')?.scrollLeft || 0, open = sec.querySelector('details')?.open;
+    const fk = sec.contains(document.activeElement) ? document.activeElement.dataset?.k : null;
+    sec.outerHTML = hierarchyHtml();
+    const ns = document.querySelector('section.hier');
+    if (!ns) return;
+    const sc = ns.querySelector('.h-scroll');
+    if (sc) sc.scrollLeft = sl;
+    if (open) ns.querySelector('details').open = true;
+    HIER.quiet = true;                    // put focus back where it was, without scrolling
+    if (fk) ns.querySelector(`.h-node[data-k="${CSS.escape(fk)}"]`)?.focus({ preventScroll: true });
+    HIER.quiet = false;
+  }, 80);
+  try { new ResizeObserver(relayout).observe($('#main')); } catch (e) { window.addEventListener('resize', relayout); }
+})();
 
 /* ------------------------------------------------------------------ overview */
 async function renderOverview(main) {

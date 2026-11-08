@@ -9,6 +9,47 @@
   "technologies": {
     "gf180mcuD": "GF180MCU-D (180 nm, 5LM)"
   },
+  "foundations": [
+    {
+      "id": "pcells",
+      "name": "PDK PCells",
+      "technology": "gf180mcuD",
+      "title": "GF180MCU-D primitive devices (MOSFETs, capacitors, resistors, varactors) — 3.3/5/6 V and native MOSFETs, MIM capacitors, poly and diffusion resistors, MOS varactors, laid out with gLayout primitives or drawn by the generator on the PDK layers (as are the MOM finger capacitors)",
+      "used_by": {
+        "switch": "3.3/6 V, native and deep-n-well MOSFETs, MIM caps (gLayout primitives)",
+        "sa": "3.3/6 V and native MOSFETs, deep n-well (drawn by the generator with klayout.db)",
+        "ls": "3.3 V, native, deep-n-well MOSFETs, MIM caps, poly resistors (gLayout + drawn)",
+        "opa": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
+        "aux": "PDK MOSFETs, laid out with gLayout",
+        "aux-ro": "3.3 V MOSFETs, MIM load caps (gLayout primitives)",
+        "aux-tcap": "3.3 V switch MOSFETs, MIM/MOM caps, MOS varactors (gLayout)",
+        "aux-tres": "3.3 V NMOS switches, triode-MOS and ppolyf_u_1k / pplus_u resistors (gLayout)",
+        "aux-cm_idac": "3.3 V MOSFET mirrors and current DACs (gLayout finger_sequence_cell)",
+        "aux-dco_vco": "3.3 V MOSFETs, MIM caps, MOS varactors, high-R poly resistors (gLayout)",
+        "aux-cml_ro": "3.3 V MOSFETs, high-R poly or triode-PMOS loads, VCO MOS varactor (gLayout)",
+        "aux-cml_dco_vco": "3.3 V MOSFETs, PMOS or high-R poly loads, MOS varactors (gLayout)",
+        "aux-clk_div": "3.3 V MOSFET TSPC/C2MOS/CML logic, high-R poly loads (gLayout)",
+        "aux-vref_2t": "3.3/5/6 V and native MOSFETs (generator-drawn gLayout cells)",
+        "aux-bm_iref": "3.3 V MOSFETs, ppolyf_u_1k / pplus_u resistors (gLayout)",
+        "aux-delay_line": "3.3 V MOSFETs, MIM load caps, high-R poly resistors (gLayout)",
+        "aux-static_dac": "3.3 V MOSFETs, MOS diode strings, ppolyf_u_1k R-string / R-2R ladders (gLayout)",
+        "ldo": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
+        "ecg": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
+        "sar": "3.3/6 V MOSFETs, MIM and MOM finger caps (CDAC drawn with gdstk)",
+        "sdm": "3.3 V MOSFETs, MIM and MOM caps (cap array drawn with gdstk)"
+      }
+    },
+    {
+      "id": "stdcell",
+      "name": "Stdcell",
+      "technology": "gf180mcuD",
+      "title": "gf180mcu_fd_sc_mcu7t5v0 standard cells — the 7-track GF180MCU digital library, used for the controller and decimator logic inside ADC generators",
+      "used_by": {
+        "sar": "mcu7t5v0 cells in SAR logic (UHS/LU2G: custom cells); layout: placeholders",
+        "sdm": "sdm2bin decimator: mcu7t5v0 cells synthesised with Yosys, placed with OpenROAD"
+      }
+    }
+  ],
   "exclude": [
     "**/*.gds",
     "**/*layout*.svg",

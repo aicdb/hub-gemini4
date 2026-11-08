@@ -12,6 +12,11 @@ One GitHub Pages site for every analog generator repo: **<https://aicdb.github.i
   (pre-PEX / partial post-PEX / full post-PEX, with optional fallback to an earlier stage),
   **V<sub>DD</sub>**, **verification** (DRC+LVS / PVT-robust) and a search box that spans
   all components.
+- The overview draws the **block hierarchy**: systems built from reusable blocks (declared by
+  each repo, [BUILDERS.md §4.5](BUILDERS.md#45-block-hierarchy-reuse-between-components)) above
+  a **foundation** tier of technology libraries, *PDK PCells* and *Stdcell*. The foundation
+  tier is hub-side metadata in `sources.json` → `foundations`: each library lists the
+  components that build on it, with a one-line role.
 - The hub hosts only what it displays. Layouts are shown as thumbnails rendered from the GDS
   at build time; GDS files, netlists and evidence JSON link to the raw file in the
   **private** source repository, pinned to the exported commit.
@@ -55,7 +60,8 @@ interface) and **[BUILDERS.md](BUILDERS.md)** (export contract). In short: `make
    `gh secret set HUB_SOURCES_TOKEN -R aicdb/hub-gemini4`.
 2. Settings → Pages → Source: **GitHub Actions** (already set).
 3. **Adding a generator:** append it to `sources.json`. Add a technology label there too if
-   it uses a new PDK.
+   it uses a new PDK, and add the generator to `used_by` of each `foundations` library it
+   builds on.
 
 ## Local build
 

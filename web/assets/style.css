@@ -337,17 +337,69 @@ nav.tabs a.grouped { padding-left: 8px; padding-right: 8px; }
 .ovgrid > .ovgroup:empty { margin: 0; height: 0; }
 
 /* ---------- block hierarchy ---------- */
-.hier svg.hsvg { width: 100%; min-width: 720px; height: auto; display: block; }
-.h-node rect { fill: var(--paper); stroke: var(--line); stroke-width: 1.2; }
-.h-node rect.h-bar { fill: var(--brand); stroke: none; }
-.h-node:hover rect:not(.h-bar) { stroke: var(--accent); stroke-width: 2; }
-.h-node text { text-anchor: middle; }
-.h-name { fill: var(--ink); font-weight: 700; font-size: 14px; }
-.h-sub { fill: var(--muted); font-size: 11px; }
-.h-lvl { fill: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
-.h-edge { fill: none; stroke: var(--accent); opacity: 0.55; }
-.h-edge:hover { opacity: 1; }
-.h-arrow { fill: var(--accent); }
+.hier { --h-node-line: color-mix(in srgb, var(--muted) 68%, transparent); --h-flink: color-mix(in srgb, var(--muted) 75%, var(--paper)); }
+.hier .h-scroll { overflow-x: auto; overflow-y: hidden; border-radius: 10px; }
+.h-wrap { display: flex; }
+.h-wrap > svg { display: block; flex: none; max-width: none; font-family: inherit; }
+.h-gsvg { position: sticky; left: 0; z-index: 1; }   /* tier names stay in view while the drawing scrolls */
+.h-legend { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.h-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.h-key { flex: none; }
+.h-band { fill: var(--paper); }
+.h-band.alt { fill: color-mix(in srgb, var(--soft) 55%, var(--paper)); }
+.h-band.base { fill: var(--soft); }
+.h-hatch path { stroke: color-mix(in srgb, var(--line) 75%, transparent); stroke-width: 1; }
+.h-sep, .h-gline { stroke: var(--line); stroke-width: 1; }
+.h-tier { fill: var(--ink); font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; }
+.compact .h-tier { font-size: 10.5px; fill: var(--muted); }
+.h-tdesc { fill: var(--muted); font-size: 12px; }
+.h-tmeta { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.h-brace { fill: none; stroke: var(--muted); stroke-width: 1.25; stroke-linejoin: round; }
+.hier svg text { pointer-events: none; }
+.h-node { cursor: pointer; outline: none; transition: opacity 0.15s; }
+.h-node:hover { text-decoration: none; }
+.h-box { fill: var(--paper); stroke: var(--h-node-line); stroke-width: 1; }
+.h-node.top .h-box { fill: var(--accent-soft); stroke: color-mix(in srgb, var(--accent) 64%, transparent); }
+.h-stack { fill: var(--paper); stroke: var(--h-node-line); stroke-width: 1; }
+.h-name { fill: var(--ink); font-weight: 700; font-size: 13.5px; text-anchor: middle; }
+.h-sub { fill: var(--muted); font-size: 11.5px; text-anchor: middle; font-variant-numeric: tabular-nums; }
+.compact .h-name { font-size: 12.5px; }
+.compact .h-sub { font-size: 11px; }
+.h-node:hover .h-box, .h-node.on .h-box, .h-node:hover .h-slab, .h-node.on .h-slab { stroke: var(--accent); stroke-width: 1.5; }
+.h-ring { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0; }
+.h-node:focus-visible .h-ring { opacity: 1; }
+.h-found { cursor: default; }
+.h-slab { fill: color-mix(in srgb, var(--muted) 11%, var(--paper)); stroke: color-mix(in srgb, var(--muted) 50%, transparent); stroke-width: 1; }
+.h-slab-side { fill: color-mix(in srgb, var(--muted) 34%, var(--paper)); }
+.h-found.unused .h-slab { stroke-dasharray: 4 3; }
+.h-fname { fill: var(--ink); font-weight: 700; font-size: 14px; }
+.compact .h-fname { font-size: 13px; }
+.h-fcount { fill: var(--muted); font-size: 11.5px; text-anchor: end; font-variant-numeric: tabular-nums; }
+.h-fdesc, .h-fwho { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.h-fwho { fill: var(--ink); }
+.compact .h-fcount, .compact .h-fdesc, .compact .h-fwho { font-size: 11px; }
+.h-edges { transition: opacity 0.15s; }
+.h-lit { pointer-events: none; }
+.h-e { fill: none; stroke: var(--accent); stroke-width: var(--sw, 1.5px); stroke-linejoin: round; }
+.h-ah, .h-pin { fill: var(--accent); }
+.h-edge.f .h-e, .h-key.f .h-e { stroke: var(--h-flink); stroke-width: 1px; }
+.h-edge.f .h-ah, .h-edge.f .h-pin, .h-key.f .h-ah, .h-key.f .h-pin { fill: var(--h-flink); }
+.h-hit { fill: none; stroke: transparent; stroke-width: 9; pointer-events: stroke; }
+.hsvg.hl .h-node:not(.on):not(.nb), .hsvg.hl .h-edges { opacity: 0.2; }   /* traced links: copies in .h-lit */
+.hsvg.hl .h-edge.on .h-e { stroke-width: calc(var(--sw, 1.5px) + 0.75px); }
+.hsvg.hl .h-edge.f.on .h-e { stroke: var(--ink); stroke-width: 1.75px; }
+.hsvg.hl .h-edge.f.on .h-ah, .hsvg.hl .h-edge.f.on .h-pin { fill: var(--ink); }
+.hsvg.hl .h-node.nb .h-box, .hsvg.hl .h-node.nb .h-slab { stroke: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .h-node, .h-edges { transition: none; } }
+.h-info { margin: 10px 2px 2px; min-height: 3em; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.h-info b { color: var(--ink); font-weight: 600; }
+.h-more { margin: 2px 2px 0; }
+.h-note { margin: 6px 0 0; font-size: 12.5px; }
+ul.h-list { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+ul.h-list > li.h-lt { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+ul.h-list > li.h-lt > ul { text-transform: none; letter-spacing: normal; font-weight: 400; color: var(--ink); font-size: 13px; }
+ul.h-list ul.hlist > li { margin: 4px 0 8px; }
+ul.h-list ul.hlist ul { margin: 2px 0 0; padding-left: 18px; color: var(--muted); }
 .hier-links { margin-top: 6px; align-items: center; }
 .hier-links .badge .n { opacity: 0.7; }
 ul.hlist { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; }
