@@ -13,31 +13,37 @@ exported commit. People need repo access to download them. Layouts are shown as 
 thumbnails that the hub renders from your GDS at build time; you never publish layout
 images.
 
-What a repo builder must do:
+Every generator repository follows [REPO_STANDARD.md](REPO_STANDARD.md): a design-point
+registry (`points.json`), the uniform `make` interface, and the exporter `hub/export.py`.
+The hub's CI checks out `docs/` and `hub/` of each repository, runs `hub/export.py`, and
+builds the site from its output. Nothing generated has to be committed: `docs/hub/` is
+git-ignored and only produced locally by `make hub` for checking.
 
-1. Write `scripts/export_hub.py` that produces **`docs/hub/component.json`** plus the files
-   it references under `docs/hub/` (spec below). Run it as the last step of your docs build.
-2. `python3 ../hub-gemini4/tools/hubkit.py validate docs` must print ✓. Then check it with
-   `hubkit.py preview docs` (needs `pip install gdstk pillow` for layout thumbnails).
-3. Commit + push, then `gh workflow run publish.yml -R aicdb/hub-gemini4`.
+The steps for a repository:
 
-Until a repo ships `docs/hub/component.json`, the hub runs its own bootstrap adapter
-`adapters/<id>.py` against your `docs/`. That adapter is the best starting point for your
-exporter: it already maps everything your old site showed.
+1. Keep `docs/` (published data) and `hub/export.py` up to date. The exporter turns
+   `docs/` + `points.json` into the component described below.
+2. Run `make hub` (export and validate) and `make preview` (local hub at http://127.0.0.1:8000).
+3. Commit and push. The hub republishes within 6 hours, or immediately with
+   `gh workflow run publish.yml -R aicdb/hub-gemini4`.
+
+The exporter is looked up in this order: a committed `docs/hub/component.json`, then the
+repository's `hub/export.py`, then a bootstrap adapter `adapters/<id>.py` in the hub
+repository (used only for repositories that have no exporter yet).
 
 ---
 
 ## 1. Quick start
 
 ```bash
-python3 scripts/export_hub.py                                  # writes docs/hub/**
-python3 ../hub-gemini4/tools/hubkit.py validate docs           # must print ✓
-python3 ../hub-gemini4/tools/hubkit.py preview docs            # http://127.0.0.1:8000
-git add docs && git commit -m "Update hub export" && git push
+make points                                   # list the design points
+make add POINT="arch=miller vdd=3.3 …"        # register a new point
+make build POINT=<id>                         # run the generator pipeline for it
+make hub                                      # export + validate (HUB=../hub-gemini4)
+make preview                                  # http://127.0.0.1:8000
+git add points.json docs && git commit -m "…" && git push
 gh workflow run publish.yml -R aicdb/hub-gemini4               # publish now
 ```
-
-The hub also republishes by itself every 6 hours when any source repo has a new commit.
 
 ## 2. Component ids (fixed, must match `sources.json`)
 
@@ -56,7 +62,7 @@ The hub also republishes by itself every 6 hours when any source repo has a new 
 ## 3. Files and paths
 
 ```
-docs/
+docs/                         (hub/** is written by hub/export.py, git-ignored)
   hub/component.json          the component (§4)            ── hosted
   hub/pages/<page>.json       one per extra page (§4.2)      ── hosted
   hub/designs/<id>.json       one detail doc per design      ── hosted
@@ -406,11 +412,8 @@ The hub hosts only referenced files (plus ~50 KB per layout thumbnail). Keep eac
 component under **100 MB** of hosted files: `hubkit validate` prints the total. Decimate
 huge sweeps, and keep hosted JSON compact.
 
-## 9. Retiring the per-repo site
+## 9. Per-repository sites
 
-After your content is on the hub:
-```bash
-git rm .github/workflows/pages.yml && git commit -m "Publish via aicdb hub" && git push
-gh api -X DELETE repos/aicdb/<repo>/pages
-```
-Keep `docs/` (and `docs/hub/`) building: the hub reads it.
+The per-repository GitHub Pages sites are retired: repositories contain no website
+(no `index.html`, no `assets/`, no `pages.yml`), and GitHub Pages is disabled for them. The
+hub is the only site. Repository-specific pages belong in the export (§4.2).

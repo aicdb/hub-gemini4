@@ -23,8 +23,8 @@ sources.json ──► publish.yml ──► sparse clone docs/ of each source r
                                     │
                                     ▼
                      tools/hubkit.py build
-                       • docs/hub/component.json from the repo (preferred)
-                       • else adapters/<id>.py converts the repo's docs/ (bootstrap)
+                       • the repo's own hub/export.py (standard), or a committed
+                         docs/hub/component.json, or a bootstrap adapters/<id>.py
                        • validate component, pages, design detail docs and all blocks
                        • copy only referenced (hosted) files to c/<id>/
                        • render GDS thumbnails (tools/gdsthumb.py, cached)
@@ -43,8 +43,10 @@ tabs. The full vocabulary is specified in [BUILDERS.md](BUILDERS.md).
 
 ## For repo builders
 
-Read **[BUILDERS.md](BUILDERS.md)**. In short: export `docs/hub/component.json`, run
-`hubkit.py validate` and `preview`, push, then `gh workflow run publish.yml -R aicdb/hub-gemini4`.
+Read **[REPO_STANDARD.md](REPO_STANDARD.md)** (repository layout, design-point registry, `make`
+interface) and **[BUILDERS.md](BUILDERS.md)** (export contract). In short: `make add` /
+`make remove` / `make build` design points, `make hub` + `make preview` to check, push, then
+`gh workflow run publish.yml -R aicdb/hub-gemini4`.
 
 ## Maintainer setup
 
