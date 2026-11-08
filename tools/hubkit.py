@@ -818,8 +818,14 @@ def main(argv=None):
     native = docs / "hub" / "component.json"
     if not cid and native.is_file():
         cid = json.loads(native.read_text()).get("id")
+    if not cid and (docs.parent / "hub" / "export.py").is_file():
+        # the repository's own exporter knows its id: run it once to find out
+        probe = load_export(None, docs, Report("probe"))
+        if probe is not None:
+            cid = probe.cid
+            probe.close()
     if not cid:
-        ap.error("pass --id (no hub/component.json to read it from)")
+        ap.error("pass --id (no docs/hub/component.json and no hub/export.py to read it from)")
     src = next((s for s in cfg["components"] if s["id"] == cid), {"id": cid, "repo": None, "dir": "docs"})
 
     if a.cmd == "validate":

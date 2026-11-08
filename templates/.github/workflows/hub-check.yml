@@ -1,0 +1,25 @@
+name: Hub export check
+
+# Validates the design-point registry and the hub export on every push.
+# The hub (aicdb/hub-gemini4) publishes this repository from docs/ + hub/ — see its REPO_STANDARD.md.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: aicdb/hub-gemini4
+          path: .hub
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Registry consistency
+        run: python scripts/points.py check
+      - name: Hub export validates
+        run: python .hub/tools/hubkit.py validate docs
