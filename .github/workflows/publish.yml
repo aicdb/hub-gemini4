@@ -101,7 +101,10 @@ jobs:
             dir=$(jq -r --arg id "$id" '.components[] | select(.id==$id) | .dir // "docs"' sources.json)
             git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$branch" \
               "https://x-access-token:${TOKEN}@github.com/${repo}.git" "src/${name}"
-            git -C "src/${name}" sparse-checkout set "$dir"
+            # docs/ (published data) + hub/ (the repo's exporter) + root files (points.json, …)
+            git -C "src/${name}" sparse-checkout set "$dir" hub
+            # never leave the credential in the clone: repo exporters run in the build step
+            git -C "src/${name}" remote set-url origin "https://github.com/${repo}.git"
             echo "${id}: $(git -C "src/${name}" rev-parse --short HEAD), $(du -sh "src/${name}/${dir}" | cut -f1)"
           done < sources.lock
 

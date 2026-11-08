@@ -90,8 +90,32 @@ class Export:
             self._tmp.cleanup()
 
 
-def load_export(cid: str | None, docs: Path, rep: Report) -> Export | None:
+def _run_export(script: Path, args: list[str], cid: str, rep: Report, label: str, origin: str, docs: Path) -> Export | None:
+    tmp = tempfile.TemporaryDirectory(prefix=f"hub-{cid}-")
+    out = Path(tmp.name)
+    r = subprocess.run([sys.executable, str(script), *args(docs.resolve(), out.resolve())], capture_output=True, text=True,
+                       cwd=str(script.parent))
+    if r.returncode != 0 or not (out / "component.json").is_file():
+        rep.err(f"{label} failed (exit {r.returncode}):\n{(r.stderr or r.stdout)[-3000:]}")
+        tmp.cleanup()
+        return None
+    try:
+        comp = json.loads((out / "component.json").read_text())
+    except json.JSONDecodeError as e:
+        rep.err(f"{label} output is not valid JSON: {e}")
+        tmp.cleanup()
+        return None
+    return Export(cid or comp.get("id"), docs, out, comp, origin, tmp)
+
+
+def load_export(cid: str | None, docs: Path, rep: Report, exporter: str = "hub/export.py") -> Export | None:
+    """Order: committed docs/hub/component.json → the repo's own exporter (<repo>/hub/export.py, run
+    with --docs/--out) → the hub's bootstrap adapter adapters/<id>.py."""
     native = docs / "hub" / "component.json"
+    repo_exporter = docs.parent / exporter
+    if not native.is_file() and repo_exporter.is_file():
+        return _run_export(repo_exporter, lambda d, o: ["--docs", str(d), "--out", str(o)], cid, rep,
+                           f"repo exporter {exporter}", "repo", docs)
     if native.is_file():
         try:
             comp = json.loads(native.read_text())
@@ -706,7 +730,7 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
             rep.err(f"source directory not found: {docs}")
             rep.print(); failures += 1
             continue
-        ex = load_export(cid, docs, rep)
+        ex = load_export(cid, docs, rep, src.get("exporter", "hub/export.py"))
         if ex is None:
             rep.print(); failures += 1
             print(f"✗ {cid}: skipped")
