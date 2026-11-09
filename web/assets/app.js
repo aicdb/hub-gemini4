@@ -986,8 +986,14 @@ function hierarchyHtml() {
   P.slabH = slabBody(Math.max(1, ...F.map((fn) => fn.lines.length)));
 
   /* ---- y: rows and the routing gaps between them */
+  const TOP_TIERS = [
+    { key: 'p:soc', name: 'SOC', desc: 'System-on-chip integration', meta: '0 generators · placeholder', boxName: 'SoC placeholder', boxSub: 'Full-chip mixed-signal SoC — no generators yet' },
+    { key: 'p:ip', name: 'IP', desc: 'Subsystem & macro IP cores', meta: '0 generators · placeholder', boxName: 'IP placeholder', boxSub: 'Multi-module analog/mixed-signal IP — no generators yet' },
+  ];
+  const topBandH = P.nodeH + 28;
+  const topH = TOP_TIERS.length * topBandH;
   const rowH = (t) => (t === FL ? P.slabH + P.depth : P.h[t] + (R[t].some((n) => n.group) ? 8 : 0));
-  const top = 22, bot = 22, padT = 18, padB = 24;
+  const top = topH + 22, bot = 22, padT = 18, padB = 24;
   const rowTop = [], gapH = [];
   let y = top;
   for (let t = 0; t < tiers; t++) {
@@ -1003,7 +1009,7 @@ function hierarchyHtml() {
   const yOut = (n) => rowTop[n.t] + P.h[n.t] + (n.group ? 8 : 0);
 
   /* ---- texts shared by tooltips, the caption and the list */
-  const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : band[t] === 0 ? 'Systems' : band[t] === L ? 'Building blocks' : 'Sub-systems');
+  const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : band[t] === 0 ? 'Module' : band[t] === L ? 'Building blocks' : 'Sub-modules');
   const techs = [...new Set(F.flatMap((fn) => [fn.f.technology].flat()).filter(Boolean))].map((x) => techLabel(x).replace(/\s*\(.*\)\s*$/, '')).join(', ');
   const tierDesc = (t) => (t === FL ? 'Technology libraries' : L === 0 ? 'Standalone generators' : band[t] === 0 ? 'Built from blocks below' : band[t] === L ? 'Reusable analog cells' : 'Built from blocks, reused above');
   const tierMeta = (t) => {
@@ -1052,7 +1058,7 @@ function hierarchyHtml() {
     for (let i = -1; i < nl; i++) { const yy = trackY(t, i) + P.pitch / 2; if (Math.abs(yy - mid) < d) { d = Math.abs(yy - mid); b = yy; } }
     return Math.abs(trackY(t, 0) - mid) < P.pitch / 2 || Math.abs(trackY(t, nl - 1) - mid) < P.pitch / 2 || (trackY(t, 0) < mid && trackY(t, nl - 1) > mid) ? b : mid;
   };
-  const bandTop = (t) => (t === 0 ? 0 : edgeY(t - 1));
+  const bandTop = (t) => (t === 0 ? topH : edgeY(t - 1));
   const bandBot = (t) => (t === tiers - 1 ? H : edgeY(t));
   const groups = [];                    // bands: [first row, last row] of each tier
   for (let t = 0; t < tiers; t++) {
@@ -1060,7 +1066,13 @@ function hierarchyHtml() {
   }
   const bands = (sfx, hatch) => {
     let s = F.length && hatch ? `<defs><pattern id="h-hatch-${sfx}" class="h-hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0,0 V7"/></pattern></defs>` : '';
-    groups.forEach(([t, t1], i) => {
+    TOP_TIERS.forEach((_, i) => {
+      const y0 = i * topBandH, y1 = (i + 1) * topBandH, box = `x="0" y="${f1(y0)}" width="${W}" height="${f1(y1 - y0)}"`;
+      s += `<rect class="h-band${i % 2 ? ' alt' : ''}" ${box}/>`;
+      if (i) s += `<line class="h-sep" x1="0" x2="${W}" y1="${f1(y0)}" y2="${f1(y0)}"/>`;
+    });
+    groups.forEach(([t, t1], gi) => {
+      const i = TOP_TIERS.length + gi;
       const y0 = bandTop(t), y1 = bandBot(t1), box = `x="0" y="${f1(y0)}" width="${W}" height="${f1(y1 - y0)}"`;
       s += `<rect class="h-band${t === FL ? ' base' : i % 2 ? ' alt' : ''}" ${box}/>`;
       if (t === FL && hatch) s += `<rect fill="url(#h-hatch-${sfx})" ${box}/>`;      // faint substrate hatch under the libraries
@@ -1068,20 +1080,26 @@ function hierarchyHtml() {
     });
     return s;
   };
-  let gutter = '';
-  for (const [t, t1] of groups) {
-    const y0 = bandTop(t), y1 = bandBot(t1), cy = (rowTop[t] + rowTop[t1] + (t === FL ? P.slabH : P.h[t1])) / 2;
+  const gutterBlock = (y0, y1, cy, name, descStr, meta) => {
     if (P.wide) {
-      const gw = P.gut - 34, meta = tierMeta(t);
-      const desc = hierWrap(tierDesc(t), 12, 400, gw, 2);
+      const gw = P.gut - 34;
+      const desc = hierWrap(descStr, 12, 400, gw, 2);
       const metas = hierTextW(meta, 11) <= gw ? [meta] : meta.split(' · ').map((m) => hierFit(m, 11, 400, gw));
-      const lines = [[hierFit(tierName(t), 11, 700, gw - 12), 'h-tier'], ...desc.map((d) => [d, 'h-tdesc']), ...metas.map((m) => [m, 'h-tmeta'])];
+      const lines = [[hierFit(name, 11, 700, gw - 12), 'h-tier'], ...desc.map((d) => [d, 'h-tdesc']), ...metas.map((m) => [m, 'h-tmeta'])];
       const lh = (l) => (l[1] === 'h-tier' ? 17 : 15);
       let yy = cy - lines.reduce((a, l) => a + lh(l), 0) / 2 + 11;
-      gutter += lines.map((l) => { const s = `<text class="${l[1]}" x="20" y="${f1(yy)}">${esc(l[0])}</text>`; yy += lh(l); return s; }).join('');
-    } else {
-      gutter += `<text class="h-tier" transform="translate(${P.gut / 2 + 4},${f1((y0 + y1) / 2)}) rotate(-90)" text-anchor="middle">${esc(hierFit(tierName(t), 10.5, 700, y1 - y0 - 12))}</text>`;
+      return lines.map((l) => { const s = `<text class="${l[1]}" x="20" y="${f1(yy)}">${esc(l[0])}</text>`; yy += lh(l); return s; }).join('');
     }
+    return `<text class="h-tier" transform="translate(${P.gut / 2 + 4},${f1((y0 + y1) / 2)}) rotate(-90)" text-anchor="middle">${esc(hierFit(name, 10.5, 700, y1 - y0 - 12))}</text>`;
+  };
+  let gutter = '';
+  TOP_TIERS.forEach((tp, i) => {
+    const y0 = i * topBandH, y1 = (i + 1) * topBandH;
+    gutter += gutterBlock(y0, y1, (y0 + y1) / 2, tp.name, tp.desc, tp.meta);
+  });
+  for (const [t, t1] of groups) {
+    const y0 = bandTop(t), y1 = bandBot(t1), cy = (rowTop[t] + rowTop[t1] + (t === FL ? P.slabH : P.h[t1])) / 2;
+    gutter += gutterBlock(y0, y1, cy, tierName(t), tierDesc(t), tierMeta(t));
     // a tier wrapped onto several rows: a bracket spans its rows, so the lower one does not read as a deeper tier
     if (t1 > t && t !== FL) {
       const bx = P.wide ? 9 : 5, b0 = rowTop[t] - 2, b1 = rowTop[t1] + rowH(t1) + 2;
@@ -1170,7 +1188,20 @@ function hierarchyHtml() {
       <rect class="h-slab-side" x="${f1(x)}" y="${f1(y0 + P.depth)}" width="${f1(w)}" height="${h}" rx="8"/>
       <rect class="h-slab" x="${f1(x)}" y="${f1(y0)}" width="${f1(w)}" height="${h}" rx="8"/>${txt}</g>`;
   };
-  const nodesSvg = R.flat().map(nodeSvg).join('') + F.map(slabSvg).join('');
+  const emptySvg = (tp, i) => {
+    const h = P.nodeH, y0 = i * topBandH + (topBandH - h) / 2;
+    const w = Math.min(S - 20, Math.max(P.minW, hierTextW(tp.boxName, P.nameFs, 700) + 36, hierTextW(tp.boxSub, P.subFs) + 32));
+    const x = sx0 + (S - w) / 2, cx = x + w / 2, ny = y0 + h / 2 - 2, sy = ny + 16;
+    const tip = `${tp.name} tier — ${tp.desc}\n${tp.boxSub}`;
+    const aria = `${tp.name} tier (${tp.desc}): ${tp.boxSub}.`;
+    info.set(tp.key, `<b>${esc(tp.name)} tier</b> · ${esc(tp.desc)} — ${esc(tp.boxSub)}`);
+    return `<g class="h-node empty" data-k="${esc(tp.key)}" tabindex="0" role="graphics-symbol" aria-label="${esc(aria)}"><title>${esc(tip)}</title>
+      <rect class="h-ring" x="${f1(x - 4)}" y="${f1(y0 - 4)}" width="${f1(w + 8)}" height="${h + 8}" rx="12"/>
+      <rect class="h-box" x="${f1(x)}" y="${f1(y0)}" width="${f1(w)}" height="${h}" rx="9"/>
+      <text class="h-name" x="${f1(cx)}" y="${f1(ny)}">${esc(hierFit(tp.boxName, P.nameFs, 700, w - 18))}</text>
+      <text class="h-sub" x="${f1(cx)}" y="${f1(sy)}">${esc(hierFit(tp.boxSub, P.subFs, 400, w - 16))}</text></g>`;
+  };
+  const nodesSvg = TOP_TIERS.map(emptySvg).join('') + R.flat().map(nodeSvg).join('') + F.map(slabSvg).join('');
 
   /* ---- legend, caption and the same content as a list */
   const key = (cls) => `<svg class="h-key${cls}" viewBox="0 0 30 10" width="30" height="10" aria-hidden="true"><path class="h-e" d="M3,5 H22"/><circle class="h-pin" cx="3" cy="5" r="2.3"/><path class="h-ah" d="M22,1.4 L29,5 L22,8.6 Z"/></svg>`;
@@ -1191,9 +1222,10 @@ function hierarchyHtml() {
     `<div>${fn.use.size ? `used by ${plural(fn.use.size, 'generator')} (${plural(fn.designs, 'design')}):` : 'not used by any generator yet'}</div>` +
     (fn.use.size ? `<ul>${[...byRole(fn.use)].map(([r, ids]) => `<li>${ids.map((id) => `<a href="${tabHref(id)}">${esc(byId[id]?.name || id)}</a>`).join(', ')}: ${esc(r)}</li>`).join('')}</ul>` : '') + '</li>';
   const tierRows = groups.filter(([t]) => t !== FL).map(([t, t1]) => [tierName(t), R.slice(t, t1 + 1).flat()]);
-  const list = tierRows.map(([name, ns]) => `<li class="h-lt">${name}<ul class="hlist">${ns.map(listNode).join('')}</ul></li>`).join('') +
+  const list = TOP_TIERS.map((tp) => `<li class="h-lt">${esc(tp.name)}<ul class="hlist"><li class="subtle">${esc(tp.boxSub)}</li></ul></li>`).join('') +
+    tierRows.map(([name, ns]) => `<li class="h-lt">${name}<ul class="hlist">${ns.map(listNode).join('')}</ul></li>`).join('') +
     (F.length ? `<li class="h-lt">Foundation<ul class="hlist">${F.map(listSlab).join('')}</ul></li>` : '');
-  const label = `Block hierarchy diagram, ${groups.length} tiers from top to bottom: ${tierRows.map(([name, ns]) => `${name} (${ns.map((n) => n.label).join(', ')})`).join('; ')}${F.length ? `; Foundation (${F.map((f) => f.label).join(', ')})` : ''}. Arrows point from a block to what it is built from; focus a block for details.`;
+  const label = `Block hierarchy diagram, ${TOP_TIERS.length + groups.length} tiers from top to bottom: ${TOP_TIERS.map((tp) => `${tp.name} (placeholder)`).join('; ')}; ${tierRows.map(([name, ns]) => `${name} (${ns.map((n) => n.label).join(', ')})`).join('; ')}${F.length ? `; Foundation (${F.map((f) => f.label).join(', ')})` : ''}. Arrows point from a block to what it is built from; focus a block for details.`;
   requestAnimationFrame(hierCaptionFit);        // once the section is on the page
   return `<section class="panel hier"><div class="section-head"><h2>Block hierarchy</h2><span class="subtle h-legend">${legend}</span></div>
     <div class="table-scroll h-scroll" style="scroll-padding-left:${P.gut}px"><div class="h-wrap" style="width:${W}px">
