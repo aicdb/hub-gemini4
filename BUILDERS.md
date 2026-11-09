@@ -59,6 +59,7 @@ gh workflow run publish.yml -R aicdb/hub-gemini4               # publish now
 | `sar` | aicdb/sar-gen-gemini4 | SAR ADCs |
 | `sdm` | aicdb/sdm-gen-gemini4 | ΣΔ ADCs |
 | `pll` | aicdb/pll-gen-gemini4 | PLLs |
+| `ti` | aicdb/ti-gen-gemini4 | Time-Interleaved ADCs |
 
 ## 3. Files and paths
 

@@ -36,7 +36,8 @@
         "ecg": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
         "sar": "3.3/6 V MOSFETs, MIM and MOM finger caps (CDAC drawn with gdstk)",
         "sdm": "3.3 V MOSFETs, MIM and MOM caps (cap array drawn with gdstk)",
-        "pll": "3.3 V MOSFETs, MIM caps, poly resistors, MOS varactors (gLayout)"
+        "pll": "3.3 V MOSFETs, MIM caps, poly resistors, MOS varactors (gLayout)",
+        "ti": "3.3 V & deep-N-well MOSFETs, MIM/MOM sampling caps, poly resistors (gLayout)"
       }
     },
     {
@@ -47,7 +48,8 @@
       "used_by": {
         "sar": "mcu7t5v0 cells in SAR logic (UHS/LU2G: custom cells); layout: placeholders",
         "sdm": "sdm2bin decimator: mcu7t5v0 cells synthesised with Yosys, placed with OpenROAD",
-        "pll": "TDC/PI digital loop filter, AFC FSM, MMD & MASH 1-1-1 ΔΣ (Yosys + OpenROAD)"
+        "pll": "TDC/PI digital loop filter, AFC FSM, MMD & MASH 1-1-1 ΔΣ (Yosys + OpenROAD)",
+        "ti": "ti_cal_mux_m2..m16 background offset/gain/skew cal & deserializer (Yosys + OpenROAD)"
       }
     }
   ],
@@ -118,6 +120,12 @@
       "branch": "main",
       "dir": "docs",
       "sparse": ["pllgen"]
+    },
+    {
+      "id": "ti",
+      "repo": "aicdb/ti-gen-gemini4",
+      "branch": "main",
+      "dir": "docs"
     }
   ]
 }

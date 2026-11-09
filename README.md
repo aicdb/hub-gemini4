@@ -3,7 +3,7 @@
 One GitHub Pages site for every analog generator repo: **<https://aicdb.github.io/hub-gemini4/>**
 
 - One tab per component type (switches, sense amps, level shifters, op-amps, aux blocks, LDOs,
-  ECG AFEs, SAR ADCs, ΣΔ ADCs, PLLs). Each tab has:
+  ECG AFEs, SAR ADCs, ΣΔ ADCs, PLLs, Time-Interleaved ADCs). Each tab has:
   - **Designs:** coverage matrix with a cell-metric selector, cards, and a sortable table
     with CSV export.
   - **Generator pages:** design-space explorers, methodology, comparisons and databases.

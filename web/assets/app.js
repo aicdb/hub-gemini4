@@ -986,10 +986,11 @@ function hierarchyHtml() {
   P.slabH = slabBody(Math.max(1, ...F.map((fn) => fn.lines.length)));
 
   /* ---- y: rows and the routing gaps between them */
-  const TOP_TIERS = [
-    { key: 'p:soc', name: 'SOC', desc: 'System-on-chip integration', meta: '0 generators · placeholder', boxName: 'SoC placeholder', boxSub: 'Full-chip mixed-signal SoC — no generators yet' },
-    { key: 'p:ip', name: 'IP', desc: 'Subsystem & macro IP cores', meta: '0 generators · placeholder', boxName: 'IP placeholder', boxSub: 'Multi-module analog/mixed-signal IP — no generators yet' },
+  const ALL_TOP_TIERS = [
+    { lv: 3, key: 'p:soc', name: 'SOC', desc: 'System-on-chip integration', meta: '0 generators · placeholder', boxName: 'SoC placeholder', boxSub: 'Full-chip mixed-signal SoC — no generators yet' },
+    { lv: 2, key: 'p:ip', name: 'IP', desc: 'Subsystem & macro IP cores', meta: '0 generators · placeholder', boxName: 'IP placeholder', boxSub: 'Multi-module analog/mixed-signal IP — no generators yet' },
   ];
+  const TOP_TIERS = ALL_TOP_TIERS.filter((tp) => tp.lv > L);
   const topBandH = P.nodeH + 28;
   const topH = TOP_TIERS.length * topBandH;
   const rowH = (t) => (t === FL ? P.slabH + P.depth : P.h[t] + (R[t].some((n) => n.group) ? 8 : 0));
@@ -1009,9 +1010,10 @@ function hierarchyHtml() {
   const yOut = (n) => rowTop[n.t] + P.h[n.t] + (n.group ? 8 : 0);
 
   /* ---- texts shared by tooltips, the caption and the list */
-  const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : band[t] === 0 ? 'Module' : band[t] === L ? 'Building blocks' : 'Sub-modules');
+  const lvOf = (t) => L - band[t];
+  const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : lvOf(t) === 0 ? 'Building blocks' : lvOf(t) === 1 ? 'Module' : lvOf(t) === 2 ? 'IP' : 'SOC');
   const techs = [...new Set(F.flatMap((fn) => [fn.f.technology].flat()).filter(Boolean))].map((x) => techLabel(x).replace(/\s*\(.*\)\s*$/, '')).join(', ');
-  const tierDesc = (t) => (t === FL ? 'Technology libraries' : L === 0 ? 'Standalone generators' : band[t] === 0 ? 'Built from blocks below' : band[t] === L ? 'Reusable analog cells' : 'Built from blocks, reused above');
+  const tierDesc = (t) => (t === FL ? 'Technology libraries' : L === 0 ? 'Standalone generators' : lvOf(t) === 0 ? 'Reusable analog cells' : lvOf(t) === 1 ? 'Built from blocks below' : lvOf(t) === 2 ? 'Subsystem & macro IP cores' : 'System-on-chip integration');
   const tierMeta = (t) => {
     if (t === FL) return `${techs ? `${techs} · ` : ''}${plural(F.length, 'library', 'libraries')}`;
     const ns = R.filter((_, r) => band[r] === band[t]).flat(), gens = ns.reduce((a, n) => a + n.ids.length, 0);
