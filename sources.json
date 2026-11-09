@@ -37,17 +37,19 @@
         "ldo": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
         "ecg": "3.3 V MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
         "sar": "3.3/6 V MOSFETs, MIM and MOM finger caps (CDAC drawn with gdstk)",
-        "sdm": "3.3 V MOSFETs, MIM and MOM caps (cap array drawn with gdstk)"
+        "sdm": "3.3 V MOSFETs, MIM and MOM caps (cap array drawn with gdstk)",
+        "pll": "3.3 V MOSFETs, MIM caps, poly resistors, MOS varactors (gLayout)"
       }
     },
     {
       "id": "stdcell",
       "name": "Stdcell",
       "technology": "gf180mcuD",
-      "title": "gf180mcu_fd_sc_mcu7t5v0 standard cells — the 7-track GF180MCU digital library, used for the controller and decimator logic inside ADC generators",
+      "title": "gf180mcu_fd_sc_mcu7t5v0 standard cells — the 7-track GF180MCU digital library, used for the controller, decimator and digital loop logic inside ADC and PLL generators",
       "used_by": {
         "sar": "mcu7t5v0 cells in SAR logic (UHS/LU2G: custom cells); layout: placeholders",
-        "sdm": "sdm2bin decimator: mcu7t5v0 cells synthesised with Yosys, placed with OpenROAD"
+        "sdm": "sdm2bin decimator: mcu7t5v0 cells synthesised with Yosys, placed with OpenROAD",
+        "pll": "TDC/PI digital loop filter, AFC FSM, MMD & MASH 1-1-1 ΔΣ (Yosys + OpenROAD)"
       }
     }
   ],
@@ -109,6 +111,12 @@
     {
       "id": "sdm",
       "repo": "aicdb/sdm-gen-gemini4",
+      "branch": "main",
+      "dir": "docs"
+    },
+    {
+      "id": "pll",
+      "repo": "aicdb/pll-gen-gemini4",
       "branch": "main",
       "dir": "docs"
     }
