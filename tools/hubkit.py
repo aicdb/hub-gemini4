@@ -641,6 +641,7 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
 
 def link_hierarchy(out: Path, catalog: dict):
     """Resolve design-level `uses` across components, build reverse `used_by`, and the component graph."""
+    aliases = {"aux-cml_ro": "aux-ro", "aux-cml_dco_vco": "aux-dco_vco"}
     comps = {}
     for c in catalog["components"]:
         f = out / "data" / "components" / f"{c['id']}.json"
@@ -649,6 +650,13 @@ def link_hierarchy(out: Path, catalog: dict):
     for cid, (_, comp) in comps.items():
         if comp.get("group"):
             groups.setdefault(comp.get("source"), []).append(cid)
+        for b in comp.get("builds_on") or []:
+            if b.get("id") in aliases:
+                b["id"] = aliases[b["id"]]
+        for d in comp["designs"]:
+            for u in d.get("uses") or []:
+                if u.get("component") in aliases:
+                    u["component"] = aliases[u["component"]]
     titles = {cid: {d["id"]: d["title"] for d in comp["designs"]} for cid, (_, comp) in comps.items()}
     edges = {}   # (from, to) -> {roles:set, users:set, targets:set, declared:bool}
     dangling = 0

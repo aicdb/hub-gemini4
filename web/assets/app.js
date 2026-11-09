@@ -62,6 +62,8 @@ function parseHash() {
     else st[k] = v;
   }
   if (!STAGES.includes(st.stage)) st.stage = DEFAULTS.stage;
+  if (st.tab === 'aux-cml_ro') { st.tab = 'aux-ro'; if (!st.fam) st.fam = 'cml_ro'; }
+  if (st.tab === 'aux-cml_dco_vco') { st.tab = 'aux-dco_vco'; if (!st.fam) st.fam = 'cml_dco_vco'; }
   return st;
 }
 function hashFor(st) {
