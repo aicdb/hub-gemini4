@@ -42,6 +42,7 @@ LAYERS = {
         (75, 0): ("MIM_TOP", "#facc15", 0.45, "fill"),
     }
 }
+LAYERS["openrpdk28"] = LAYERS["gf180mcuD"]
 BG = (26, 18, 16)   # warm dark, matches the hub palette (#1a1210)
 
 

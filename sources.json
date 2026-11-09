@@ -7,7 +7,8 @@
   "budget_mb": 1000,
   "component_budget_mb": 100,
   "technologies": {
-    "gf180mcuD": "GF180MCU-D (180 nm, 5LM)"
+    "gf180mcuD": "GF180MCU-D (180 nm, 5LM)",
+    "openrpdk28": "OpenRPDK28 (28 nm, 5LM)"
   },
   "foundations": [
     {
