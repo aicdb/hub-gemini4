@@ -40,7 +40,25 @@ LAYERS = {
         (82, 0): ("VIA5", "#fda4af", 1.0, "cut"),
         (53, 0): ("METTOP", "#22d3ee", 0.50, "fill"),
         (75, 0): ("MIM_TOP", "#facc15", 0.45, "fill"),
-    }
+    },
+    "icsprout55": {
+        (9, 1): ("NWELL", "#1e3a8a", 0.45, "fill"),
+        (2, 1): ("COMP", "#15803d", 0.75, "fill"),
+        (52, 1): ("NPLUS", "#854d0e", 0.38, "fill"),
+        (53, 1): ("PPLUS", "#701a75", 0.38, "fill"),
+        (41, 1): ("POLY2", "#dc2626", 0.85, "fill"),
+        (72, 1): ("CONT", "#f8fafc", 1.0, "cut"),
+        (81, 1): ("MET1", "#0284c7", 0.72, "fill"),
+        (91, 1): ("VIA1", "#e2e8f0", 1.0, "cut"),
+        (82, 1): ("MET2", "#ec4899", 0.70, "fill"),
+        (92, 1): ("VIA2", "#fde047", 1.0, "cut"),
+        (83, 1): ("MET3", "#10b981", 0.68, "fill"),
+        (93, 1): ("VIA3", "#c084fc", 1.0, "cut"),
+        (84, 1): ("MET4", "#f59e0b", 0.62, "fill"),
+        (94, 1): ("VIA4", "#fb7185", 1.0, "cut"),
+        (85, 1): ("MET5", "#a78bfa", 0.55, "fill"),
+        (141, 1): ("MIM_TOP", "#facc15", 0.45, "fill"),
+    },
 }
 LAYERS["openrpdk28"] = LAYERS["gf180mcuD"]
 BG = (26, 18, 16)   # warm dark, matches the hub palette (#1a1210)
