@@ -1751,7 +1751,7 @@ async function render() {
   const sameView = S.tab === prevTab && S.design === prevDesign && S.page === prevPage;
   if (!sameView) limit = PAGE;
   const cur = CAT.components.find((c) => c.id === S.tab);
-  document.title = S.tab ? `${cur ? `${cur.group ? `${cur.group} · ` : ''}${cur.name}` : S.tab} · AICDB Analog Hub` : 'AICDB Analog Hub';
+  document.title = S.tab ? `${cur ? `${cur.group ? `${cur.group} · ` : ''}${cur.name}` : S.tab} · Analog IC DB` : 'Analog IC DB';
   renderGlobals();
   renderTabs();
   const main = $('#main');

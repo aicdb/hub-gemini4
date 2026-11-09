@@ -55,8 +55,8 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 /* ---------- header ---------- */
 header.top { background: var(--paper); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
 .bar { display: flex; align-items: center; gap: 18px; padding: 10px 24px; max-width: 1600px; margin: 0 auto; }
-.brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 700; font-size: 16px; color: var(--ink); white-space: nowrap; }
-.brand img { width: 30px; height: 30px; border-radius: 6px; display: block; }
+.brand { display: inline-flex; align-items: center; gap: 11px; font-weight: 700; font-size: 18px; color: var(--ink); white-space: nowrap; }
+.brand img { width: 44px; height: 44px; border-radius: 8px; display: block; }
 .brand span { color: var(--brand); }
 header.top { border-top: 3px solid var(--brand); }
 .brand:hover { text-decoration: none; }
