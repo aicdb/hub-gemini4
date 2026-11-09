@@ -428,8 +428,8 @@ Rules:
 
 ## 7. Conventions
 
-- **Technology id** `gf180mcuD`. A new PDK gets a new id plus a label in the hub's
-  `sources.json`.
+- **Technology ids:** `gf180mcuD` (GF180MCU-D, 1.8 / 3.3 V) and `openrpdk28` (OpenRPDK28,
+  0.6 / 0.9 V). A new PDK gets a new id plus a label in the hub's `sources.json`.
 - **Units:** base SI with `si: true` wherever the quantity has an SI unit.
 - **Stable ids:** design ids appear in URLs.
 - **Hard failures:** `results.<stage>.status: "fail"` marks a failure at that stage (e.g. a
@@ -439,7 +439,7 @@ Rules:
 ## 8. Size budget
 
 The hub hosts only referenced files (plus ~50 KB per layout thumbnail). Keep each
-component under **100 MB** of hosted files: `hubkit validate` prints the total. Decimate
+component under **150 MB** of hosted files: `hubkit validate` prints the total. Decimate
 huge sweeps, and keep hosted JSON compact.
 
 ## 9. Per-repository sites

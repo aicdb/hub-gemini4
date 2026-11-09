@@ -40,7 +40,14 @@ function fmt(v, m, withUnit = true) {
   return `${num(v, m?.digits || 3)}${withUnit && unit ? (unit === '%' || unit === '°' ? unit : ` ${unit}`) : ''}`;
 }
 const fmtV = (v) => (v === null || v === undefined ? '—' : `${num(v, 3)} V`);
-const techLabel = (t) => CAT.technologies?.[t] || t || '—';
+const techLabel = (t) => (Array.isArray(t) ? t.map((x) => CAT.technologies?.[x] || x).filter(Boolean).join(' · ') : CAT.technologies?.[t] || t || '—');
+const techShort = (t) => techLabel(t).replace(/\s*\([^)]*\)\s*/g, '');
+const compTechs = (c, ds = c.designs) => {
+  const order = Object.keys(CAT.technologies || {});
+  const set = new Set((ds.length ? ds : c.designs).map((d) => d.technology || c.technology).filter(Boolean));
+  if (!set.size && c.technology) set.add(c.technology);
+  return [...set].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+};
 
 /* ------------------------------------------------------------------ routing */
 function parseHash() {
@@ -133,8 +140,12 @@ const thumbFor = (c, g, cell) => (g ? c.thumbs?.[`${g}|${cell || ''}`] || null :
 /** context handed to Blocks.render: global options + URL resolvers for this component */
 function ctxFor(c) {
   if (!c._ids) c._ids = new Set(c.designs.map((d) => d.id));
+  const techVdds = {};
+  for (const x of CAT.components) for (const r of x.rows) if (r[0] && r[1] != null) (techVdds[r[0]] ||= new Set()).add(String(r[1]));
   return {
     stage: S.stage, fb: S.fb === '1', vdd: S.vdd, tech: S.tech,
+    techs: Object.keys(CAT.technologies || {}),
+    techVdds: Object.fromEntries(Object.entries(techVdds).map(([k, s]) => [k, [...s]])),
     vdds: [...new Set(CAT.components.flatMap((x) => x.rows.map((r) => r[1])).filter((v) => v != null).map(String))],
     src: (p) => asset(c, p),
     repo: (f) => repoUrl(c, f),
@@ -252,7 +263,9 @@ function renderGlobals() {
   const vdds = [...used.keys()].sort((a, b) => a - b);
   const common = vdds.filter((v) => used.get(v) >= 2 || CAT.components.length < 2);
   const rare = vdds.filter((v) => !common.includes(v));
-  segButtons($('#g-vdd'), [['', 'All'], ...common.map((v) => [String(v), `${v} V`])], S.vdd, 'vdd');
+  const hasVdd = (v) => scope.some((c) => c.rows.some((r) => (!S.tech || r[0] === S.tech) && r[1] === v));
+  segButtons($('#g-vdd'), [['', 'All'], ...common.map((v) => [String(v), `${v} V`,
+    hasVdd(v) ? '' : `No ${v} V designs in ${S.tab ? 'this tab' : 'the hub'}${S.tech ? ` for ${techLabel(S.tech)}` : ''}`, !hasVdd(v)])], S.vdd, 'vdd');
   const v2 = $('#g-vdd2');
   v2.hidden = !rare.length;
   v2.innerHTML = `<option value="">other…</option>` + rare.map((v) => `<option value="${v}">${v} V</option>`).join('');
@@ -986,7 +999,7 @@ function hierarchyHtml() {
 
   /* ---- texts shared by tooltips, the caption and the list */
   const tierName = (t) => (t === FL ? 'Foundation' : L === 0 ? 'Generators' : band[t] === 0 ? 'Systems' : band[t] === L ? 'Building blocks' : 'Sub-systems');
-  const techs = [...new Set(F.map((fn) => fn.f.technology).filter(Boolean))].map((x) => techLabel(x).replace(/\s*\(.*\)\s*$/, '')).join(', ');
+  const techs = [...new Set(F.flatMap((fn) => [fn.f.technology].flat()).filter(Boolean))].map((x) => techLabel(x).replace(/\s*\(.*\)\s*$/, '')).join(', ');
   const tierDesc = (t) => (t === FL ? 'Technology libraries' : L === 0 ? 'Standalone generators' : band[t] === 0 ? 'Built from blocks below' : band[t] === L ? 'Reusable analog cells' : 'Built from blocks, reused above');
   const tierMeta = (t) => {
     if (t === FL) return `${techs ? `${techs} · ` : ''}${plural(F.length, 'library', 'libraries')}`;
@@ -1382,7 +1395,7 @@ async function renderComponent(main) {
   main.innerHTML = `
     <section class="intro">
       <div>
-        <div class="eyebrow">${c.group ? `${esc(c.group)} · ` : ''}${esc(techLabel(c.technology))}${short ? ` · ${esc(c.repo || '')}@${esc(short)}` : ''}${c.generated ? ` · exported ${esc(String(c.generated).slice(0, 10))}` : ''}</div>
+        <div class="eyebrow">${c.group ? `${esc(c.group)} · ` : ''}${esc(techLabel(compTechs(c, list.length ? list : famDesigns)))}${short ? ` · ${esc(c.repo || '')}@${esc(short)}` : ''}${c.generated ? ` · exported ${esc(String(c.generated).slice(0, 10))}` : ''}</div>
         <h1>${esc(c.title)}</h1>
         <p>${esc(fam?.summary || c.summary || '')}</p>
         <div class="links">
@@ -1495,7 +1508,13 @@ function renderMatrix(view, c, list) {
     const parts = key.split('\u0001').map((v, i) => axisLabel(c, mx.rows[i], v));
     return `${esc(parts[0])}${parts.length > 1 ? `<small>${parts.slice(1).map(esc).join(' · ')}</small>` : ''}`;
   };
-  const head1 = `<tr><th></th>${groups.map((g) => `<th class="grp" colspan="${g.cols.length}">${c.vdd_labels?.[String(g.v)] ? Blocks.inline(c.vdd_labels[String(g.v)]) : `V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}`}</th>`).join('')}</tr>`;
+  const multiTech = compTechs(c).length > 1;
+  const grpLabel = (g) => {
+    if (c.vdd_labels?.[String(g.v)]) return Blocks.inline(c.vdd_labels[String(g.v)]);
+    const gt = multiTech ? [...new Set(list.filter((d) => d.vdd === g.v).map((d) => d.technology).filter(Boolean))] : [];
+    return `V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}${gt.length === 1 ? ` · <span class="subtle">${esc(techShort(gt[0]))}</span>` : ''}`;
+  };
+  const head1 = `<tr><th></th>${groups.map((g) => `<th class="grp" colspan="${g.cols.length}">${grpLabel(g)}</th>`).join('')}</tr>`;
   const head2 = `<tr><th class="rowh">${mx.rows.map((a) => esc(c.axes[a]?.label || a)).join(' · ')}</th>${groups.map((g) => g.cols.map((k) => `<th>${colLabel(k)}</th>`).join('')).join('')}</tr>`;
   const body = rows.map((rk) => `<tr><th class="rowh">${rowLabel(rk)}</th>${groups.map((g) => g.cols.map((ck) => {
     const ds = cellMap.get(`${rk}|${g.v}|${ck}`);

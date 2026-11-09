@@ -133,9 +133,17 @@
     for (let i = idx; i >= (ctx.fb ? 0 : idx); i--) if (stages.includes(STAGES[i])) return STAGES[i];
     return null;
   }
+  function passVdd(vdd, ctx) {
+    if (vdd === undefined || vdd === null) return true;
+    const s = String(vdd);
+    if (ctx.vdd && s !== ctx.vdd) return false;
+    if (ctx.tech && ctx.techVdds?.[ctx.tech] && (ctx.vdds || []).includes(s) && !ctx.techVdds[ctx.tech].includes(s)) return false;
+    return true;
+  }
   function passGlobal(b, ctx) {
-    if (b.vdd !== undefined && b.vdd !== null && ctx.vdd && String(b.vdd) !== ctx.vdd) return false;
-    if (b.tech && ctx.tech && b.tech !== ctx.tech) return false;
+    if (!passVdd(b.vdd, ctx)) return false;
+    const bt = b.tech || b.pdk || b.technology;
+    if (bt && ctx.tech && bt !== ctx.tech) return false;
     return true;
   }
   /** choose which sibling blocks are visible; stage alternatives share an `alt` key */
@@ -305,9 +313,11 @@
     // follow the global VDD only for real design supplies: opt-in via vdd_filter:true, or automatic when
     // every value of the 'vdd' column is one of the hub's supplies (corner supplies like 1.62 V never match)
     const isSupplyCol = (vals) => vals.every((v) => v == null || (ctx.vdds || []).includes(String(v)));
-    if (ctx.vdd && b.vdd_filter !== false && cols.some((c) => c.key === 'vdd') && (b.vdd_filter === true || isSupplyCol(rows.map((r) => cellV(r.vdd)))))
-      rows = rows.filter((r) => cellV(r.vdd) == null || String(cellV(r.vdd)) === ctx.vdd);
-    if (ctx.tech && cols.some((c) => c.key === 'tech')) rows = rows.filter((r) => !cellV(r.tech) || cellV(r.tech) === ctx.tech);
+    const isTechCol = (vals) => vals.some((v) => v != null) && vals.every((v) => v == null || (ctx.techs || []).includes(String(v)));
+    if ((ctx.vdd || ctx.tech) && b.vdd_filter !== false && cols.some((c) => c.key === 'vdd') && (b.vdd_filter === true || isSupplyCol(rows.map((r) => cellV(r.vdd)))))
+      rows = rows.filter((r) => passVdd(cellV(r.vdd), ctx));
+    const techCol = cols.map((c) => c.key).find((k) => ['tech', 'pdk', 'technology'].includes(k) && isTechCol(rows.map((r) => cellV(r[k]))));
+    if (ctx.tech && techCol) rows = rows.filter((r) => !cellV(r[techCol]) || cellV(r[techCol]) === ctx.tech);
     let stageNote = '';
     if (b.stage_column && b.stage_group) {
       // per entity (e.g. design id): keep the row with the best available stage <= selected
@@ -433,7 +443,9 @@
     const pick = stages.length ? pickStage(stages, ctx) : null;
     return (traces || []).filter((t) => {
       const m = meta(t);
-      if (m.vdd != null && ctx.vdd && String(m.vdd) !== ctx.vdd) return false;
+      if (!passVdd(m.vdd, ctx)) return false;
+      const mt = m.tech || m.pdk || m.technology;
+      if (mt && ctx.tech && mt !== ctx.tech) return false;
       if (m.stage && m.stage !== pick) return false;   // trace-level stage alternatives
       return true;
     });
@@ -497,9 +509,10 @@
     applyShow(b.filters_default);
     // global options
     let base = new Uint8Array(N).fill(1);
-    if (ctx.vdd && C.vdd && b.vdd_filter !== false && (b.vdd_filter === true || C.vdd.every((v) => v == null || (ctx.vdds || []).includes(String(v)))))
-      for (let i = 0; i < N; i++) if (C.vdd[i] != null && String(C.vdd[i]) !== ctx.vdd) base[i] = 0;
-    if (ctx.tech && C.tech) for (let i = 0; i < N; i++) if (C.tech[i] && C.tech[i] !== ctx.tech) base[i] = 0;
+    if ((ctx.vdd || ctx.tech) && C.vdd && b.vdd_filter !== false && (b.vdd_filter === true || C.vdd.every((v) => v == null || (ctx.vdds || []).includes(String(v)))))
+      for (let i = 0; i < N; i++) if (!passVdd(C.vdd[i], ctx)) base[i] = 0;
+    const techArr = C.tech || C.pdk || C.technology;
+    if (ctx.tech && techArr) for (let i = 0; i < N; i++) if (techArr[i] && techArr[i] !== ctx.tech) base[i] = 0;
     let stageNote = '';
     if (C.stage && b.stage_group && C[b.stage_group]) {
       // per entity (e.g. design id): keep the row of the best available stage <= selected

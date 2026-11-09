@@ -458,14 +458,16 @@ def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: R
         rep.warn("gdstk/Pillow not installed — layout thumbnails skipped (pip install gdstk pillow)")
         return {}
     cache_dir.mkdir(parents=True, exist_ok=True)
-    tech = ex.comp.get("technology", "gf180mcuD")
+    default_tech = ex.comp.get("technology", "gf180mcuD")
+    gds_tech = {d.get("files", {}).get("gds"): d.get("technology") or default_tech
+                for d in ex.comp.get("designs", []) if d.get("files", {}).get("gds")}
     tasks, keys = [], []
     for (g, cell), where in refs.gds.items():
         p = ex.docs / g
         if not p.is_file():
             rep.warn(f"{where}: GDS not found for thumbnail: {g}")
             continue
-        tasks.append((str(p), cell, tech, str(cache_dir)))
+        tasks.append((str(p), cell, gds_tech.get(g, default_tech), str(cache_dir)))
         keys.append((g, cell))
     thumbs = {}
     with cf.ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
