@@ -653,11 +653,17 @@ def link_hierarchy(out: Path, catalog: dict):
     edges = {}   # (from, to) -> {roles:set, users:set, targets:set, declared:bool}
     dangling = 0
     for cid, (_, comp) in comps.items():
+        used_cids = {u.get("component") for d in comp["designs"] for u in d.get("uses") or [] if u.get("component") in comps}
         for b in comp.get("builds_on") or []:
-            for to in ([b["id"]] if b["id"] in comps else groups.get(b["id"], [])):
+            if b["id"] in comps:
+                targets = [b["id"]]
+            else:
+                grp = groups.get(b["id"], [])
+                targets = [t for t in grp if t in used_cids] or grp
+            for to in targets:
                 e = edges.setdefault((cid, to), {"roles": set(), "users": set(), "targets": set(), "declared": False})
                 e["declared"] = True
-                if b.get("role"):
+                if b.get("role") and (b["id"] in comps or not any(u.get("component") == to and u.get("role") for d in comp["designs"] for u in d.get("uses") or [])):
                     e["roles"].add(b["role"])
         for d in comp["designs"]:
             for u in d.get("uses") or []:

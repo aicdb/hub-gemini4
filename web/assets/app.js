@@ -459,7 +459,7 @@ function hierarchyHtml() {
   const E = [], EK = new Map();
   const edgeOf = (a, b, kind) => {
     const k = `${a}>${b}`;
-    if (!EK.has(k)) { const e = { a, b, kind, roles: new Set(), users: 0, targets: 0, mem: new Map(), xs: {}, lv: {} }; EK.set(k, e); E.push(e); }
+    if (!EK.has(k)) { const e = { a, b, kind, roles: new Set(), users: 0, targets: 0, byFrom: new Map(), mem: new Map(), xs: {}, lv: {} }; EK.set(k, e); E.push(e); }
     return EK.get(k);
   };
   for (const g of CAT.graph || []) {
@@ -467,7 +467,10 @@ function hierarchyHtml() {
     if (a === b || !N.has(a) || !N.has(b)) continue;
     const e = edgeOf(a, b, 'c');
     (g.roles || []).forEach((r) => e.roles.add(r));
-    e.users += g.users || 0; e.targets += g.targets || 0;
+    const maxFrom = byId[g.from]?.rows?.length || Infinity;
+    e.byFrom.set(g.from, Math.min(maxFrom, Math.max(e.byFrom.get(g.from) || 0, g.users || 0)));
+    e.users = [...e.byFrom.values()].reduce((s, v) => s + v, 0);
+    e.targets += g.targets || 0;
   }
   const CE = E.slice();
   // level = longest "built from" chain below a block (0 = cells)

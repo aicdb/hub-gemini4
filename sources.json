@@ -118,7 +118,8 @@
       "id": "pll",
       "repo": "aicdb/pll-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "sparse": ["pllgen"]
     }
   ]
 }
