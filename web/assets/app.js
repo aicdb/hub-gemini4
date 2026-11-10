@@ -144,7 +144,9 @@ async function resolvePackBlob(cid, p) {
 }
 function hydratePacks(root = document) {
   if (!root?.querySelectorAll) return;
-  root.querySelectorAll('img[src^="#pack:"], a[href^="#pack:"]').forEach(async (el) => {
+  const els = [...root.querySelectorAll('img[src^="#pack:"], a[href^="#pack:"]')];
+  if (root.matches?.('img[src^="#pack:"], a[href^="#pack:"]')) els.unshift(root);
+  els.forEach(async (el) => {
     const attr = el.tagName === 'IMG' ? 'src' : 'href';
     const val = el.getAttribute(attr);
     if (!val || !val.startsWith('#pack:')) return;
@@ -162,7 +164,7 @@ function hydratePacks(root = document) {
 if (typeof MutationObserver !== 'undefined') {
   new MutationObserver((muts) => {
     for (const m of muts) {
-      if (m.type === 'attributes') hydratePacks(m.target.parentElement || document);
+      if (m.type === 'attributes') hydratePacks(m.target);
       else for (const n of m.addedNodes) if (n.nodeType === 1) hydratePacks(n);
     }
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href'] });

@@ -114,11 +114,11 @@ def _run_export(script: Path, args: list[str], cid: str, rep: Report, label: str
 
 
 def load_export(cid: str | None, docs: Path, rep: Report, exporter: str = "hub/export.py") -> Export | None:
-    """Order: committed docs/hub/component.json → the repo's own exporter (<repo>/hub/export.py, run
-    isolated with --docs/--out into a fresh temp dir)."""
+    """Order: the repo's own exporter (<repo>/hub/export.py, run isolated with --docs/--out into a
+    fresh temp dir) → fallback to docs/hub/component.json."""
     native = docs / "hub" / "component.json"
     repo_exporter = docs.parent / exporter
-    if not native.is_file() and repo_exporter.is_file():
+    if repo_exporter.is_file():
         return _run_export(repo_exporter, lambda d, o: ["--docs", str(d), "--out", str(o)], cid, rep,
                            f"repo exporter {exporter}", "repo", docs)
     if native.is_file():
@@ -480,7 +480,7 @@ def render_thumbs(ex: Export, refs: Refs, cache_dir: Path, rep: Report, jobs: in
                 rep.warn(f"thumbnail failed for {g}{' cell ' + cell if cell else ''}: {err}")
                 continue
             raw_webp = (cache_dir / f"{key}.webp").read_bytes()
-            wkey = hashlib.sha1(raw_webp).hexdigest()[:16]
+            wkey = key[:16]
             rel_t = f"thumbs/{wkey}.webp"
             if rel_t not in blobs:
                 blobs[rel_t] = json.dumps(base64.b64encode(raw_webp).decode("ascii")).encode("ascii")
@@ -548,7 +548,7 @@ def git_clean(path: Path) -> bool:
         return False
 
 
-PACK_SCHEMA_VERSION = "pack-sha1-v1"
+PACK_SCHEMA_VERSION = "pack-sha1-v2"
 
 
 def source_cache_key(cfg: dict, src: dict, commit: str | None, docs: Path | None = None) -> str | None:
@@ -607,9 +607,15 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: di
         nonlocal n, size, bsz
         if not batch:
             return
+        sig = hashlib.sha1()
+        for r, b in batch:
+            sig.update(r.encode("utf-8") + b"\0")
+            if not r.startswith("thumbs/"):
+                sig.update(b)
+            sig.update(b"\n")
+        h = sig.hexdigest()[:16]
         raw = b"{" + b",".join(json.dumps(r).encode() + b":" + b for r, b in batch) + b"}"
         comp_bytes = gzip.compress(raw, compresslevel=6, mtime=0)
-        h = hashlib.sha1(comp_bytes).hexdigest()[:16]
         q = dst / f"_pack_{h}.bin"
         q.parent.mkdir(parents=True, exist_ok=True)
         q.write_bytes(comp_bytes)
@@ -621,10 +627,9 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: di
 
     if extra_blobs:
         for rel, b in sorted(extra_blobs.items()):
-            if batch and bsz + len(b) > 8_000_000:
+            if len(batch) >= 250:
                 flush()
             batch.append((rel, b))
-            bsz += len(b)
         flush()
 
     for rel in sorted(refs.hosted):
@@ -854,6 +859,35 @@ def _read_locks(lock_file: Path) -> dict[str, str]:
     return out
 
 
+def _shard_cache_file(cfg: dict, src: dict, skey: str | None) -> Path | None:
+    if not skey:
+        return None
+    shard_id = src.get("shard")
+    shard_cfg = (cfg.get("shards") or {}).get(shard_id) if shard_id else None
+    if shard_cfg and shard_cfg.get("path"):
+        return (HUB_ROOT / shard_cfg["path"]).parent / "cache" / f"{skey}.json.gz"
+    return None
+
+
+def _is_shard_cached(cfg: dict, src: dict, skey: str | None, out: Path) -> bool:
+    scf = _shard_cache_file(cfg, src, skey)
+    if not scf or not scf.is_file():
+        return False
+    try:
+        data = json.loads(gzip.decompress(scf.read_bytes()))
+        for e in data["entries"]:
+            sub_cid = e["cid"]
+            comp = json.loads(data["components"][sub_cid])
+            dst = _comp_dst(cfg, src, sub_cid, out, False)
+            for pk in comp.get("packs") or []:
+                pid = pk["id"] if isinstance(pk, dict) else pk
+                if not (dst / f"_pack_{pid}.bin").is_file():
+                    return False
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
           cache_dir: Path, jobs: int) -> int:
     if out.exists():
@@ -878,18 +912,38 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
         skey = source_cache_key(cfg, src, commit, docs if docs.is_dir() else None) if not link else None
         scache = (scache_root / skey) if skey else None
 
+        if not link and _is_shard_cached(cfg, src, skey, out):
+            scf = _shard_cache_file(cfg, src, skey)
+            data = json.loads(gzip.decompress(scf.read_bytes()))
+            for e in data["entries"]:
+                sub_cid = e["cid"]
+                (out / "data" / "components" / f"{sub_cid}.json").write_text(data["components"][sub_cid])
+                catalog["components"].append(e["catalog_item"])
+                build_info["sources"][sub_cid] = e["build_info"]
+                total += e["size"]
+                print(f"{e['log']} [cached]")
+            active_skeys.add(skey)
+            continue
+
         if scache and (scache / "meta.json").is_file():
             try:
                 meta = json.loads((scache / "meta.json").read_text())
+                comps_map = {}
                 for e in meta["entries"]:
                     sub_cid = e["cid"]
-                    shutil.copy2(scache / "components" / f"{sub_cid}.json",
-                                 out / "data" / "components" / f"{sub_cid}.json")
+                    c_path = scache / "components" / f"{sub_cid}.json"
+                    comps_map[sub_cid] = c_path.read_text()
+                    shutil.copy2(c_path, out / "data" / "components" / f"{sub_cid}.json")
                     _sync_dir(scache / "c" / sub_cid, _comp_dst(cfg, src, sub_cid, out, link))
                     catalog["components"].append(e["catalog_item"])
                     build_info["sources"][sub_cid] = e["build_info"]
                     total += e["size"]
                     print(f"{e['log']} [cached]")
+                scf = _shard_cache_file(cfg, src, skey)
+                if scf is not None and not scf.is_file():
+                    scf.parent.mkdir(parents=True, exist_ok=True)
+                    scf.write_bytes(gzip.compress(json.dumps({"entries": meta["entries"], "components": comps_map},
+                                                             ensure_ascii=False).encode("utf-8"), compresslevel=6, mtime=0))
                 active_skeys.add(skey)
                 continue
             except Exception as e:  # noqa: BLE001
@@ -928,23 +982,38 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
                 if tmp_scache.exists():
                     shutil.rmtree(tmp_scache)
                 (tmp_scache / "components").mkdir(parents=True, exist_ok=True)
+                comps_map = {}
                 for e in entries:
                     sub_cid = e["cid"]
-                    shutil.copy2(out / "data" / "components" / f"{sub_cid}.json",
-                                 tmp_scache / "components" / f"{sub_cid}.json")
+                    c_src = out / "data" / "components" / f"{sub_cid}.json"
+                    comps_map[sub_cid] = c_src.read_text()
+                    shutil.copy2(c_src, tmp_scache / "components" / f"{sub_cid}.json")
                     _sync_dir(_comp_dst(cfg, src, sub_cid, out, link), tmp_scache / "c" / sub_cid)
                 (tmp_scache / "meta.json").write_text(json.dumps({"entries": entries}, ensure_ascii=False))
                 if scache.exists():
                     shutil.rmtree(scache)
                 os.replace(tmp_scache, scache)
+                scf = _shard_cache_file(cfg, src, skey)
+                if scf is not None:
+                    scf.parent.mkdir(parents=True, exist_ok=True)
+                    scf.write_bytes(gzip.compress(json.dumps({"entries": entries, "components": comps_map},
+                                                             ensure_ascii=False).encode("utf-8"), compresslevel=6, mtime=0))
                 active_skeys.add(skey)
         finally:
             ex.close()
 
-    if not link and len(sources) == len(cfg.get("components", [])) and scache_root.is_dir():
-        for p in scache_root.iterdir():
-            if p.is_dir() and p.name not in active_skeys:
-                shutil.rmtree(p, ignore_errors=True)
+    if not link and len(sources) == len(cfg.get("components", [])):
+        if scache_root.is_dir():
+            for p in scache_root.iterdir():
+                if p.is_dir() and p.name not in active_skeys:
+                    shutil.rmtree(p, ignore_errors=True)
+        for sh in (cfg.get("shards") or {}).values():
+            if sh.get("path"):
+                cdir = (HUB_ROOT / sh["path"]).parent / "cache"
+                if cdir.is_dir():
+                    for p in cdir.glob("*.json.gz"):
+                        if p.name[:-8] not in active_skeys:
+                            p.unlink()
 
     link_hierarchy(out, catalog)
     link_foundations(cfg, catalog)
@@ -1021,6 +1090,8 @@ def main(argv=None):
         if not src:
             return 1
         skey = source_cache_key(cfg, src, a.commit)
+        if _is_shard_cached(cfg, src, skey, HUB_ROOT / "_site"):
+            return 0
         scache = (a.thumb_cache.parent / "sources" / skey) if skey else None
         return 0 if (scache and (scache / "meta.json").is_file()) else 1
 

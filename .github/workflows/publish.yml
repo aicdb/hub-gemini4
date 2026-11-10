@@ -109,6 +109,8 @@ jobs:
         run: |
           set -euo pipefail
           TOKEN=$(printf %s "$TOKEN" | tr -d '[:space:]')
+          rm -rf assets-1
+          git clone --quiet --depth 1 "https://x-access-token:${TOKEN}@github.com/aicdb/hub-gemini4-assets-1.git" assets-1 || mkdir -p assets-1
           mkdir -p src
           while read -r id repo branch sha; do
             [ "$sha" = missing ] && continue
