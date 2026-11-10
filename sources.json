@@ -9,19 +9,20 @@
   "technologies": {
     "gf180mcuD": "GF180MCU-D (180 nm, 5LM)",
     "icsprout55": "ICsprout55 (55 nm, 5LM)",
-    "openrpdk28": "OpenRPDK28 (28 nm, 5LM)"
+    "openrpdk28": "OpenRPDK28 (28 nm, 5LM)",
+    "asap7": "ASAP7 (7 nm FinFET, 5LM)"
   },
   "foundations": [
     {
       "id": "pcells",
       "name": "PDK PCells",
-      "technology": ["gf180mcuD", "icsprout55", "openrpdk28"],
-      "title": "GF180MCU-D, ICsprout55 & OpenRPDK28 primitive devices (MOSFETs, capacitors, resistors, varactors) — 0.6–6 V and native MOSFETs, MIM capacitors, poly and diffusion resistors, MOS varactors, laid out with gLayout primitives or drawn by the generator on the PDK layers (as are the MOM finger capacitors)",
+      "technology": ["gf180mcuD", "icsprout55", "openrpdk28", "asap7"],
+      "title": "GF180MCU-D, ICsprout55, OpenRPDK28 & ASAP7 primitive devices (MOSFETs, FinFETs, capacitors, resistors, varactors) — 0.5–6 V, native and 7 nm FinFET MOSFETs, MIM/MOM capacitors, poly and diffusion resistors, MOS varactors, laid out with gLayout primitives or drawn by the generator on the PDK layers (as are the MOM finger capacitors)",
       "used_by": {
         "switch": "GF180 & OpenRPDK28 MOSFETs (native, deep-n-well), MIM caps (gLayout primitives)",
         "sa": "GF180 & OpenRPDK28 MOSFETs (native, deep n-well, drawn with klayout.db)",
-        "ls": "3.3 V, native, deep-n-well MOSFETs, MIM caps, poly resistors (gLayout + drawn)",
-        "opa": "GF180, ICsprout55 & OpenRPDK28 MOSFETs, MIM caps, ppolyf_u_1k resistors (gLayout primitives)",
+        "ls": "GF180 3.3 V / native / deep-n-well & ASAP7 7 nm FinFET (RVT/LVT/SLVT) MOSFETs, MIM/MOM caps, poly resistors (gLayout + drawn)",
+        "opa": "GF180, ICsprout55, OpenRPDK28 & ASAP7 MOSFETs/FinFETs, MIM/MOM caps, ppolyf_u_1k resistors (gLayout primitives)",
         "aux": "GF180 & OpenRPDK28 MOSFETs, laid out with gLayout",
         "aux-ro": "GF180 & OpenRPDK28 MOSFETs, MIM load caps, high-R poly / triode-PMOS loads, MOS varactor (gLayout)",
         "aux-tcap": "GF180 & OpenRPDK28 switch MOSFETs, MIM/MOM caps, MOS varactors (gLayout)",

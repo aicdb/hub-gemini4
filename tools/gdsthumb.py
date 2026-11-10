@@ -59,6 +59,28 @@ LAYERS = {
         (85, 1): ("MET5", "#a78bfa", 0.55, "fill"),
         (141, 1): ("MIM_TOP", "#facc15", 0.45, "fill"),
     },
+    "asap7": {
+        (1, 0): ("NWELL", "#1e3a8a", 0.45, "fill"),
+        (11, 0): ("ACTIVE", "#15803d", 0.72, "fill"),
+        (100, 20): ("ACTIVE_TAP", "#15803d", 0.72, "fill"),
+        (2, 0): ("FIN", "#22c55e", 0.50, "fill"),
+        (12, 0): ("NSELECT", "#854d0e", 0.35, "fill"),
+        (13, 0): ("PSELECT", "#701a75", 0.35, "fill"),
+        (7, 0): ("GATE", "#dc2626", 0.85, "fill"),
+        (88, 0): ("SDT", "#94a3b8", 0.65, "fill"),
+        (16, 0): ("LIG", "#ef4444", 0.80, "fill"),
+        (17, 0): ("LISD", "#cbd5e1", 0.75, "fill"),
+        (18, 0): ("V0", "#f8fafc", 1.0, "cut"),
+        (19, 0): ("M1", "#0284c7", 0.72, "fill"),
+        (21, 0): ("V1", "#e2e8f0", 1.0, "cut"),
+        (20, 0): ("M2", "#ec4899", 0.70, "fill"),
+        (25, 0): ("V2", "#fde047", 1.0, "cut"),
+        (30, 0): ("M3", "#10b981", 0.68, "fill"),
+        (35, 0): ("V3", "#c084fc", 1.0, "cut"),
+        (40, 0): ("M4", "#f59e0b", 0.62, "fill"),
+        (45, 0): ("V4", "#fb7185", 1.0, "cut"),
+        (50, 0): ("M5", "#a78bfa", 0.55, "fill"),
+    },
 }
 LAYERS["openrpdk28"] = LAYERS["gf180mcuD"]
 BG = (26, 18, 16)   # warm dark, matches the hub palette (#1a1210)
@@ -69,7 +91,8 @@ def cache_key(gds: Path, cell: str | None, size: int, tech: str) -> str:
     with open(gds, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
-    h.update(f"|{cell}|{size}|{tech}|{RENDER_VERSION}".encode())
+    ver = f"{RENDER_VERSION}-asap7v2" if tech == "asap7" else RENDER_VERSION
+    h.update(f"|{cell}|{size}|{tech}|{ver}".encode())
     return h.hexdigest()[:20]
 
 
