@@ -5,7 +5,7 @@
     "repo": "aicdb/hub-gemini4"
   },
   "budget_mb": 1500,
-  "component_budget_mb": 150,
+  "component_budget_mb": 250,
   "technologies": {
     "gf180mcuD": "GF180MCU-D (180 nm, 5LM)",
     "icsprout55": "ICsprout55 (55 nm, 5LM)",

@@ -1532,11 +1532,21 @@ function renderMatrix(view, c, list) {
     return 0;
   });
   const rows = sortKeys([...new Set(list.map((d) => keyOf(d, mx.rows)))], mx.rows);
-  const vdds = [...new Set(list.map((d) => d.vdd))].sort((a, b) => (a ?? 1e9) - (b ?? 1e9));
-  const groups = vdds.map((v) => ({ v, cols: sortKeys([...new Set(list.filter((d) => d.vdd === v).map((d) => keyOf(d, mx.cols)))], mx.cols) }));
+  const multiTech = compTechs(c).length > 1;
+  const techOrder = Object.keys(CAT.technologies || {});
+  const dTech = (d) => (multiTech ? d.technology || c.technology || '' : '');
+  const gMap = new Map();
+  for (const d of list) {
+    const gk = `${d.vdd ?? ''}\u0001${dTech(d)}`;
+    if (!gMap.has(gk)) gMap.set(gk, { k: gk, v: d.vdd, t: dTech(d), ds: [] });
+    gMap.get(gk).ds.push(d);
+  }
+  const groups = [...gMap.values()]
+    .sort((a, b) => ((a.v ?? 1e9) - (b.v ?? 1e9)) || ((techOrder.indexOf(b.t) + 1 || 0) - (techOrder.indexOf(a.t) + 1 || 0)))
+    .map((g) => ({ ...g, cols: sortKeys([...new Set(g.ds.map((d) => keyOf(d, mx.cols)))], mx.cols) }));
   const cellMap = new Map();
   for (const d of list) {
-    const k = `${keyOf(d, mx.rows)}|${d.vdd}|${keyOf(d, mx.cols)}`;
+    const k = `${keyOf(d, mx.rows)}|${d.vdd ?? ''}\u0001${dTech(d)}|${keyOf(d, mx.cols)}`;
     if (!cellMap.has(k)) cellMap.set(k, []);
     cellMap.get(k).push(d);
   }
@@ -1547,16 +1557,14 @@ function renderMatrix(view, c, list) {
     const parts = key.split('\u0001').map((v, i) => axisLabel(c, mx.rows[i], v));
     return `${esc(parts[0])}${parts.length > 1 ? `<small>${parts.slice(1).map(esc).join(' · ')}</small>` : ''}`;
   };
-  const multiTech = compTechs(c).length > 1;
   const grpLabel = (g) => {
     if (c.vdd_labels?.[String(g.v)]) return Blocks.inline(c.vdd_labels[String(g.v)]);
-    const gt = multiTech ? [...new Set(list.filter((d) => d.vdd === g.v).map((d) => d.technology).filter(Boolean))] : [];
-    return `V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}${gt.length === 1 ? ` · <span class="subtle">${esc(techShort(gt[0]))}</span>` : ''}`;
+    return `V<sub>DD</sub> = ${g.v ?? '—'}${g.v != null ? ' V' : ''}${g.t ? ` · <span class="subtle">${esc(techShort(g.t))}</span>` : ''}`;
   };
   const head1 = `<tr><th></th>${groups.map((g) => `<th class="grp" colspan="${g.cols.length}">${grpLabel(g)}</th>`).join('')}</tr>`;
   const head2 = `<tr><th class="rowh">${mx.rows.map((a) => esc(c.axes[a]?.label || a)).join(' · ')}</th>${groups.map((g) => g.cols.map((k) => `<th>${colLabel(k)}</th>`).join('')).join('')}</tr>`;
   const body = rows.map((rk) => `<tr><th class="rowh">${rowLabel(rk)}</th>${groups.map((g) => g.cols.map((ck) => {
-    const ds = cellMap.get(`${rk}|${g.v}|${ck}`);
+    const ds = cellMap.get(`${rk}|${g.k}|${ck}`);
     if (!ds) return '<td class="cell empty"></td>';
     const d = ds.find((x) => resolve(x)) || ds.find((x) => !x.na) || ds[0];
     const r = resolve(d);
