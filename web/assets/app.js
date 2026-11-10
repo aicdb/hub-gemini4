@@ -95,7 +95,8 @@ async function getJSON(url) {
   return r.json();
 }
 async function getPack(url) {
-  const r = await fetch(url, { cache: 'no-cache' });
+  const immutable = /_pack_[0-9a-f]{16}\.bin$/.test(url);
+  const r = await fetch(url, { cache: immutable ? 'force-cache' : 'no-cache' });
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).json();
 }
@@ -109,7 +110,7 @@ async function loadComp(id) {
       c._axisLabel[ak] = Object.fromEntries(a.values.map((v, i) => [v.id, { label: v.label, i }]));
     }
     c._packOf = {};
-    (c.packs || []).forEach((rels, i) => rels.forEach((p) => { c._packOf[p] = i; }));
+    (c.packs || []).forEach((pk, i) => (pk.files || pk).forEach((p) => { c._packOf[p] = pk.id ?? i; }));
     c.designs.forEach((d, i) => { d._i = i; });
     COMPS.set(id, c);
   }
@@ -149,6 +150,9 @@ function hydratePacks(root = document) {
     if (!val || !val.startsWith('#pack:')) return;
     const [, cid, ...rest] = val.split(':');
     const p = rest.join(':');
+    if (el.tagName === 'A' && el.hasAttribute('download') && !el.getAttribute('download')) {
+      el.setAttribute('download', p.split('/').pop());
+    }
     try {
       const url = await resolvePackBlob(cid, p);
       if (el.getAttribute(attr) === val) el.setAttribute(attr, url);

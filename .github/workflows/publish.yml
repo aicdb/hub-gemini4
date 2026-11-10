@@ -87,6 +87,21 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: actions/setup-python@v5
+        if: steps.plan.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Restore hub build & thumbnail cache
+        if: steps.plan.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/aicdb-hub
+          key: hub-cache-v4-${{ github.run_id }}
+          restore-keys: |
+            hub-cache-v4-
+            thumbs-v3-
+
       - name: Fetch docs/ of every source (sparse, shallow)
         if: steps.plan.outputs.skip != 'true'
         env:
@@ -97,6 +112,10 @@ jobs:
           mkdir -p src
           while read -r id repo branch sha; do
             [ "$sha" = missing ] && continue
+            if python tools/hubkit.py is-cached --id "$id" --commit "$sha"; then
+              echo "${id}: ${sha:0:7} (cached)"
+              continue
+            fi
             name="${repo##*/}"
             dir=$(jq -r --arg id "$id" '.components[] | select(.id==$id) | .dir // "docs"' sources.json)
             git clone --quiet --depth 1 --filter=blob:none --sparse --branch "$branch" \
@@ -109,22 +128,9 @@ jobs:
             echo "${id}: $(git -C "src/${name}" rev-parse --short HEAD), $(du -sh "src/${name}/${dir}" | cut -f1)"
           done < sources.lock
 
-      - uses: actions/setup-python@v5
-        if: steps.plan.outputs.skip != 'true'
-        with:
-          python-version: "3.12"
-
       - name: Install layout-thumbnail renderer
         if: steps.plan.outputs.skip != 'true'
         run: python -m pip install --quiet "gdstk>=0.9.50,<2" "pillow>=10.1,<13"
-
-      - name: Restore thumbnail cache
-        if: steps.plan.outputs.skip != 'true'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/aicdb-hub/thumbs
-          key: thumbs-v3-${{ github.run_id }}
-          restore-keys: thumbs-v3-
 
       - name: Build site
         if: steps.plan.outputs.skip != 'true'

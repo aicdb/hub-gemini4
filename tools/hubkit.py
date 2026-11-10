@@ -540,10 +540,67 @@ def git_head(path: Path) -> str | None:
         return None
 
 
+def git_clean(path: Path) -> bool:
+    try:
+        return subprocess.run(["git", "-C", str(path), "status", "--porcelain"], capture_output=True,
+                              text=True, check=True).stdout.strip() == ""
+    except Exception:  # noqa: BLE001
+        return False
+
+
+PACK_SCHEMA_VERSION = "pack-sha1-v1"
+
+
+def source_cache_key(cfg: dict, src: dict, commit: str | None, docs: Path | None = None) -> str | None:
+    if not commit or commit == "missing":
+        return None
+    if docs is not None and docs.is_dir() and not git_clean(docs):
+        return None
+    tools_b = (HUB_ROOT / "tools" / "gdsthumb.py").read_bytes()
+    tools_h = hashlib.sha1(tools_b).hexdigest()[:16]
+    shard_id = src.get("shard")
+    shard_cfg = (cfg.get("shards") or {}).get(shard_id) if shard_id else None
+    payload = json.dumps({
+        "v": PACK_SCHEMA_VERSION,
+        "id": src["id"],
+        "commit": commit,
+        "src": {k: v for k, v in src.items() if k != "commit"},
+        "shard": shard_cfg,
+        "exclude": cfg.get("exclude", []),
+        "tools": tools_h,
+    }, sort_keys=True).encode("utf-8")
+    return f"{src['id']}-{commit[:12]}-{hashlib.sha1(payload).hexdigest()[:12]}"
+
+
+def _comp_dst(cfg: dict, src: dict, cid: str, out: Path, link: bool) -> Path:
+    shard_id = src.get("shard") if not link else None
+    shard_cfg = (cfg.get("shards") or {}).get(shard_id) if shard_id else None
+    if shard_cfg and shard_cfg.get("path"):
+        shard_root = HUB_ROOT / shard_cfg["path"]
+        shard_root.mkdir(parents=True, exist_ok=True)
+        (shard_root / ".nojekyll").write_text("")
+        return shard_root / "c" / cid
+    return out / "c" / cid
+
+
+def _sync_dir(src_dir: Path, dst_dir: Path):
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    want = {p.relative_to(src_dir) for p in src_dir.rglob("*") if p.is_file()}
+    for p in list(dst_dir.rglob("*")):
+        if p.is_file() and p.relative_to(dst_dir) not in want:
+            p.unlink()
+    for rel in want:
+        s, d = src_dir / rel, dst_dir / rel
+        if d.is_file() and d.stat().st_size == s.stat().st_size and rel.name.startswith("_pack_"):
+            continue
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(s, d)
+
+
 # ----------------------------------------------------------------------------- build
-def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: dict[str, bytes] | None = None) -> tuple[int, int, list[list[str]]]:
+def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: dict[str, bytes] | None = None) -> tuple[int, int, list[dict]]:
     n = size = bsz = 0
-    packs: list[list[str]] = []
+    packs: list[dict] = []
     batch: list[tuple[str, bytes]] = []
 
     def flush():
@@ -552,10 +609,11 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: di
             return
         raw = b"{" + b",".join(json.dumps(r).encode() + b":" + b for r, b in batch) + b"}"
         comp_bytes = gzip.compress(raw, compresslevel=6, mtime=0)
-        q = dst / f"_pack_{len(packs)}.bin"
+        h = hashlib.sha1(comp_bytes).hexdigest()[:16]
+        q = dst / f"_pack_{h}.bin"
         q.parent.mkdir(parents=True, exist_ok=True)
         q.write_bytes(comp_bytes)
-        packs.append([r for r, _ in batch])
+        packs.append({"id": h, "files": [r for r, _ in batch]})
         batch.clear()
         bsz = 0
         n += 1
@@ -573,7 +631,7 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: di
         sp = ex.path(rel)
         if not sp.is_file():
             continue
-        if (rel.endswith(".json") or rel.endswith(".svg")) and "downloads" not in refs.hosted.get(rel, ""):
+        if rel.endswith(".json") or rel.endswith(".svg"):
             b = sp.read_bytes().strip()
             if rel.endswith(".svg"):
                 b = json.dumps(b.decode("utf-8", errors="replace")).encode("utf-8")
@@ -629,7 +687,7 @@ def expand_manifest(ex: Export, source_id: str, rep: Report) -> list[tuple[Expor
     return out
 
 
-def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha) -> tuple[bool, int]:
+def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha) -> tuple[bool, int, dict | None]:
     cid = ex.cid
     rep = Report(cid)
     exclude = cfg.get("exclude", [])
@@ -641,20 +699,14 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         print(f"✗ {cid}: skipped ({len(rep.errors)} errors)")
         if gha:
             print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
-        return False, 0
+        return False, 0, None
     shard_id = src.get("shard") if not link else None
     shard_cfg = (cfg.get("shards") or {}).get(shard_id) if shard_id else None
     shard_base = shard_cfg.get("base", "") if shard_cfg else ""
     comp = normalize(ex, src, commit, shard_base=shard_base)
-    if shard_cfg and shard_cfg.get("path"):
-        shard_root = HUB_ROOT / shard_cfg["path"]
-        shard_root.mkdir(parents=True, exist_ok=True)
-        (shard_root / ".nojekyll").write_text("")
-        dst = shard_root / "c" / cid
-        if dst.exists():
-            shutil.rmtree(dst)
-    else:
-        dst = out / "c" / cid
+    dst = _comp_dst(cfg, src, cid, out, link)
+    if dst.exists():
+        shutil.rmtree(dst)
     comp["thumbs"], thumb_blobs = render_thumbs(ex, refs, cache_dir, rep, jobs)
     nt = len(thumb_blobs)
     nfiles, size, packs = publish_files(ex, refs, dst, link, extra_blobs=thumb_blobs)
@@ -668,8 +720,9 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         rep.warn(f"hosted size {mb:.0f} MB exceeds the per-component budget of {cfg.get('component_budget_mb')} MB")
         if gha:
             print(f"::warning title=hub component '{cid}' over size budget::{mb:.0f} MB")
-    (out / "data" / "components" / f"{cid}.json").write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
-    catalog["components"].append({
+    comp_path = out / "data" / "components" / f"{cid}.json"
+    comp_path.write_text(json.dumps(comp, separators=(",", ":"), ensure_ascii=False))
+    cat_item = {
         "id": cid, "name": comp["name"], "title": comp["title"], "summary": comp.get("summary", ""),
         "group": group, "source": src["id"],
         "repo": comp.get("repo"), "commit": commit, "origin": ex.origin,
@@ -677,14 +730,17 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
         "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages") or []],
         "rows": compact_rows(comp),
-    })
-    build_info["sources"][cid] = {"repo": src.get("repo"), "source": src["id"], "commit": commit, "origin": ex.origin,
-                                  "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
-                                  "hosted_files": nfiles, "thumbnails": nt, "size_mb": comp["size_mb"]}
+    }
+    catalog["components"].append(cat_item)
+    b_info = {"repo": src.get("repo"), "source": src["id"], "commit": commit, "origin": ex.origin,
+              "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
+              "hosted_files": nfiles, "thumbnails": nt, "size_mb": comp["size_mb"]}
+    build_info["sources"][cid] = b_info
     rep.print()
-    print(f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
-          f"{nfiles} hosted files + {nt} thumbnails, {mb:.1f} MB, origin={ex.origin}")
-    return True, size
+    log_msg = (f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
+               f"{nfiles} hosted files + {nt} thumbnails, {mb:.1f} MB, origin={ex.origin}")
+    print(log_msg)
+    return True, size, {"cid": cid, "size": size, "catalog_item": cat_item, "build_info": b_info, "log": log_msg}
 
 
 def link_hierarchy(out: Path, catalog: dict):
@@ -787,9 +843,19 @@ def link_foundations(cfg: dict, catalog: dict):
         print("foundations: " + ", ".join(f"{t['name']} ← {len(t['users'])} component{'' if len(t['users']) == 1 else 's'}" for t in tiers))
 
 
+def _read_locks(lock_file: Path) -> dict[str, str]:
+    if not lock_file.is_file():
+        return {}
+    out = {}
+    for line in lock_file.read_text().splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[3] != "missing":
+            out[parts[0]] = parts[3]
+    return out
+
+
 def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, strict: bool,
           cache_dir: Path, jobs: int) -> int:
-    exclude = cfg.get("exclude", [])
     if out.exists():
         shutil.rmtree(out)
     (out / "data" / "components").mkdir(parents=True)
@@ -801,10 +867,34 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
     build_info = {"generated": catalog["generated"], "hub_commit": git_head(HUB_ROOT),
                   "fingerprint": os.environ.get("HUB_FINGERPRINT"), "sources": {}}
     gha = os.environ.get("GITHUB_ACTIONS") == "true"
+    locked = _read_locks(HUB_ROOT / "sources.lock")
+    scache_root = cache_dir.parent / "sources"
+    active_skeys: set[str] = set()
     failures, total = 0, 0
 
     for src, docs in sources:
         cid = src["id"]
+        commit = src.get("commit") or (git_head(docs) if docs.is_dir() else None) or locked.get(cid)
+        skey = source_cache_key(cfg, src, commit, docs if docs.is_dir() else None) if not link else None
+        scache = (scache_root / skey) if skey else None
+
+        if scache and (scache / "meta.json").is_file():
+            try:
+                meta = json.loads((scache / "meta.json").read_text())
+                for e in meta["entries"]:
+                    sub_cid = e["cid"]
+                    shutil.copy2(scache / "components" / f"{sub_cid}.json",
+                                 out / "data" / "components" / f"{sub_cid}.json")
+                    _sync_dir(scache / "c" / sub_cid, _comp_dst(cfg, src, sub_cid, out, link))
+                    catalog["components"].append(e["catalog_item"])
+                    build_info["sources"][sub_cid] = e["build_info"]
+                    total += e["size"]
+                    print(f"{e['log']} [cached]")
+                active_skeys.add(skey)
+                continue
+            except Exception as e:  # noqa: BLE001
+                print(f"  [warn] cache restore failed for {cid} ({e}), rebuilding")
+
         rep = Report(cid)
         if not docs.is_dir():
             rep.err(f"source directory not found: {docs}")
@@ -823,13 +913,38 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
                 rep.print(); failures += 1
                 print(f"✗ {cid}: manifest invalid")
                 continue
-            commit = src.get("commit") or git_head(docs)
+            entries = []
+            src_ok = True
             for sub, group in subs:
-                ok, size = build_one(cfg, src, sub, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha)
+                ok, size, entry = build_one(cfg, src, sub, group, commit, out, link, cache_dir, jobs, catalog, build_info, gha)
                 total += size
-                failures += 0 if ok else 1
+                if ok and entry:
+                    entries.append(entry)
+                else:
+                    src_ok = False
+                    failures += 1
+            if src_ok and scache is not None and entries:
+                tmp_scache = scache_root / f".{skey}.{os.getpid()}.tmp"
+                if tmp_scache.exists():
+                    shutil.rmtree(tmp_scache)
+                (tmp_scache / "components").mkdir(parents=True, exist_ok=True)
+                for e in entries:
+                    sub_cid = e["cid"]
+                    shutil.copy2(out / "data" / "components" / f"{sub_cid}.json",
+                                 tmp_scache / "components" / f"{sub_cid}.json")
+                    _sync_dir(_comp_dst(cfg, src, sub_cid, out, link), tmp_scache / "c" / sub_cid)
+                (tmp_scache / "meta.json").write_text(json.dumps({"entries": entries}, ensure_ascii=False))
+                if scache.exists():
+                    shutil.rmtree(scache)
+                os.replace(tmp_scache, scache)
+                active_skeys.add(skey)
         finally:
             ex.close()
+
+    if not link and len(sources) == len(cfg.get("components", [])) and scache_root.is_dir():
+        for p in scache_root.iterdir():
+            if p.is_dir() and p.name not in active_skeys:
+                shutil.rmtree(p, ignore_errors=True)
 
     link_hierarchy(out, catalog)
     link_foundations(cfg, catalog)
@@ -891,11 +1006,23 @@ def main(argv=None):
     b.add_argument("--link", action="store_true", help="symlink hosted files of native exports (local preview)")
     b.add_argument("--strict", action="store_true")
     b.add_argument("--serve", type=int, metavar="PORT")
-    for x in (p, b):
+    c = sub.add_parser("is-cached", help="check if a source commit is in the local build cache")
+    c.add_argument("--id", required=True)
+    c.add_argument("--commit", required=True)
+    c.add_argument("--config", type=Path, default=HUB_ROOT / "sources.json")
+    for x in (p, b, c):
         x.add_argument("--thumb-cache", type=Path, default=DEFAULT_THUMB_CACHE)
         x.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     a = ap.parse_args(argv)
-    cfg = json.loads((a.config if a.cmd == "build" else HUB_ROOT / "sources.json").read_text())
+    cfg = json.loads((a.config if a.cmd in ("build", "is-cached") else HUB_ROOT / "sources.json").read_text())
+
+    if a.cmd == "is-cached":
+        src = next((s for s in cfg["components"] if s["id"] == a.id), None)
+        if not src:
+            return 1
+        skey = source_cache_key(cfg, src, a.commit)
+        scache = (a.thumb_cache.parent / "sources" / skey) if skey else None
+        return 0 if (scache and (scache / "meta.json").is_file()) else 1
 
     if a.cmd == "build":
         only = set(a.only.split(",")) if a.only else None

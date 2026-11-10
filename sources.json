@@ -75,19 +75,22 @@
       "id": "switch",
       "repo": "aicdb/switch-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "sa",
       "repo": "aicdb/sa-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "ls",
       "repo": "aicdb/ls-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "opa",
@@ -100,7 +103,8 @@
       "id": "aux",
       "repo": "aicdb/aux-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "ldo",
