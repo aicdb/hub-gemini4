@@ -22,6 +22,7 @@ import concurrent.futures as cf
 import fnmatch
 import functools
 import gzip
+import hashlib
 import http.server
 import json
 import os
@@ -471,19 +472,20 @@ def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: R
         tasks.append((str(p), cell, gds_tech.get(g, default_tech), str(cache_dir)))
         keys.append((g, cell))
     thumbs = {}
+    written: set[str] = set()
     with cf.ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
         for (g, cell), (key, info, err) in zip(keys, pool.map(_thumb_job, tasks, chunksize=4)):
             if err:
                 rep.warn(f"thumbnail failed for {g}{' cell ' + cell if cell else ''}: {err}")
                 continue
-            dst = out_dir / "thumbs" / f"{key}.webp"
+            src_webp = cache_dir / f"{key}.webp"
+            wkey = hashlib.sha1(src_webp.read_bytes()).hexdigest()[:16]
+            dst = out_dir / "thumbs" / f"{wkey}.webp"
             dst.parent.mkdir(parents=True, exist_ok=True)
-            if not dst.exists():
-                try:
-                    os.link(cache_dir / f"{key}.webp", dst)
-                except OSError:
-                    shutil.copy2(cache_dir / f"{key}.webp", dst)
-            thumbs[f"{g}|{cell}"] = {"src": f"thumbs/{key}.webp", "cell": info.get("cell"),
+            if wkey not in written:
+                written.add(wkey)
+                shutil.copy2(src_webp, dst)
+            thumbs[f"{g}|{cell}"] = {"src": f"thumbs/{wkey}.webp", "cell": info.get("cell"),
                                      "width_um": info.get("width_um"), "height_um": info.get("height_um")}
     return thumbs
 
@@ -578,10 +580,7 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, i
         if link and ex.origin == "native":
             q.symlink_to(sp.resolve())
         else:
-            try:
-                os.link(sp, q)
-            except OSError:
-                shutil.copy2(sp, q)
+            shutil.copy2(sp, q)
         n += 1
         size += sp.stat().st_size
     flush()
@@ -640,7 +639,8 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
     if packs:
         comp["packs"] = packs
     comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
-    size += sum((dst / t["src"]).stat().st_size for t in comp["thumbs"].values())
+    nt = len({t["src"] for t in comp["thumbs"].values()})
+    size += sum((dst / s).stat().st_size for s in {t["src"] for t in comp["thumbs"].values()})
     mb = size / 1e6
     comp["size_mb"] = round(mb, 1)
     comp["group"] = group
@@ -656,15 +656,15 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         "repo": comp.get("repo"), "commit": commit, "origin": ex.origin,
         "generated": comp.get("generated"), "size_mb": comp["size_mb"],
         "families": [{"id": f["id"], "label": f["label"]} for f in comp.get("families", []) or []],
-        "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages", []) or []],
+        "pages": [{"id": p["id"], "title": p["title"]} for p in comp.get("pages") or []],
         "rows": compact_rows(comp),
     })
     build_info["sources"][cid] = {"repo": src.get("repo"), "source": src["id"], "commit": commit, "origin": ex.origin,
                                   "designs": len(comp["designs"]), "pages": len(comp.get("pages") or []),
-                                  "hosted_files": nfiles, "thumbnails": len(comp["thumbs"]), "size_mb": comp["size_mb"]}
+                                  "hosted_files": nfiles, "thumbnails": nt, "size_mb": comp["size_mb"]}
     rep.print()
     print(f"✓ {cid}: {len(comp['designs'])} designs, {len(comp.get('pages') or [])} pages, "
-          f"{nfiles} hosted files + {len(comp['thumbs'])} thumbnails, {mb:.1f} MB, origin={ex.origin}")
+          f"{nfiles} hosted files + {nt} thumbnails, {mb:.1f} MB, origin={ex.origin}")
     return True, size
 
 
