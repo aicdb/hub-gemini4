@@ -39,7 +39,8 @@
         "sar": "3.3/6 V MOSFETs, MIM and MOM finger caps (CDAC drawn with gdstk)",
         "sdm": "3.3 V MOSFETs, MIM and MOM caps (cap array drawn with gdstk)",
         "pll": "3.3 V MOSFETs, MIM caps, poly resistors, MOS varactors (gLayout)",
-        "ti": "3.3 V & deep-N-well MOSFETs, MIM/MOM sampling caps, poly resistors (gLayout)"
+        "ti": "3.3 V & deep-N-well MOSFETs, MIM/MOM sampling caps, poly resistors (gLayout)",
+        "ecg-top": "3.3 V MOSFETs, source-bootstrapped PMOS pseudo-resistors, MIM/MOM caps, ppolyf_u_1k resistors (gLayout + gdstk)"
       }
     },
     {
@@ -51,7 +52,8 @@
         "sar": "mcu7t5v0 cells in SAR logic (UHS/LU2G: custom cells); layout: placeholders",
         "sdm": "sdm2bin decimator: mcu7t5v0 cells synthesised with Yosys, placed with OpenROAD",
         "pll": "TDC/PI digital loop filter, AFC FSM, MMD & MASH 1-1-1 ΔΣ (Yosys + OpenROAD)",
-        "ti": "ti_cal_mux_m2..m16 background offset/gain/skew cal & deserializer (Yosys + OpenROAD)"
+        "ti": "ti_cal_mux_m2..m16 background offset/gain/skew cal & deserializer (Yosys + OpenROAD)",
+        "ecg-top": "ecg_dig_ctrl_8b/10b/12b closed-loop auto-calibration FSM & boxcar chopper-notch decimator (Yosys + OpenROAD)"
       }
     }
   ],
@@ -139,6 +141,13 @@
     {
       "id": "ti",
       "repo": "aicdb/ti-gen-gemini4",
+      "branch": "main",
+      "dir": "docs",
+      "shard": "assets-1"
+    },
+    {
+      "id": "ecg-top",
+      "repo": "aicdb/ecg-top-gen-gemini4",
       "branch": "main",
       "dir": "docs",
       "shard": "assets-1"
