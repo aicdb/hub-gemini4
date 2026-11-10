@@ -61,6 +61,13 @@
     "**/.nojekyll",
     "**/.DS_Store"
   ],
+  "shards": {
+    "assets-1": {
+      "repo": "aicdb/hub-gemini4-assets-1",
+      "path": "assets-1/site",
+      "base": "/hub-gemini4-assets-1/"
+    }
+  },
   "components": [
     {
       "id": "switch",
@@ -84,7 +91,8 @@
       "id": "opa",
       "repo": "aicdb/opa-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "aux",
@@ -96,38 +104,44 @@
       "id": "ldo",
       "repo": "aicdb/ldo-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "ecg",
       "repo": "aicdb/ecg-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "sar",
       "repo": "aicdb/sar-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "sdm",
       "repo": "aicdb/sdm-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     },
     {
       "id": "pll",
       "repo": "aicdb/pll-gen-gemini4",
       "branch": "main",
       "dir": "docs",
-      "sparse": ["pllgen"]
+      "sparse": ["pllgen"],
+      "shard": "assets-1"
     },
     {
       "id": "ti",
       "repo": "aicdb/ti-gen-gemini4",
       "branch": "main",
-      "dir": "docs"
+      "dir": "docs",
+      "shard": "assets-1"
     }
   ]
 }

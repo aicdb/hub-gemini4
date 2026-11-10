@@ -491,12 +491,12 @@ def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: R
 
 
 # ----------------------------------------------------------------------------- normalization
-def normalize(ex: Export, src: dict, commit: str | None) -> dict:
+def normalize(ex: Export, src: dict, commit: str | None, shard_base: str = "") -> dict:
     comp = dict(ex.comp)
     comp.setdefault("repo", src.get("repo"))
     comp["commit"] = commit or comp.get("commit")
     comp["origin"] = ex.origin
-    comp["base"] = f"c/{comp['id']}/"
+    comp["base"] = f"{shard_base}c/{comp['id']}/"
     if comp.get("repo") and comp["commit"]:
         comp["repo_raw"] = f"https://github.com/{comp['repo']}/raw/{comp['commit']}/{src.get('dir', 'docs')}/"
     tech_default = comp.get("technology")
@@ -635,8 +635,19 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         if gha:
             print(f"::error title=hub component '{cid}' not published::" + " | ".join(rep.errors[:5]).replace("\n", " "))
         return False, 0
-    comp = normalize(ex, src, commit)
-    dst = out / "c" / cid
+    shard_id = src.get("shard") if not link else None
+    shard_cfg = (cfg.get("shards") or {}).get(shard_id) if shard_id else None
+    shard_base = shard_cfg.get("base", "") if shard_cfg else ""
+    comp = normalize(ex, src, commit, shard_base=shard_base)
+    if shard_cfg and shard_cfg.get("path"):
+        shard_root = HUB_ROOT / shard_cfg["path"]
+        shard_root.mkdir(parents=True, exist_ok=True)
+        (shard_root / ".nojekyll").write_text("")
+        dst = shard_root / "c" / cid
+        if dst.exists():
+            shutil.rmtree(dst)
+    else:
+        dst = out / "c" / cid
     nfiles, size, packs = publish_files(ex, refs, dst, link)
     if packs:
         comp["packs"] = packs
@@ -832,7 +843,19 @@ def build(cfg: dict, sources: list[tuple[dict, Path]], out: Path, link: bool, st
 
 
 def serve(directory: Path, port: int):
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
+    cfg = json.loads((HUB_ROOT / "sources.json").read_text()) if (HUB_ROOT / "sources.json").is_file() else {}
+    shards = {s["base"]: (HUB_ROOT / s["path"]).resolve()
+              for s in (cfg.get("shards") or {}).values() if s.get("base") and s.get("path")}
+
+    class ShardHandler(http.server.SimpleHTTPRequestHandler):
+        def translate_path(self, path: str) -> str:
+            for base, sroot in shards.items():
+                if path.startswith(base):
+                    rel = path[len(base):].split("?", 1)[0].split("#", 1)[0]
+                    return str(sroot / rel)
+            return super().translate_path(path)
+
+    handler = functools.partial(ShardHandler, directory=str(directory))
     with http.server.ThreadingHTTPServer(("127.0.0.1", port), handler) as httpd:
         print(f"\nserving {directory} at http://127.0.0.1:{port}/  (Ctrl-C to stop)")
         try:

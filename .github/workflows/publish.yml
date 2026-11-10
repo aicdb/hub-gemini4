@@ -134,13 +134,30 @@ jobs:
           rc=0; python tools/hubkit.py build --root src --out _site || rc=$?
           # 1 = some component failed validation (others still published); anything else is fatal
           [ $rc -eq 0 ] || [ $rc -eq 1 ] || exit $rc
-          du -sh _site
+          du -sh _site assets-1/site || true
           {
             echo "### Hub build"
             echo '```'
             cat _site/data/build.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync assets-1 shard
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          TOKEN: ${{ secrets.HUB_SOURCES_TOKEN }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(printf %s "$TOKEN" | tr -d '[:space:]')
+          git clone --quiet --depth 1 "https://x-access-token:${TOKEN}@github.com/aicdb/hub-gemini4-assets-1.git" /tmp/assets-1 || exit 0
+          rsync -a --delete --exclude='.git' --exclude='.github' assets-1/site/ /tmp/assets-1/site/
+          git -C /tmp/assets-1 config user.name "github-actions[bot]"
+          git -C /tmp/assets-1 config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C /tmp/assets-1 add -A
+          if ! git -C /tmp/assets-1 diff --cached --quiet; then
+            git -C /tmp/assets-1 commit -m "Sync shard assets from hub build"
+            git -C /tmp/assets-1 push origin main || echo "::notice::assets-1 push skipped (check HUB_SOURCES_TOKEN write permission)"
+          fi
 
       - uses: actions/configure-pages@v5
         if: steps.plan.outputs.skip != 'true'
