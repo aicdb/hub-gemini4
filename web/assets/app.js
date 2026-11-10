@@ -127,9 +127,17 @@ async function resolvePackBlob(cid, p) {
   if (BLOB_CACHE.has(key)) return BLOB_CACHE.get(key);
   const c = await loadComp(cid);
   const raw = await ctxFor(c).json(p);
-  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-  const type = /\.svg$/i.test(p) ? 'image/svg+xml' : 'application/json';
-  const url = URL.createObjectURL(new Blob([text], { type }));
+  let blob;
+  if (/\.webp$/i.test(p) && typeof raw === 'string') {
+    const bin = atob(raw), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    blob = new Blob([u8], { type: 'image/webp' });
+  } else {
+    const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    const type = /\.svg$/i.test(p) ? 'image/svg+xml' : 'application/json';
+    blob = new Blob([text], { type });
+  }
+  const url = URL.createObjectURL(blob);
   BLOB_CACHE.set(key, url);
   return url;
 }

@@ -18,6 +18,7 @@ Python >= 3.9 stdlib; thumbnails additionally need `pip install gdstk pillow`.
 from __future__ import annotations
 
 import argparse
+import base64
 import concurrent.futures as cf
 import fnmatch
 import functools
@@ -450,15 +451,15 @@ def _thumb_job(args):
         return key, None, f"{type(e).__name__}: {e}"
 
 
-def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: Report, jobs: int) -> dict:
+def render_thumbs(ex: Export, refs: Refs, cache_dir: Path, rep: Report, jobs: int) -> tuple[dict, dict[str, bytes]]:
     if not refs.gds:
-        return {}
+        return {}, {}
     try:
         import gdstk  # noqa: F401
         import PIL  # noqa: F401
     except ImportError:
         rep.warn("gdstk/Pillow not installed — layout thumbnails skipped (pip install gdstk pillow)")
-        return {}
+        return {}, {}
     cache_dir.mkdir(parents=True, exist_ok=True)
     default_tech = ex.comp.get("technology", "gf180mcuD")
     gds_tech = {d.get("files", {}).get("gds"): d.get("technology") or default_tech
@@ -472,22 +473,20 @@ def render_thumbs(ex: Export, refs: Refs, out_dir: Path, cache_dir: Path, rep: R
         tasks.append((str(p), cell, gds_tech.get(g, default_tech), str(cache_dir)))
         keys.append((g, cell))
     thumbs = {}
-    written: set[str] = set()
+    blobs: dict[str, bytes] = {}
     with cf.ProcessPoolExecutor(max_workers=max(1, jobs)) as pool:
         for (g, cell), (key, info, err) in zip(keys, pool.map(_thumb_job, tasks, chunksize=4)):
             if err:
                 rep.warn(f"thumbnail failed for {g}{' cell ' + cell if cell else ''}: {err}")
                 continue
-            src_webp = cache_dir / f"{key}.webp"
-            wkey = hashlib.sha1(src_webp.read_bytes()).hexdigest()[:16]
-            dst = out_dir / "thumbs" / f"{wkey}.webp"
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if wkey not in written:
-                written.add(wkey)
-                shutil.copy2(src_webp, dst)
-            thumbs[f"{g}|{cell}"] = {"src": f"thumbs/{wkey}.webp", "cell": info.get("cell"),
+            raw_webp = (cache_dir / f"{key}.webp").read_bytes()
+            wkey = hashlib.sha1(raw_webp).hexdigest()[:16]
+            rel_t = f"thumbs/{wkey}.webp"
+            if rel_t not in blobs:
+                blobs[rel_t] = json.dumps(base64.b64encode(raw_webp).decode("ascii")).encode("ascii")
+            thumbs[f"{g}|{cell}"] = {"src": rel_t, "cell": info.get("cell"),
                                      "width_um": info.get("width_um"), "height_um": info.get("height_um")}
-    return thumbs
+    return thumbs, blobs
 
 
 # ----------------------------------------------------------------------------- normalization
@@ -542,7 +541,7 @@ def git_head(path: Path) -> str | None:
 
 
 # ----------------------------------------------------------------------------- build
-def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, int, list[list[str]]]:
+def publish_files(ex: Export, refs: Refs, dst: Path, link: bool, extra_blobs: dict[str, bytes] | None = None) -> tuple[int, int, list[list[str]]]:
     n = size = bsz = 0
     packs: list[list[str]] = []
     batch: list[tuple[str, bytes]] = []
@@ -561,6 +560,14 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, i
         bsz = 0
         n += 1
         size += len(comp_bytes)
+
+    if extra_blobs:
+        for rel, b in sorted(extra_blobs.items()):
+            if batch and bsz + len(b) > 8_000_000:
+                flush()
+            batch.append((rel, b))
+            bsz += len(b)
+        flush()
 
     for rel in sorted(refs.hosted):
         sp = ex.path(rel)
@@ -648,12 +655,11 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
             shutil.rmtree(dst)
     else:
         dst = out / "c" / cid
-    nfiles, size, packs = publish_files(ex, refs, dst, link)
+    comp["thumbs"], thumb_blobs = render_thumbs(ex, refs, cache_dir, rep, jobs)
+    nt = len(thumb_blobs)
+    nfiles, size, packs = publish_files(ex, refs, dst, link, extra_blobs=thumb_blobs)
     if packs:
         comp["packs"] = packs
-    comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
-    nt = len({t["src"] for t in comp["thumbs"].values()})
-    size += sum((dst / s).stat().st_size for s in {t["src"] for t in comp["thumbs"].values()})
     mb = size / 1e6
     comp["size_mb"] = round(mb, 1)
     comp["group"] = group
