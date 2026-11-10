@@ -123,8 +123,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/aicdb-hub/thumbs
-          key: thumbs-${{ github.run_id }}
-          restore-keys: thumbs-
+          key: thumbs-v3-${{ github.run_id }}
+          restore-keys: thumbs-v3-
 
       - name: Build site
         if: steps.plan.outputs.skip != 'true'

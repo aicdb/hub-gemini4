@@ -115,8 +115,46 @@ async function loadComp(id) {
   }
   return COMPS.get(id);
 }
-const asset = (c, p) => (p ? c.base + p.split('/').map(encodeURIComponent).join('/') : '');
+const asset = (c, p) => {
+  if (!p) return '';
+  if (c._packOf?.[p] !== undefined) return `#pack:${c.id}:${p}`;
+  return c.base + p.split('/').map(encodeURIComponent).join('/');
+};
 const JSON_CACHE = new Map();
+const BLOB_CACHE = new Map();
+async function resolvePackBlob(cid, p) {
+  const key = `${cid}:${p}`;
+  if (BLOB_CACHE.has(key)) return BLOB_CACHE.get(key);
+  const c = await loadComp(cid);
+  const raw = await ctxFor(c).json(p);
+  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  const type = /\.svg$/i.test(p) ? 'image/svg+xml' : 'application/json';
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  BLOB_CACHE.set(key, url);
+  return url;
+}
+function hydratePacks(root = document) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll('img[src^="#pack:"], a[href^="#pack:"]').forEach(async (el) => {
+    const attr = el.tagName === 'IMG' ? 'src' : 'href';
+    const val = el.getAttribute(attr);
+    if (!val || !val.startsWith('#pack:')) return;
+    const [, cid, ...rest] = val.split(':');
+    const p = rest.join(':');
+    try {
+      const url = await resolvePackBlob(cid, p);
+      if (el.getAttribute(attr) === val) el.setAttribute(attr, url);
+    } catch (e) { /* ignore */ }
+  });
+}
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver((muts) => {
+    for (const m of muts) {
+      if (m.type === 'attributes') hydratePacks(m.target.parentElement || document);
+      else for (const n of m.addedNodes) if (n.nodeType === 1) hydratePacks(n);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href'] });
+}
 let plotlyP = null;
 function loadPlotly() {
   if (window.Plotly) return Promise.resolve(window.Plotly);

@@ -17,7 +17,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-RENDER_VERSION = "2"  # bump to invalidate cached thumbnails
+RENDER_VERSION = "3"  # bump to invalidate cached thumbnails
 
 # (layer, datatype): (name, rgb, alpha, kind)  kind: fill | cut | mark(hidden)
 LAYERS = {
@@ -176,7 +176,7 @@ def render(gds: Path, out: Path, cell: str | None = None, size: int = 960, tech:
         pass
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp_out = out.with_name(f".{out.name}.{os.getpid()}.tmp")
-    img.save(tmp_out, "WEBP", quality=82, method=4)
+    img.save(tmp_out, "WEBP", lossless=True, quality=80, method=4)
     os.replace(tmp_out, out)  # atomic: safe with concurrent builds sharing a cache
     return {"cell": top.name, "width_um": round(w, 3), "height_um": round(h, 3),
             "cells": sorted(cells), "px": [W, H]}

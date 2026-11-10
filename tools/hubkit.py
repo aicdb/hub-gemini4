@@ -566,8 +566,10 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, i
         sp = ex.path(rel)
         if not sp.is_file():
             continue
-        if rel.endswith(".json") and "downloads" not in refs.hosted.get(rel, ""):
+        if (rel.endswith(".json") or rel.endswith(".svg")) and "downloads" not in refs.hosted.get(rel, ""):
             b = sp.read_bytes().strip()
+            if rel.endswith(".svg"):
+                b = json.dumps(b.decode("utf-8", errors="replace")).encode("utf-8")
             if batch and bsz + len(b) > 8_000_000:
                 flush()
             batch.append((rel, b))
