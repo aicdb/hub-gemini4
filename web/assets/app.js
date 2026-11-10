@@ -94,6 +94,11 @@ async function getJSON(url) {
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return r.json();
 }
+async function getPack(url) {
+  const r = await fetch(url, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  return new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).json();
+}
 async function loadComp(id) {
   if (!COMPS.has(id)) {
     const c = await getJSON(`data/components/${id}.json`);
@@ -103,6 +108,8 @@ async function loadComp(id) {
     for (const [ak, a] of Object.entries(c.axes || {})) {
       c._axisLabel[ak] = Object.fromEntries(a.values.map((v, i) => [v.id, { label: v.label, i }]));
     }
+    c._packOf = {};
+    (c.packs || []).forEach((rels, i) => rels.forEach((p) => { c._packOf[p] = i; }));
     c.designs.forEach((d, i) => { d._i = i; });
     COMPS.set(id, c);
   }
@@ -152,7 +159,19 @@ function ctxFor(c) {
     src: (p) => asset(c, p),
     repo: (f) => repoUrl(c, f),
     thumb: (g, cell) => thumbFor(c, g, cell),
-    json: (p) => { const u = asset(c, p); if (!JSON_CACHE.has(u)) JSON_CACHE.set(u, getJSON(u).catch((e) => { JSON_CACHE.delete(u); throw e; })); return JSON_CACHE.get(u); },
+    json: (p) => {
+      if (c._packOf?.[p] !== undefined) {
+        const u = asset(c, `_pack_${c._packOf[p]}.bin`);
+        if (!JSON_CACHE.has(u)) JSON_CACHE.set(u, getPack(u).catch((e) => { JSON_CACHE.delete(u); throw e; }));
+        return JSON_CACHE.get(u).then((pk) => {
+          if (!(p in pk)) throw new Error(`${p}: not found in pack`);
+          return pk[p];
+        });
+      }
+      const u = asset(c, p);
+      if (!JSON_CACHE.has(u)) JSON_CACHE.set(u, getJSON(u).catch((e) => { JSON_CACHE.delete(u); throw e; }));
+      return JSON_CACHE.get(u);
+    },
     designHref: (id) => (c._ids.has(id) ? tabHref(c.id, id) : null),
     plotly: loadPlotly,
     tabGet: (id) => (S.tabs?.[id] !== undefined ? S.tabs[id] : null),

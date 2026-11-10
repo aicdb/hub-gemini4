@@ -21,6 +21,7 @@ import argparse
 import concurrent.futures as cf
 import fnmatch
 import functools
+import gzip
 import http.server
 import json
 import os
@@ -539,11 +540,36 @@ def git_head(path: Path) -> str | None:
 
 
 # ----------------------------------------------------------------------------- build
-def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, int]:
-    n = size = 0
+def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, int, list[list[str]]]:
+    n = size = bsz = 0
+    packs: list[list[str]] = []
+    batch: list[tuple[str, bytes]] = []
+
+    def flush():
+        nonlocal n, size, bsz
+        if not batch:
+            return
+        raw = b"{" + b",".join(json.dumps(r).encode() + b":" + b for r, b in batch) + b"}"
+        comp_bytes = gzip.compress(raw, compresslevel=6, mtime=0)
+        q = dst / f"_pack_{len(packs)}.bin"
+        q.parent.mkdir(parents=True, exist_ok=True)
+        q.write_bytes(comp_bytes)
+        packs.append([r for r, _ in batch])
+        batch.clear()
+        bsz = 0
+        n += 1
+        size += len(comp_bytes)
+
     for rel in sorted(refs.hosted):
         sp = ex.path(rel)
         if not sp.is_file():
+            continue
+        if rel.endswith(".json") and "downloads" not in refs.hosted.get(rel, ""):
+            b = sp.read_bytes().strip()
+            if batch and bsz + len(b) > 8_000_000:
+                flush()
+            batch.append((rel, b))
+            bsz += len(b)
             continue
         q = dst / rel
         q.parent.mkdir(parents=True, exist_ok=True)
@@ -558,7 +584,8 @@ def publish_files(ex: Export, refs: Refs, dst: Path, link: bool) -> tuple[int, i
                 shutil.copy2(sp, q)
         n += 1
         size += sp.stat().st_size
-    return n, size
+    flush()
+    return n, size, packs
 
 
 def expand_manifest(ex: Export, source_id: str, rep: Report) -> list[tuple[Export, str | None]]:
@@ -609,7 +636,9 @@ def build_one(cfg, src, ex: Export, group, commit, out, link, cache_dir, jobs, c
         return False, 0
     comp = normalize(ex, src, commit)
     dst = out / "c" / cid
-    nfiles, size = publish_files(ex, refs, dst, link)
+    nfiles, size, packs = publish_files(ex, refs, dst, link)
+    if packs:
+        comp["packs"] = packs
     comp["thumbs"] = render_thumbs(ex, refs, dst, cache_dir, rep, jobs)
     size += sum((dst / t["src"]).stat().st_size for t in comp["thumbs"].values())
     mb = size / 1e6
